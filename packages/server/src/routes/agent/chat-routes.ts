@@ -545,11 +545,12 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
       ? buildCabinSummaryReminder(cabinProvider.service, session.cabin_id, cabinProvider.decisions)
       : null
     // 事项投递（2026-11-24 用户）：告诉模型这是舱内小待办，按条目汇报；
-    // 关项由人在回执卡上确认 —— 模型不要自行标记完成。正文被截断时指路回读。
+    // 关项默认由人在回执卡确认；用户在本轮明确说「关掉 / 完成」时，模型可用
+    // cabin_set_item_status 直接关（2026-11-26 用户：不能再让模型去猜 HTTP 接口）。
     const itemReminder = viaItems
       ? `本轮消息是从舱内「事项」窗投递的 ${itemIds.length} 条小待办（原文逐条附在本轮消息里）。`
         + `请逐条处理，并在最后按条目汇报（做了什么 / 证据）；正文若被截断，可用 cabin_list_items / cabin_get_item 读取完整原文。`
-        + `不要自行标记完成，关项由人在回执卡上确认。`
+        + `关项 / 重开用 cabin_set_item_status：用户本轮明确说「关掉 / 完成 / 搁置」就按原话执行；只是投递给你处理、用户还没表态时不要自行关项，汇报完由人在回执卡上确认。`
       : null
     const turnReminder = [roleCard, mentionReminder, playbookReminder?.text, cabinReminder, itemReminder].filter(Boolean).join('\n\n')
     const providerMessage = withTransientReminder(userContent, turnReminder)

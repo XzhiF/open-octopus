@@ -7,6 +7,7 @@
 // index.ts 组合根注入 service/comm/decisions/delegations。
 
 import { z } from "zod"
+import { cabinItemLabel } from "@octopus/shared"
 import { createSdkMcpServer, tool } from "@octopus/providers"
 import type { CabinService } from "../cabin/cabin-service"
 import type { CabinCommService } from "../cabin/cabin-comm-service"
@@ -366,6 +367,64 @@ export function createCabinToolServer(cabinId: string) {
       },
     ),
     tool(
+      "cabin_set_item_status",
+      "改舱内「事项」的状态：done = 完成关项、dropped = 搁置关项、todo = 重新打开。**只在用户明确要求关项 / 重开时调用**：投递给你处理、但用户还没表态时不要自行关，汇报完由人在回执卡上确认。关项只写 closed_at，记录保留，不删除。",
+      {
+        ids: z.array(z.string().min(1)).min(1).max(50)
+          .describe("事项 id 或 #IT-n 句柄，两种都收（也接受纯序号 n）"),
+        status: z.enum(["done", "dropped", "todo"])
+          .describe("目标状态：done 完成 / dropped 搁置 / todo 重新打开（仅对已关闭事项生效）"),
+      },
+      async (input) => {
+        const { items } = must()
+        if (!items) throw new Error("cabin item service not wired")
+        try {
+          // 投递消息里只露 #IT-n 句柄，模型未必知道原始 id —— 两种都收。
+          const all = items.list(cabinId)
+          const byId = new Map(all.map((row) => [row.id, row]))
+          const bySeq = new Map(all.map((row) => [row.seq, row]))
+          const resolved: string[] = []
+          const unresolved: string[] = []
+          for (const token of input.ids) {
+            const text = token.trim()
+            const direct = byId.get(text)
+            const seqMatch = /^#?it-?(\d+)$/i.exec(text) ?? /^(\d+)$/.exec(text)
+            const target = direct ?? (seqMatch ? bySeq.get(Number(seqMatch[1])) : undefined)
+            if (!target) { unresolved.push(token); continue }
+            if (!resolved.includes(target.id)) resolved.push(target.id)
+          }
+          if (resolved.length === 0) {
+            return { content: [{ type: "text" as const, text: JSON.stringify({
+              status: "not_found",
+              missing: unresolved,
+              message: "这些 id / 句柄在本舱找不到：先用 cabin_list_items 查一遍再改。",
+            }) }] }
+          }
+          const res = items.setStatus(cabinId, resolved, input.status)
+          return { content: [{ type: "text" as const, text: JSON.stringify({
+            status: "applied",
+            outcome: input.status,
+            items: res.items.map((row) => ({
+              id: row.id,
+              handle: cabinItemLabel(row),
+              title: row.title,
+              before: byId.get(row.id)?.status ?? null,
+              after: row.status,
+              changed: row.status !== byId.get(row.id)?.status,
+              closed_at: row.closed_at,
+            })),
+            missing: [...res.missing, ...unresolved],
+          }, null, 2) }] }
+        } catch (err) {
+          return { content: [{ type: "text" as const, text: JSON.stringify({
+            status: "rejected",
+            error: err instanceof Error ? err.message : String(err),
+            message: "状态没有改成：按 error 处理，不要假定已经关项 / 重开。",
+          }) }] }
+        }
+      },
+    ),
+    tool(
       "cabin_job_trace",
       "读某作业的审计时间线（dispatch/brief/report/attention/handback/note/decision/human_input/resume）。",
       { job_id: z.string().min(1) },
@@ -437,7 +496,7 @@ export function createCabinToolServer(cabinId: string) {
     name: "octopus-cabin",
     version: "1.1.0",
     instructions:
-      "舱主的调度工具集（自己动手用通用的 Read/Edit/Bash，不在这里）。派发=建真实任务（执行在 doer/worktree）；轻活=独立委派（无 phase/验收、有归档闸）；决策用 cabin_relay_decision 代述，逐字不改。监督读派生视图；一次只问人一个结构化问题。完成回流先审一道：需要人回复就 AskUserQuestion，不需要就一句提示 + cabin_ack_attention 收项（不回复执行者）。会话跑完只是「待命」，归档由你管：用户说归档（或你判断该收口）时，可先通读会话做反思、用 octo-wiki 技能落沉淀，再调 cabin_delegation_archive；不沉淀也能直接归档。直接改了任务 home 或范围变更后，用 cabin_note_job 留痕，不要让它只存在于主对话。事项投递的正文若被截断或需要逐字原文，用 cabin_list_items / cabin_get_item 回读，不要凭标题猜需求。",
+      "舱主的调度工具集（自己动手用通用的 Read/Edit/Bash，不在这里）。派发=建真实任务（执行在 doer/worktree）；轻活=独立委派（无 phase/验收、有归档闸）；决策用 cabin_relay_decision 代述，逐字不改。监督读派生视图；一次只问人一个结构化问题。完成回流先审一道：需要人回复就 AskUserQuestion，不需要就一句提示 + cabin_ack_attention 收项（不回复执行者）。会话跑完只是「待命」，归档由你管：用户说归档（或你判断该收口）时，可先通读会话做反思、用 octo-wiki 技能落沉淀，再调 cabin_delegation_archive；不沉淀也能直接归档。直接改了任务 home 或范围变更后，用 cabin_note_job 留痕，不要让它只存在于主对话。事项投递的正文若被截断或需要逐字原文，用 cabin_list_items / cabin_get_item 回读，不要凭标题猜需求。事项关项 / 重开用 cabin_set_item_status：用户明确说「关掉 / 完成 / 搁置 / 重开」时才改，投递后只是处理完、用户还没表态就先汇报，等人确认。",
     tools,
     alwaysLoad: true,
   })
