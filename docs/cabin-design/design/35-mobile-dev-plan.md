@@ -370,7 +370,10 @@ tailscale serve reset      # 撤销
 - 会话 CRUD 往返：create → get → list → delete 全通（临时会话已删）
 - SSE：`/api/workspaces/:id/events` 连接成功、30s heartbeat 被正确解析成事件
 
-**APK**：（构建中，完成后回填路径与体积）
+**APK**：`C:\xzf\ai\open-octopus\packages\mobile\build\app\outputs\flutter-apk\app-debug.apk`
+—— debug · 192,167,146 字节（≈183 MiB，含 arm / arm64 / x64 三个 ABI）· 2026-11-26 19:51 构建完成，
+内核按 M2 代码编译。首次构建 1672s，时间几乎都花在 NDK 28.2 / CMake 3.22.1 的一次性下载上；
+M5 再出 `--release --split-per-abi` 的小包。
 
 **M2 复查（2026-11-26 晚）**
 
@@ -386,6 +389,8 @@ tailscale serve reset      # 撤销
   2 个舱、attention 去重后 2 / 1 条（均为待放行）；引用行解析出
   `任务 · #1 · xzf` 与问题原文；`/api/cabins/:id/events` 收到 `heartbeat {hello:true}`。
   当前 dev DB 没有未答提问，`ask` 信封路径由假适配器夹具覆盖（含跨 chunk SSE 分帧）。
+- 本机没有 Android 模拟器、也没有连接真机，**未做真机走查**；M2 的界面验收止于 widget
+  整链测试，Tailscale 闭环 + 真实「回复后状态更新」要装 APK 后在手机上做（§7.1）。
 
 ---
 
