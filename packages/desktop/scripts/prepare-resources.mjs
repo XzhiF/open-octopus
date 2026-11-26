@@ -181,7 +181,7 @@ for (const [label, file] of [
   ['better-sqlite3', path.join(modulesDir, 'better-sqlite3', 'build', 'Release', 'better_sqlite3.node')],
   ['node runtime', nodeDest],
   ['web index', path.join(webDest, 'index.html')],
-  ['tray icons', path.join(trayDest, process.platform === 'darwin' ? 'trayTemplate.png' : 'tray-16.png')],
+  ['tray icons', path.join(trayDest, process.platform === 'darwin' ? 'tray-mac.png' : 'tray-16.png')],
   ['core-pack skills', path.join(corePackDest, 'skills')],
 ]) {
   if (!fs.existsSync(file)) throw new Error(`missing ${label}: ${file}`)

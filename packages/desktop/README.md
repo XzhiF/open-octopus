@@ -41,8 +41,11 @@ packages/desktop/
 - **托盘菜单**：显示主窗口 / 开机自启（勾选，仅打包版可用）/ 退出 Octopus。
 - **Windows·Linux**：左键点图标回窗口，右键出菜单。图标用 `build/tray/tray-16.png` 与
   `tray-32.png` 两档（按 DPI 选），打包时由 `electron-builder.yml` 复制到 `resources/tray`。
-- **macOS**：`trayTemplate.png` 是模板图，跟随菜单栏明暗（`@2x` 自动带上）；窗口隐藏时
-  `app.dock.hide()`，重新打开再 `show()`。
+- **macOS**：菜单栏用 `tray-mac.png`（22pt，`@2x` 自动带上），彩色不模板化 —— 立绘做成
+  模板图会变成一枚实心黑圆。窗口隐藏时 `app.dock.hide()`，重新打开再 `show()`。
+- **图标来源**：`scripts/make-tray-icons.cjs` 从 exe 图标（`build/icon.png`，汐音立绘）
+  裁头部方图、提一点对比/饱和度，再圆形裁切加品牌色环。换立绘后重跑：
+  `npx electron scripts/make-tray-icons.cjs`。
 - **`--tray`**：启动后窗口不显示，只在托盘里待着（登录自启走这条）。macOS 13+ 登录项
   不传参数，改用 `app.getLoginItemSettings().wasOpenedAtLogin` 判断。
 - **图标缺失时**退回旧行为：关窗即退出，避免留下找不回的进程。

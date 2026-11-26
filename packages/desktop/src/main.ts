@@ -113,17 +113,15 @@ function trayIconPath(): string {
     ? path.join(process.resourcesPath, 'tray')
     : path.join(__dirname, '..', 'build', 'tray')
   return process.platform === 'darwin'
-    ? path.join(dir, 'trayTemplate.png')
+    ? path.join(dir, 'tray-mac.png')
     : path.join(dir, 'tray-16.png')
 }
 
 function loadTrayIcon(): NativeImage {
   if (process.platform === 'darwin') {
-    // 文件名以 Template 结尾，Electron 会自动认成模板图（跟随菜单栏明暗变色），
-    // 同级 trayTemplate@2x.png 会被自动带上。
-    const image = nativeImage.createFromPath(trayIconPath())
-    image.setTemplateImage(true)
-    return image
+    // 图标是汐音立绘（彩色圆形头像 + 品牌色环），不能设成模板图 ——
+    // 模板化会把整块实心区域压成一枚黑圆。同名 tray-mac@2x.png 自动带上。
+    return nativeImage.createFromPath(trayIconPath())
   }
   // Windows / Linux：1x、2x 两档都塞进去，系统按 DPI 挑最合适的一张。
   const dir = path.dirname(trayIconPath())
