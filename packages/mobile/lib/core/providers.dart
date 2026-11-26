@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart' show CancelToken;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'api.dart';
@@ -5,6 +6,7 @@ import 'http.dart';
 import 'models/cabin.dart';
 import 'models/chat.dart';
 import 'models/device.dart';
+import 'models/sse.dart';
 import 'models/task.dart';
 import 'storage.dart';
 
@@ -206,6 +208,41 @@ final cabinDetailProvider =
   final api = ref.watch(apiProvider);
   if (api == null) throw ApiException('还没选设备', kind: 'network');
   return api.cabin(cabinId);
+});
+
+/// 舱事件流（断线自动重连）。`cabin_view` / `cabin_status` 一到，舱页重拉快照；
+/// heartbeat 只用来确认链路还活着。切后台断流后回来会自动续上。
+final cabinEventsProvider =
+    StreamProvider.autoDispose.family<SseEvent, String>((ref, cabinId) async* {
+  final api = ref.watch(apiProvider);
+  if (api == null) return;
+  final cancel = CancelToken();
+  ref.onDispose(() => cancel.cancel('dispose'));
+  var failures = 0;
+  while (!cancel.isCancelled) {
+    try {
+      await for (final event in api.cabinEvents(cabinId, cancelToken: cancel)) {
+        failures = 0;
+        yield event;
+      }
+    } on ApiException catch (error) {
+      if (cancel.isCancelled) return;
+      if (error.kind == 'unauthorized') rethrow;
+      // 4xx 不是断线（老服务没有这个端点 / 舱被删了）：别无限重试烧电。
+      final code = error.statusCode;
+      if (code != null && code >= 400 && code < 500) return;
+      failures++;
+    } catch (_) {
+      if (cancel.isCancelled) return;
+      failures++;
+    }
+    if (cancel.isCancelled) return;
+    // 1.5s → 3s → 6s 封顶；收到任何事件就归零。
+    final backoff = failures <= 1 ? 1.5 : (failures == 2 ? 3.0 : 6.0);
+    await Future<void>.delayed(
+      Duration(milliseconds: (backoff * 1000).round()),
+    );
+  }
 });
 
 final sessionsProvider =

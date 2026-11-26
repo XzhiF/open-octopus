@@ -324,6 +324,31 @@ tailscale serve reset      # 撤销
 
 **验证**：见 §11.1。
 
+### 2026-11-26 · M2 落地（`packages/mobile`）
+
+| 项 | 状态 |
+|---|---|
+| attention 模型：`ask` 信封（decision / phase / message_id）、`subject`、`start_kind`、`awaiting` | ✅ |
+| 列表口径：只列 `awaiting=person`、按票据（`ask_id`）去重、按 stage 排序；`notice`（已完成知会）不进待办 —— 与 PC inbox 同规则 | ✅ |
+| 点待你定 → 打开舱主会话（顶栏切「回复 QUOTE」），顶部挂引用条（问题原文 / 来源 / 轮次 / 依据条数） | ✅ |
+| 引用条：✕ 关闭（左置）、placeholder 切「回复上面这个问题…」、回复后保留上下文、依据不另开面板 | ✅ |
+| 状态刷新：`GET /api/cabins/:id/events`（断线重连）+ `cabin_view` 去抖刷新；回前台 / 从会话返回再拉快照 | ✅ |
+| 离线 / 未就绪提示条 + 重试；空态 / 失败重试沿用 | ✅ |
+| 测试：42 passed（单元 31 · 组件 8 · 整链 3） | ✅ |
+
+**与计划的偏差（有意）**
+
+1. **依据条数**从会话快照里数：镜像卡之前、同一条用户提问内的 `▸ tool` 行；快照里没加载到那条消息时
+   不显示（不编数）。
+2. 只打开**舱主会话**（镜像卡所在）。`ask.author_session_id` 是作者线程、可能跨工作区，手机端不跳。
+3. 待验收 / 待放行也走「回到会话 + 引用条」，不做验收矩阵 —— 与 design 34 §3「状态由 agent 改」一致。
+4. 离线态不另开页面：在顶栏下面压一条可重试的提示，列表仍可下拉。
+5. `notice`（已完成 / 委派完成知会）不进「待你定」，与 PC inbox 的「要我处理 N」口径一致。
+6. 会话定位：优先舱主会话；主会话已不在会话列表里（被归档 / 清库）就退回最新一条；
+   一条都没有时不硬闯，提示「去会话页」新建。
+
+**验证**：见 §11.1 的「M2 复查」。
+
 ### 11.1 构建与联调记录
 
 **工具链（2026-11-26 装在这台机器上）**
@@ -347,6 +372,21 @@ tailscale serve reset      # 撤销
 
 **APK**：（构建中，完成后回填路径与体积）
 
+**M2 复查（2026-11-26 晚）**
+
+- `flutter analyze`：**0 error / 0 warning**；31 条 info（material 迁移提示 + 少量风格建议：
+  多下划线占位、null-aware 元素等）。
+- `flutter test`：**42 passed** —— SSE 分帧 7 · 模型解析 9 · attention/去重排序/引用 11 ·
+  API/SSE 胶水 4 · 引用条组件 5 · 会话引用态 3 · 整链 3（待你定→会话、cabin_view→快照刷新、
+  无会话兜底）。
+  其中整链用假 HTTP 适配器驱动真实 `CabinScreen` → 点一条 → `SessionScreen`：
+  引用条问题原文、来源行、`依据 2 条`、placeholder 切换都在真实 widget 树上验证；
+  再推一条 `cabin_view`，去抖后重拉快照、待你定清空。
+- 本机联调（`dart run tool/smoke.dart http://127.0.0.1:3001 --attention --cabin-events=2`）：
+  2 个舱、attention 去重后 2 / 1 条（均为待放行）；引用行解析出
+  `任务 · #1 · xzf` 与问题原文；`/api/cabins/:id/events` 收到 `heartbeat {hello:true}`。
+  当前 dev DB 没有未答提问，`ask` 信封路径由假适配器夹具覆盖（含跨 chunk SSE 分帧）。
+
 ---
 
 ## 12. 变更记录
@@ -354,3 +394,4 @@ tailscale serve reset      # 撤销
 | 日期 | 变更 |
 |---|---|
 | 2026-11-26 | 首版：基于 V1 定版原型拆 M0–M5；Flutter / `packages/mobile`；鉴权与远程拉起后置 |
+| 2026-11-26 | M1 / M2 落地记录：真实舱与会话、待你定引用条、舱事件刷新与离线态 |

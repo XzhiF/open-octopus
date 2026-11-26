@@ -4,36 +4,49 @@ import 'package:go_router/go_router.dart';
 
 import '../../app/theme.dart';
 import '../../core/models/chat.dart';
+import '../../core/models/quote.dart';
 import '../../core/providers.dart';
 import '../../widgets/composer.dart';
 import '../../widgets/crew_video.dart';
 import '../../widgets/octo_bar.dart';
 import '../../widgets/panel.dart';
+import '../../widgets/quote_bar.dart';
 import '../../widgets/scene_background.dart';
 import '../../widgets/states.dart';
 import '../../widgets/tui.dart';
 import 'chat_controller.dart';
 
-/// F · 会话：桌面 TUI 语法原样，发消息走 POST 内联 SSE，逐帧追加。
+/// F / G · 会话：桌面 TUI 语法原样，发消息走 POST 内联 SSE，逐帧追加。
+/// 从「待你定」点进来时带一条引用上下文（G），回复仍然是正常消息。
 class SessionScreen extends ConsumerStatefulWidget {
-  const SessionScreen({super.key, required this.workspaceId, required this.sessionId});
+  const SessionScreen({
+    super.key,
+    required this.workspaceId,
+    required this.sessionId,
+    this.quote,
+  });
 
   final String? workspaceId;
   final String sessionId;
+  final SessionQuote? quote;
 
   @override
   ConsumerState<SessionScreen> createState() => _SessionScreenState();
 }
 
-class _SessionScreenState extends ConsumerState<SessionScreen> {
+class _SessionScreenState extends ConsumerState<SessionScreen>
+    with WidgetsBindingObserver {
   ChatController? _chat;
   final ScrollController _scroll = ScrollController();
   bool _atBottom = true;
   bool _bootError = false;
+  SessionQuote? _quote;
 
   @override
   void initState() {
     super.initState();
+    _quote = widget.quote;
+    WidgetsBinding.instance.addObserver(this);
     _scroll.addListener(_onScroll);
     final api = ref.read(apiProvider);
     if (api == null) {
@@ -50,10 +63,20 @@ class _SessionScreenState extends ConsumerState<SessionScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _chat?.removeListener(_onChanged);
     _chat?.dispose();
     _scroll.dispose();
     super.dispose();
+  }
+
+  /// 切后台断流后回来：先拉一次快照（流里丢的帧以服务端为准）。
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    final chat = _chat;
+    if (chat == null || chat.sending) return;
+    chat.load();
   }
 
   void _onScroll() {
@@ -78,6 +101,10 @@ class _SessionScreenState extends ConsumerState<SessionScreen> {
     final device = ref.watch(currentDeviceProvider);
     final videoEnabled = ref.watch(crewVideoProvider);
     final chat = _chat;
+    final quote = _quote;
+    final evidenceCount = quote == null
+        ? null
+        : countEvidence(chat?.session?.messages ?? const [], quote.messageId);
 
     return Scaffold(
       backgroundColor: Octo.screen,
@@ -88,11 +115,14 @@ class _SessionScreenState extends ConsumerState<SessionScreen> {
           child: Column(
             children: [
               OctoBar(
-                title: chat?.session?.displayTitle ?? '会话',
-                num: 'CHAT',
+                // 引用态按原型 G 屏：标题「回复 QUOTE」，副标题是设备 · 那一档状态。
+                title: quote != null ? '回复' : (chat?.session?.displayTitle ?? '会话'),
+                num: quote != null ? 'QUOTE' : 'CHAT',
                 subtitle: [
                   device?.name,
-                  widget.workspaceId == null ? '不归属任何舱' : '舱会话',
+                  quote != null
+                      ? quote.stage.label
+                      : (widget.workspaceId == null ? '不归属任何舱' : '舱会话'),
                 ].whereType<String>().join(' · '),
                 onBack: () => context.pop(),
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
@@ -103,9 +133,18 @@ class _SessionScreenState extends ConsumerState<SessionScreen> {
                   ),
                 ],
               ),
+              if (quote != null)
+                QuoteBar(
+                  quote: quote,
+                  evidenceCount: evidenceCount,
+                  onClose: () => setState(() => _quote = null),
+                ),
               Expanded(child: _buildBody(chat, videoEnabled)),
               Composer(
-                placeholder: '说点什么…',
+                placeholder: quote == null ? '说点什么…' : '回复上面这个问题…',
+                helper: quote == null
+                    ? null
+                    : '说清楚就行：清掉 / 先别动 / 只删 spec 不动验收清单',
                 sending: chat?.sending ?? false,
                 enabled: chat != null && !_bootError,
                 chips: const ['继续', '停下', '看 diff', '切到验收'],

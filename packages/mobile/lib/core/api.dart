@@ -162,6 +162,22 @@ class OctopusApi {
     );
   }
 
+  /// 舱级事件：`cabin_view`（attention 变脏）/ `cabin_status` / `tree_changed`，
+  /// 30s 一条 heartbeat。手机端靠它即时刷新「待你定」，不轮询。
+  Stream<SseEvent> cabinEvents(String cabinId, {CancelToken? cancelToken}) {
+    return _sse(
+      () => _dio.get<ResponseBody>(
+        '/api/cabins/$cabinId/events',
+        cancelToken: cancelToken,
+        options: Options(
+          responseType: ResponseType.stream,
+          headers: {'Accept': 'text/event-stream'},
+          receiveTimeout: const Duration(minutes: 30),
+        ),
+      ),
+    );
+  }
+
   Stream<SseEvent> _sse(Future<Response<ResponseBody>> Function() request) async* {
     Response<ResponseBody> resp;
     try {

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -6,6 +8,8 @@ import '../../app/theme.dart';
 import '../../core/format.dart';
 import '../../core/models/cabin.dart';
 import '../../core/models/chat.dart';
+import '../../core/models/device.dart';
+import '../../core/models/quote.dart';
 import '../../core/models/task.dart';
 import '../../core/providers.dart';
 import '../../widgets/octo_bar.dart';
@@ -17,6 +21,7 @@ enum CabinTab { attention, sessions, tasks }
 
 /// E · 舱内三块：待你定 / 会话 / 任务（任务只读）。
 /// 硬规则：界面上不出现「改状态」的按钮 —— 点开回到会话，人用自然话说。
+/// 状态变化靠 `cabins/:id/events`（cabin_view）+ 快照刷新，不轮询。
 class CabinScreen extends ConsumerStatefulWidget {
   const CabinScreen({super.key, required this.cabinId});
 
@@ -26,8 +31,40 @@ class CabinScreen extends ConsumerStatefulWidget {
   ConsumerState<CabinScreen> createState() => _CabinScreenState();
 }
 
-class _CabinScreenState extends ConsumerState<CabinScreen> {
+class _CabinScreenState extends ConsumerState<CabinScreen>
+    with WidgetsBindingObserver {
   CabinTab _tab = CabinTab.attention;
+  Timer? _refreshDebounce;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _refreshDebounce?.cancel();
+    super.dispose();
+  }
+
+  /// 切后台断流后回来：先拉一次快照（SSE 在后台可能被系统掐掉）。
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _refreshNow();
+  }
+
+  /// 服务端会连发几条 cabin_view（提问 / 决策 / 委派各自一次），合并成一次拉取。
+  void _scheduleRefresh() {
+    _refreshDebounce?.cancel();
+    _refreshDebounce = Timer(const Duration(milliseconds: 450), _refreshNow);
+  }
+
+  void _refreshNow() {
+    if (!mounted) return;
+    ref.invalidate(cabinDetailProvider(widget.cabinId));
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -36,11 +73,23 @@ class _CabinScreenState extends ConsumerState<CabinScreen> {
     final cabin = detail?.cabin;
     final workspaceId = cabin?.workspaceId;
     final device = ref.watch(currentDeviceProvider);
+    final status = device == null
+        ? DeviceStatus.unknown
+        : (ref.watch(deviceStatusProvider(device.id)).value ?? DeviceStatus.unknown);
+
+    // 舱事件：attention / 状态一变就重拉快照（见 providers.cabinEventsProvider）。
+    ref.listen(cabinEventsProvider(widget.cabinId), (_, next) {
+      final event = next.value;
+      if (event == null) return;
+      if (event.event == 'cabin_view' || event.event == 'cabin_status') {
+        _scheduleRefresh();
+      }
+    });
 
     final sessionsAsync = workspaceId == null ? null : ref.watch(sessionsProvider(workspaceId));
     final tasksAsync = ref.watch(cabinTasksProvider(widget.cabinId));
 
-    final attention = detail?.attention ?? const <AttentionItem>[];
+    final attention = detail?.attentionList ?? const <AttentionItem>[];
     final sessions = sessionsAsync?.value ?? const <SessionRef>[];
     final tasks = tasksAsync.value ?? const <TaskItem>[];
 
@@ -58,6 +107,13 @@ class _CabinScreenState extends ConsumerState<CabinScreen> {
                 onBack: () => context.pop(),
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
               ),
+              _LinkBanner(
+                status: status,
+                onRetry: () {
+                  if (device != null) ref.invalidate(deviceStatusProvider(device.id));
+                  _refreshNow();
+                },
+              ),
               _Segmented(
                 value: _tab,
                 onChanged: (v) => setState(() => _tab = v),
@@ -72,6 +128,7 @@ class _CabinScreenState extends ConsumerState<CabinScreen> {
                   color: Octo.teal,
                   backgroundColor: Octo.indigo2,
                   onRefresh: () async {
+                    if (device != null) ref.invalidate(deviceStatusProvider(device.id));
                     ref.invalidate(cabinDetailProvider(widget.cabinId));
                     ref.invalidate(cabinTasksProvider(widget.cabinId));
                     if (workspaceId != null) ref.invalidate(sessionsProvider(workspaceId));
@@ -94,9 +151,15 @@ class _CabinScreenState extends ConsumerState<CabinScreen> {
                     ),
                     data: (_) => switch (_tab) {
                       CabinTab.attention => _AttentionList(
-                          cabin: cabin!,
                           items: attention,
-                          workspaceId: workspaceId,
+                          onOpen: cabin == null
+                              ? null
+                              : (item) => _openAttention(
+                                    cabin,
+                                    item,
+                                    sessions,
+                                    sessionsAsync?.value != null,
+                                  ),
                         ),
                       CabinTab.sessions => _SessionsList(
                           workspaceId: workspaceId,
@@ -136,6 +199,42 @@ class _CabinScreenState extends ConsumerState<CabinScreen> {
         ),
       ),
     );
+  }
+
+  /// 点「待你定」= 回到舱主会话，带上这一问的引用；回来再拉一次快照。
+  ///
+  /// 会话定位：优先舱主会话；主会话已不在列表里（被归档 / 清库）就退回最新一条。
+  /// 一条会话都没有时不硬闯，给个「去会话页」的口子让人先建。
+  Future<void> _openAttention(
+    Cabin cabin,
+    AttentionItem item,
+    List<SessionRef> sessions,
+    bool sessionsReady,
+  ) async {
+    var sessionId = cabin.mainSessionId;
+    if (sessionsReady) {
+      final mainListed = sessionId != null && sessions.any((s) => s.session.id == sessionId);
+      if (!mainListed) sessionId = sessions.isEmpty ? null : sessions.first.session.id;
+    }
+    final workspaceId = cabin.workspaceId;
+    if (sessionId == null || workspaceId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('这个舱还没有会话 —— 建一个，说第一句话'),
+          action: SnackBarAction(
+            label: '去会话页',
+            onPressed: () {
+              if (mounted) setState(() => _tab = CabinTab.sessions);
+            },
+          ),
+        ),
+      );
+      return;
+    }
+    final quote = SessionQuote.fromAttention(item);
+    await context.push('/session/$workspaceId/$sessionId', extra: quote);
+    if (!mounted) return;
+    _refreshNow();
   }
 
   Future<void> _createSession(String workspaceId) async {
@@ -258,16 +357,84 @@ class _SegItem extends StatelessWidget {
   }
 }
 
-class _AttentionList extends StatelessWidget {
-  const _AttentionList({
-    required this.cabin,
-    required this.items,
-    required this.workspaceId,
-  });
+/// 链路状态条：离线 / 未就绪时压一条，别让人对着转圈猜。
+class _LinkBanner extends StatelessWidget {
+  const _LinkBanner({required this.status, this.onRetry});
 
-  final Cabin cabin;
+  final DeviceStatus status;
+  final VoidCallback? onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final Color color;
+    final String text;
+    switch (status) {
+      case DeviceStatus.offline:
+        color = Octo.red;
+        text = '离线：电脑没开 / 不在同一 Tailscale 网络';
+      case DeviceStatus.notReady:
+        color = Octo.amber;
+        text = '在线 · 未就绪：服务起来了，还在准备';
+      case DeviceStatus.running:
+      case DeviceStatus.unknown:
+        return const SizedBox.shrink();
+    }
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
+      child: RoundedPanel(
+        padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+        borderColor: color.withValues(alpha: .32),
+        gradient: LinearGradient(
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
+          colors: [color.withValues(alpha: .1), const Color(0x990E0B22)],
+        ),
+        child: Row(
+          children: [
+            Icon(
+              status == DeviceStatus.offline ? Icons.cloud_off : Icons.hourglass_empty,
+              size: 14,
+              color: color,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                text,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontFamily: Octo.mono,
+                  fontSize: 10,
+                  color: Octo.dim,
+                ),
+              ),
+            ),
+            if (onRetry != null)
+              TextButton(
+                onPressed: onRetry,
+                style: TextButton.styleFrom(
+                  foregroundColor: color,
+                  minimumSize: const Size(0, 30),
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(999),
+                    side: BorderSide(color: color.withValues(alpha: .35)),
+                  ),
+                ),
+                child: const Text('重试', style: TextStyle(fontSize: 10.5)),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AttentionList extends StatelessWidget {
+  const _AttentionList({required this.items, this.onOpen});
+
   final List<AttentionItem> items;
-  final String? workspaceId;
+  final ValueChanged<AttentionItem>? onOpen;
 
   @override
   Widget build(BuildContext context) {
@@ -278,32 +445,19 @@ class _AttentionList extends StatelessWidget {
           SizedBox(height: 80),
           EmptyState(
             title: '这儿没有等你的事',
-            detail: '有待你定 / 待验收的时候会出现在这里',
+            detail: '有待你定 / 待验收的时候会出现在这里\n状态由 agent 改，你只管说话',
           ),
         ],
       );
     }
-    final sorted = [...items]..sort((a, b) {
-        if (a.stage.isReview != b.stage.isReview) return a.stage.isReview ? -1 : 1;
-        return 0;
-      });
     return ListView(
       physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(16, 2, 16, 16),
       children: [
-        for (final item in sorted) ...[
+        for (final item in items) ...[
           _AttentionCard(
             item: item,
-            onTap: () {
-              final sid = cabin.mainSessionId;
-              if (sid == null || workspaceId == null) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('这个舱还没有主会话')),
-                );
-                return;
-              }
-              context.push('/session/$workspaceId/$sid');
-            },
+            onTap: onOpen == null ? null : () => onOpen!(item),
           ),
           const SizedBox(height: 10),
         ],
@@ -325,19 +479,21 @@ class _AttentionList extends StatelessWidget {
 }
 
 class _AttentionCard extends StatelessWidget {
-  const _AttentionCard({required this.item, required this.onTap});
+  const _AttentionCard({required this.item, this.onTap});
 
   final AttentionItem item;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    final color = item.stage.isReview ? Octo.pink : Octo.amber;
-    final source = [
-      item.source,
-      item.handle,
-      item.repo,
-    ].whereType<String>().where((s) => s.isNotEmpty).join(' · ');
+    final color = switch (item.stage) {
+      AttentionStage.review => Octo.pink,
+      AttentionStage.blocked => Octo.red,
+      AttentionStage.notice => Octo.teal,
+      _ => Octo.amber,
+    };
+    final body = item.quoteText;
+    final showBody = body.trim().isNotEmpty && body.trim() != item.subjectName.trim();
 
     return AccentPanel(
       accent: color,
@@ -352,7 +508,7 @@ class _AttentionCard extends StatelessWidget {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  source.isEmpty ? '舱内事项' : source,
+                  item.sourceLine,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
@@ -367,7 +523,9 @@ class _AttentionCard extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            item.title,
+            item.subjectName,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
             style: const TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w600,
@@ -375,10 +533,12 @@ class _AttentionCard extends StatelessWidget {
               color: Colors.white,
             ),
           ),
-          if (item.question != null && item.question!.trim().isNotEmpty) ...[
+          if (showBody) ...[
             const SizedBox(height: 6),
             Text(
-              item.question!,
+              body,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
               style: const TextStyle(
                 fontFamily: Octo.mono,
                 fontSize: 10.5,
@@ -386,26 +546,17 @@ class _AttentionCard extends StatelessWidget {
                 color: Octo.ink2,
               ),
             ),
-          ] else if (item.detail != null && item.detail!.trim().isNotEmpty) ...[
-            const SizedBox(height: 6),
-            Text(
-              item.detail!,
-              style: const TextStyle(
-                fontFamily: Octo.mono,
-                fontSize: 10.5,
-                height: 1.65,
-                color: Octo.dim,
+          ],
+          if (onTap != null) ...[
+            const SizedBox(height: 10),
+            const Align(
+              alignment: Alignment.centerRight,
+              child: Text(
+                '去会话里说 ›',
+                style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Octo.teal),
               ),
             ),
           ],
-          const SizedBox(height: 10),
-          const Align(
-            alignment: Alignment.centerRight,
-            child: Text(
-              '去会话里说 ›',
-              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Octo.teal),
-            ),
-          ),
         ],
       ),
     );

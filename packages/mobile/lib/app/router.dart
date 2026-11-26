@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../core/models/quote.dart';
 import '../features/cabins/cabin_list_screen.dart';
 import '../features/cabins/cabin_screen.dart';
 import '../features/chat/global_chat_screen.dart';
@@ -32,6 +33,7 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => SessionScreen(
           workspaceId: state.pathParameters['workspaceId'],
           sessionId: state.pathParameters['sessionId'] ?? '',
+          quote: state.extra is SessionQuote ? state.extra! as SessionQuote : null,
         ),
       ),
       GoRoute(path: '/chat', builder: (context, state) => const GlobalChatScreen()),

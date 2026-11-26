@@ -1,10 +1,10 @@
-# Octopus 手机端（Flutter · M1）
+# Octopus 手机端（Flutter · M2）
 
 在外面把家里那台机器上的活推进一格：看一眼有什么等你、说一句话、走了。
 
 > 设计基线：`docs/cabin-design/mobile-v1.html`（V1 定版）
 > 落地计划：`docs/cabin-design/design/35-mobile-dev-plan.md`
-> 当前阶段：**M1 · 真实数据（舱与会话）**
+> 当前阶段：**M2 · 待你定与回复（引用条 + 舱事件刷新）**
 
 ## 跑起来
 
@@ -51,18 +51,18 @@ tailscale serve --bg --https=443 http://127.0.0.1:47820
 lib/
 ├── main.dart / app/        ← 入口 · 主题 token · go_router
 ├── core/
-│   ├── api.dart            ← 12 个端点的薄封装（舱 / 会话 / 任务 / SSE）
+│   ├── api.dart            ← 13 个端点的薄封装（舱 / 舱事件 / 会话 / 任务 / SSE）
 │   ├── http.dart           ← dio 工厂 + 错误归一 + 探活
-│   ├── providers.dart      ← Riverpod：设备状态 / 舱 / 会话列表 / 任务
+│   ├── providers.dart      ← Riverpod：设备状态 / 舱 / 会话列表 / 任务 / 舱事件流
 │   ├── storage.dart        ← 设备清单与偏好（SharedPreferences）
-│   └── models/             ← 手写模型（Device / Cabin / Attention / Chat / Task / SSE）
+│   └── models/             ← 手写模型（Device / Cabin / Attention+Ask 信封 / Chat / Task / SSE / Quote）
 ├── features/
 │   ├── devices/            ← A 设备列表 · B 添加设备
 │   ├── cabins/             ← D 舱列表 · E 舱内三块（待你定 / 会话 / 任务）
-│   ├── chat/               ← F 会话流 · H 单独会话 · ChatController（内联 SSE）
+│   ├── chat/               ← F 会话流 · G 引用条 · H 单独会话 · ChatController（内联 SSE）
 │   ├── tasks/              ← 任务只读详情
 │   └── settings/           ← 设备管理 · 动效开关 · 立绘视频（实验）
-└── widgets/                ← 场景底 / 星流 / 立绘 / 圆角面板 / TUI 转录 / 输入区
+└── widgets/                ← 场景底 / 星流 / 立绘 / 圆角面板 / TUI 转录 / 输入区 / 引用条
 ```
 
 ## M1 做了什么
@@ -74,12 +74,38 @@ lib/
 - 单独会话：`/api/chat/global/sessions`。
 - 任务：只读列表与详情。
 
+## M2 做了什么
+
+- **待你定列表**：只列 `awaiting=person`，按票据（`ask_id`）去重、按 stage 排序 —— 口径与 PC inbox 一致；
+  卡片显示主体名 / 来源行（`任务 · #1 · P2 · 第 2 轮`）/ 那一问。
+- **引用条**：点任一待办回到舱主会话，顶部挂「正在回复 + 问题原文 + 来源 + 依据 N 条」；
+  ✕ 可关；输入框 placeholder 切到「回复上面这个问题…」；回复后引用仍留着，接着聊同一件事。
+- **依据条数**从会话快照里数（镜像卡之前、同一轮提问内的 `▸ tool` 行），加载不到就不显示。
+- **状态刷新**：订阅 `GET /api/cabins/:id/events`（断线自动重连），`cabin_view` / `cabin_status`
+  一到就去抖重拉快照；回前台、从会话页返回也会再拉一次。
+- **离线 / 未就绪**：顶栏下压一条可重试的提示；空态与失败重试沿用 M1。
+- 硬规则不变：界面上没有「通过 / 退回」按钮，状态由 agent 改，人只管说话。
+
+## 测试
+
+```bash
+flutter analyze     # 0 error / 0 warning
+flutter test        # 42 passed
+dart run tool/smoke.dart http://127.0.0.1:3001 --attention --cabin-events=2   # 连真实 dev server
+```
+
+- 单元：模型解析、`ask` 信封、attention 去重 / 排序、引用与依据条数、SSE 分帧。
+- 胶水：假 HTTP 适配器跑真实 `OctopusApi`（JSON 解析 + 跨 chunk SSE）。
+- 组件 / 流程：`QuoteBar` 渲染与关闭；真实 `CabinScreen` → 点待办 → `SessionScreen`
+  整链（引用条、placeholder、依据条数）；`cabin_view` 事件去抖后重拉快照；
+  舱里一条会话都没有时提示「去会话页」。
+
 ## 没做（按计划后置）
 
-- **M2**：待你定 → 引用条（点一条回到会话、问题挂到输入框上方）。
 - **M3**：设备令牌 + 配对码 + 扫码（现在手填地址直连 tailnet）。
 - **M4**：远程拉起（未启动的机器从手机上拉起来）。
 - 推送：v1 不做；兜底自建 ntfy（见 `docs/research/mobile-remote-control.md` §4.3）。
+- 验收矩阵 / 放行开关：手机端只带话，明细回桌面。
 
 ## 已知技术风险
 

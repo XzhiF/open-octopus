@@ -9,6 +9,7 @@ import 'dart:io';
 
 import 'package:octopus_mobile/core/api.dart';
 import 'package:octopus_mobile/core/models/chat.dart';
+import 'package:octopus_mobile/core/models/quote.dart';
 
 Future<void> main(List<String> args) async {
   final base = args.isNotEmpty && !args.first.startsWith('--')
@@ -16,6 +17,7 @@ Future<void> main(List<String> args) async {
       : 'http://127.0.0.1:3001';
   final sendIndex = args.indexOf('--send');
   final sendText = sendIndex >= 0 && args.length > sendIndex + 1 ? args[sendIndex + 1] : null;
+  final showAttention = args.contains('--attention');
 
   final api = OctopusApi(base);
   stdout.writeln('→ $base');
@@ -25,11 +27,26 @@ Future<void> main(List<String> args) async {
     stdout.writeln('cabins: ${cabins.length}');
     for (final cabin in cabins) {
       final detail = await api.attention(cabin.id);
+      final list = detail.attentionList;
       stdout.writeln(
         '  · ${cabin.name}  [${cabin.status}]  '
         'wait=${detail.waitCount} review=${detail.reviewCount} running=${detail.health.running}'
-        '  ws=${cabin.workspaceId ?? '-'}',
+        '  attention=${list.length}  ws=${cabin.workspaceId ?? '-'}',
       );
+      for (final a in list) {
+        final q = SessionQuote.fromAttention(a);
+        stdout.writeln(
+          '    · ${a.stage.label} · ${a.subjectName}  [${a.sourceLine}]'
+          '${a.ask == null ? '' : '  ask=${a.ask!.askId}'}',
+        );
+        stdout.writeln('      q: ${_clip(q.question, 100)}');
+        if (showAttention) {
+          stdout.writeln(
+            '      key=${a.dedupeKey} handle=${a.handle ?? '-'} '
+            'phase=${a.phaseLabel ?? '-'} msg=${a.ask?.messageId ?? '-'}',
+          );
+        }
+      }
 
       final tasks = await api.tasks(cabinId: cabin.id);
       stdout.writeln('    tasks: ${tasks.length}'
@@ -108,6 +125,24 @@ Future<void> main(List<String> args) async {
         await sub.cancel();
         stdout.writeln('  events: $count');
       }
+    }
+
+    final cabinEventsArg =
+        args.firstWhere((a) => a.startsWith('--cabin-events'), orElse: () => '');
+    if (cabinEventsArg.isNotEmpty && cabins.isNotEmpty) {
+      final secs = cabinEventsArg.contains('=')
+          ? (int.tryParse(cabinEventsArg.split('=').last) ?? 2)
+          : 2;
+      final cabinId = cabins.first.id;
+      stdout.writeln('→ cabin events (${cabins.first.name}) for ${secs}s');
+      var count = 0;
+      final sub = api.cabinEvents(cabinId).listen((ev) {
+        count++;
+        stdout.writeln('  sse ${ev.event} ${_clip(ev.data, 80)}');
+      }, onError: (Object e) => stdout.writeln('  sse error: $e'));
+      await Future<void>.delayed(Duration(seconds: secs));
+      await sub.cancel();
+      stdout.writeln('  events: $count');
     }
 
     stdout.writeln('\nOK');

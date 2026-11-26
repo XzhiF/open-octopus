@@ -111,6 +111,7 @@ packages/mobile/build/
 packages/mobile/.flutter-plugins
 packages/mobile/.flutter-plugins-dependencies
 packages/mobile/android/.gradle/
+packages/mobile/android/.kotlin/
 packages/mobile/android/local.properties
 packages/mobile/android/app/debug/
 packages/mobile/android/app/release/
