@@ -330,12 +330,14 @@ export function CockpitItemsWindow() {
 
   // ── 投递 ───────────────────────────────────────────────────────────────
   const deliverList = useCallback((list: CabinItemDTO[]) => {
+    // 先落盘最新正文：服务端兜底按 cabin_items 真源比对，不能让 600ms 防抖
+    // 把刚写的正文挡在投递之后（2026-11-26 用户事故）。
+    flushCommit()
     const result = deliver(list)
     if (!result.ok) {
       toast.error(result.reason === 'no-chat' ? '主对话未就绪 · 先完成舱初始化' : '没有可投递的事项')
       return
     }
-    flushCommit()
     setPicks([])
     setCabinItemsOpen(false)
     if (result.queued) toast(`主对话在跑 · 已排队（第 ${result.position} 位）`)
@@ -343,11 +345,11 @@ export function CockpitItemsWindow() {
   }, [deliver, flushCommit])
 
   const stageList = useCallback((list: CabinItemDTO[]) => {
+    flushCommit()
     if (!stage(list)) {
       toast.error('主对话未就绪 · 先完成舱初始化')
       return
     }
-    flushCommit()
     setPicks([])
     setCabinItemsOpen(false)
     toast('已带到输入框 · 发出去才算交付')

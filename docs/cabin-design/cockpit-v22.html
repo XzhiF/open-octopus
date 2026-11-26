@@ -4143,7 +4143,9 @@ function openItemCount(){return state.items.filter(itemOpen).length;}
 function renderItemBadge(){const b=$('#itemBadge');if(!b)return;const n=openItemCount();b.hidden=n===0;b.textContent=String(n);}
 function pickedItems(){return state.itemPicks.map(itemById).filter(itemOpen);}
 function markItemsDelivered(ids){const at=Date.now();ids.forEach(id=>{const it=itemById(id);if(it&&it.status==='todo'){it.status='delivered';it.deliveredAt=at;}});renderItemBadge();if(state.itemsOpen)renderItemsWin();}
-function itemMsgText(list){return '处理这几条事项：\n'+list.map(i=>'- #IT-'+i.n+'　'+i.title).join('\n');}
+/* 投递正文 = 标题做索引 + 正文逐字（2026-11-26 用户事故：只发标题，汐音拿不到需求）。
+   生产口径在 shared/formatCabinItemDeliveryText（含超长截断与回读指路）。 */
+function itemMsgText(list){return '处理这几条事项：\n'+list.map(i=>'### #IT-'+i.n+' '+i.title+'（'+i.kind+'）\n'+(i.body||'')).join('\n');}
 
 function toggleItemsWin(next){
  const open=next==null?!state.itemsOpen:!!next;

@@ -50,8 +50,15 @@ function item(partial: Partial<CabinItemDTO> & { id: string; seq: number; title:
 }
 
 const ITEMS: CabinItemDTO[] = [
-  item({ id: 'ci-2', seq: 2, title: '时间列太窄', created_at: '2026-11-24T03:00:00.000Z' }),
-  item({ id: 'ci-3', seq: 3, title: 'Esc 后焦点丢失', kind: 'fix' }),
+  item({
+    id: 'ci-2', seq: 2, title: '时间列太窄',
+    body: '长提交时间被截成「2026-11-23 ...」；按原型给时间列固定宽度。',
+    created_at: '2026-11-24T03:00:00.000Z',
+  }),
+  item({
+    id: 'ci-3', seq: 3, title: 'Esc 后焦点丢失', kind: 'fix',
+    body: '关掉详情后键盘不能继续操作编队，得再点一下。',
+  }),
   item({
     id: 'ci-4', seq: 4, title: '头像偶尔不加载', kind: 'fix', status: 'delivered',
     delivered_at: '2026-11-24T01:30:00.000Z',
@@ -205,6 +212,9 @@ describe('CockpitItemsWindow — 舱内事项', () => {
     const [text, meta] = (chat.submit as ReturnType<typeof vi.fn>).mock.calls[0]
     expect(text).toContain('#IT-2')
     expect(text).toContain('#IT-3')
+    // 正文必须跟着标题一起送达（2026-11-26 用户事故：#IT-1 正文 1368 字没投出去）
+    expect(text).toContain('长提交时间被截成「2026-11-23 ...」')
+    expect(text).toContain('关掉详情后键盘不能继续操作编队')
     expect(meta).toEqual({ via: 'items', itemIds: ['ci-2', 'ci-3'] })
     expect(screen.queryByTestId('cockpit-itemswin')).toBeNull()
   })
@@ -217,6 +227,7 @@ describe('CockpitItemsWindow — 舱内事项', () => {
     expect(chat.seed).toHaveBeenCalledTimes(1)
     const [text, meta] = (chat.seed as ReturnType<typeof vi.fn>).mock.calls[0]
     expect(text).toContain('#IT-2')
+    expect(text).toContain('长提交时间被截成「2026-11-23 ...」')
     expect(meta).toEqual({ via: 'items', itemIds: ['ci-2'], labels: ['#IT-2'] })
     expect(screen.queryByTestId('cockpit-itemswin')).toBeNull()
   })

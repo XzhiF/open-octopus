@@ -149,6 +149,7 @@ import { CabinInitService } from "./services/cabin/cabin-init-service"
 import { CabinCommService } from "./services/cabin/cabin-comm-service"
 import { CabinDecisionService } from "./services/cabin/cabin-decision-service"
 import { CabinDelegationService } from "./services/cabin/cabin-delegation-service"
+import { CabinItemService } from "./services/cabin/cabin-item-service"
 import { CabinDelegationDAO } from "./db/dao/cabin-delegation-dao"
 import { setCabinToolsProvider } from "./services/chat/cabin-tools"
 import { TaskHomeService, setTaskHomeResolver } from "./services/tasks/task-home-service"
@@ -1583,11 +1584,14 @@ if (shouldServe) {
           await archiveIngest.ingestTask(t.id)
         }
       })
+      // 事项读侧（2026-11-26 用户）：汐音可回读投递正文，不靠人复制粘贴。
+      const cabinItemService = new CabinItemService(cabinService.getDb())
       setCabinToolsProvider(() => ({
         service: cabinService,
         comm: cabinComm,
         decisions: cabinDecisionService,
         delegations: cabinDelegationService,
+        items: cabinItemService,
       }))
       // 2026-11-25 用户：重启即无活跃流 —— 残留 running 的委派一律落到「等你答」。
       // 进程上次死在一轮中间时（doer 已回复、状态没来得及收口），编队会一直显示

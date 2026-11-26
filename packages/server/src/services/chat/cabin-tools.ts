@@ -12,6 +12,7 @@ import type { CabinService } from "../cabin/cabin-service"
 import type { CabinCommService } from "../cabin/cabin-comm-service"
 import type { CabinDecisionService } from "../cabin/cabin-decision-service"
 import type { CabinDelegationService } from "../cabin/cabin-delegation-service"
+import type { CabinItemService } from "../cabin/cabin-item-service"
 import type { CabinBriefInput } from "../cabin/cabin-brief"
 
 export interface CabinToolsService {
@@ -19,6 +20,8 @@ export interface CabinToolsService {
   comm: CabinCommService
   decisions?: CabinDecisionService
   delegations?: CabinDelegationService
+  /** 舱内「事项」读侧（2026-11-26 用户）：投递正文被截断 / 需要原文时回读。 */
+  items?: CabinItemService
 }
 
 let provider: (() => CabinToolsService | null) | null = null
@@ -309,6 +312,60 @@ export function createCabinToolServer(cabinId: string) {
       },
     ),
     tool(
+      "cabin_list_items",
+      "读舱内「事项」（零散小待办：优化 / 修复 / 想法）。默认只列未决（todo + delivered）。正文过长会截断（body_truncated=true），完整原文用 cabin_get_item。",
+      {
+        status: z.enum(["open", "todo", "delivered", "done", "dropped", "all"]).optional()
+          .describe("过滤；默认 open = todo + delivered"),
+        ids: z.array(z.string()).optional().describe("只读这些事项 id"),
+      },
+      async (input) => {
+        const { items } = must()
+        if (!items) throw new Error("cabin item service not wired")
+        const status = input.status ?? "open"
+        const idSet = input.ids && input.ids.length > 0 ? new Set(input.ids) : null
+        const filtered = items.list(cabinId).filter((row) => {
+          if (idSet && !idSet.has(row.id)) return false
+          if (status === "all") return true
+          if (status === "open") return row.status === "todo" || row.status === "delivered"
+          return row.status === status
+        })
+        const BODY_MAX = 1200
+        const payload = filtered.slice(0, 50).map((row) => {
+          const chars = Array.from(row.body ?? "")
+          const truncated = chars.length > BODY_MAX
+          return {
+            id: row.id, seq: row.seq, kind: row.kind, status: row.status,
+            title: row.title,
+            body: truncated ? chars.slice(0, BODY_MAX).join("") : row.body,
+            body_chars: chars.length,
+            body_truncated: truncated,
+            delivered_at: row.delivered_at,
+            closed_at: row.closed_at,
+          }
+        })
+        return { content: [{ type: "text" as const, text: JSON.stringify({ items: payload, total: filtered.length }, null, 2) }] }
+      },
+    ),
+    tool(
+      "cabin_get_item",
+      "读单条事项的完整正文（投递消息里正文被截断，或需要逐字原文时用）。",
+      { item_id: z.string().min(1).describe("事项 id（不是 #IT-n 句柄；句柄用 cabin_list_items 查）") },
+      async (input) => {
+        const { items } = must()
+        if (!items) throw new Error("cabin item service not wired")
+        try {
+          const row = items.get(cabinId, input.item_id)
+          return { content: [{ type: "text" as const, text: JSON.stringify(row, null, 2) }] }
+        } catch (err) {
+          return { content: [{ type: "text" as const, text: JSON.stringify({
+            status: "not_found", item_id: input.item_id,
+            error: err instanceof Error ? err.message : String(err),
+          }) }] }
+        }
+      },
+    ),
+    tool(
       "cabin_job_trace",
       "读某作业的审计时间线（dispatch/brief/report/attention/handback/note/decision/human_input/resume）。",
       { job_id: z.string().min(1) },
@@ -380,7 +437,7 @@ export function createCabinToolServer(cabinId: string) {
     name: "octopus-cabin",
     version: "1.1.0",
     instructions:
-      "舱主的调度工具集（自己动手用通用的 Read/Edit/Bash，不在这里）。派发=建真实任务（执行在 doer/worktree）；轻活=独立委派（无 phase/验收、有归档闸）；决策用 cabin_relay_decision 代述，逐字不改。监督读派生视图；一次只问人一个结构化问题。完成回流先审一道：需要人回复就 AskUserQuestion，不需要就一句提示 + cabin_ack_attention 收项（不回复执行者）。会话跑完只是「待命」，归档由你管：用户说归档（或你判断该收口）时，可先通读会话做反思、用 octo-wiki 技能落沉淀，再调 cabin_delegation_archive；不沉淀也能直接归档。直接改了任务 home 或范围变更后，用 cabin_note_job 留痕，不要让它只存在于主对话。",
+      "舱主的调度工具集（自己动手用通用的 Read/Edit/Bash，不在这里）。派发=建真实任务（执行在 doer/worktree）；轻活=独立委派（无 phase/验收、有归档闸）；决策用 cabin_relay_decision 代述，逐字不改。监督读派生视图；一次只问人一个结构化问题。完成回流先审一道：需要人回复就 AskUserQuestion，不需要就一句提示 + cabin_ack_attention 收项（不回复执行者）。会话跑完只是「待命」，归档由你管：用户说归档（或你判断该收口）时，可先通读会话做反思、用 octo-wiki 技能落沉淀，再调 cabin_delegation_archive；不沉淀也能直接归档。直接改了任务 home 或范围变更后，用 cabin_note_job 留痕，不要让它只存在于主对话。事项投递的正文若被截断或需要逐字原文，用 cabin_list_items / cabin_get_item 回读，不要凭标题猜需求。",
     tools,
     alwaysLoad: true,
   })

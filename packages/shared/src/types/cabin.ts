@@ -330,3 +330,129 @@ export const CabinItemSchema = z.object({
   delivery_message_id: z.string().nullable(),
 })
 export type CabinItemDTO = z.infer<typeof CabinItemSchema>
+
+// ── 事项投递的正文协议（2026-11-26 用户）───────────────────────────────
+// 事故：#IT-1 标题只有 18 字、正文 1368 字，投递消息却只带了标题 —— 汐音
+// 只能凭标题猜需求。**标题是索引，正文才是需求**。口径放在 shared：
+// 客户端组装 / 服务端按库兜底 / 回执与工具共用同一份格式，不再各拼各的。
+
+/** 单条正文最多随投递送多少字（超出显式截断，完整正文用 cabin_list_items 读）。 */
+export const CABIN_ITEM_DELIVERY_BODY_MAX = 4000
+/** 一次投递所有正文合计上限；超出同样显式标注，绝不静默丢。 */
+export const CABIN_ITEM_DELIVERY_TOTAL_MAX = 12_000
+
+export interface CabinItemDeliveryLimits {
+  perBodyMax?: number
+  totalMax?: number
+}
+
+const CABIN_ITEM_KIND_LABEL: Record<CabinItemKind, string> = {
+  optimize: "优化", fix: "修复", idea: "想法",
+}
+
+export function cabinItemLabel(item: Pick<CabinItemDTO, "seq">): string {
+  return `#IT-${item.seq}`
+}
+
+function deliveryLimits(limits: CabinItemDeliveryLimits): { perBodyMax: number; totalMax: number } {
+  return {
+    perBodyMax: Math.max(1, limits.perBodyMax ?? CABIN_ITEM_DELIVERY_BODY_MAX),
+    totalMax: Math.max(1, limits.totalMax ?? CABIN_ITEM_DELIVERY_TOTAL_MAX),
+  }
+}
+
+function clip(text: string, max: number): string {
+  const chars = Array.from(text)
+  return chars.length > max ? chars.slice(0, max).join("") : text
+}
+
+function charLen(text: string): number {
+  return Array.from(text).length
+}
+
+function normalizeBody(body: string): string {
+  return (body ?? "").replace(/\r\n/g, "\n").trim()
+}
+
+/** 逐条事项的投递块：标题做索引，正文逐字（超限显式截断并指路回读工具）。 */
+export function formatCabinItemBlocks(
+  items: ReadonlyArray<Pick<CabinItemDTO, "seq" | "title" | "body" | "kind">>,
+  limits: CabinItemDeliveryLimits = {},
+): string[] {
+  const { perBodyMax, totalMax } = deliveryLimits(limits)
+  /** 剩余额度小到这个数以下时宁可不送残句，只留指路标记。 */
+  const minPartial = 200
+  const blocks: string[] = []
+  let used = 0
+
+  for (const item of items) {
+    const title = item.title.trim() || "（未命名事项）"
+    const kind = CABIN_ITEM_KIND_LABEL[item.kind] ?? item.kind
+    blocks.push(`### ${cabinItemLabel(item)} ${title}（${kind}）`)
+
+    const body = normalizeBody(item.body)
+    if (!body) continue
+    const bodyChars = charLen(body)
+    const remaining = Math.max(0, totalMax - used)
+    if (remaining === 0 || (bodyChars > remaining && remaining < minPartial)) {
+      blocks.push(
+        `…（本条正文 ${bodyChars} 字未随本次投递送出：本次投递总长已达上限；`
+        + `完整正文可用 cabin_list_items / cabin_get_item 读取。）`,
+      )
+      continue
+    }
+
+    let text = body
+    const notes: string[] = []
+    if (charLen(text) > perBodyMax) {
+      text = clip(text, perBodyMax)
+      notes.push(`正文共 ${bodyChars} 字，本次截断至 ${perBodyMax} 字`)
+    }
+    if (charLen(text) > remaining) {
+      text = clip(text, remaining)
+      notes.push(`本次投递总长上限 ${totalMax} 字，本条截断至 ${remaining} 字`)
+    }
+    used += charLen(text)
+    blocks.push(text)
+    if (notes.length > 0) {
+      blocks.push(`…（${notes.join("；")}；完整正文可用 cabin_list_items / cabin_get_item 读取。）`)
+    }
+  }
+  return blocks
+}
+
+/** 可直接发给主对话的投递消息（客户端两条投递路径共用）。 */
+export function formatCabinItemDeliveryText(
+  items: ReadonlyArray<Pick<CabinItemDTO, "seq" | "title" | "body" | "kind">>,
+  limits: CabinItemDeliveryLimits = {},
+): string {
+  return ["处理这几条事项：", ...formatCabinItemBlocks(items, limits)].join("\n")
+}
+
+/**
+ * 服务端兜底（2026-11-26 用户）：按数据库真源检查正文是否已在消息里。
+ * 旧客户端 / 缓存过期只发了标题时，把缺的正文补在消息末尾；已有则原样返回。
+ */
+export function appendMissingCabinItemBodies(
+  content: string,
+  items: ReadonlyArray<Pick<CabinItemDTO, "id" | "seq" | "title" | "body" | "kind">>,
+  limits: CabinItemDeliveryLimits = {},
+): { content: string; appended: boolean; missing_ids: string[] } {
+  const { perBodyMax } = deliveryLimits(limits)
+  const normalized = content.replace(/\r\n/g, "\n")
+  const missing = items.filter((item) => {
+    const body = normalizeBody(item.body)
+    if (!body) return false
+    if (normalized.includes(body)) return false
+    // 客户端超限截断过：只要前 160 字到了，就算本条已送达（截断原因已写在正文里）。
+    const probe = clip(body, Math.min(perBodyMax, 160))
+    return probe.length === 0 || !normalized.includes(probe)
+  })
+  if (missing.length === 0) return { content, appended: false, missing_ids: [] }
+  const blocks = formatCabinItemBlocks(missing, limits)
+  return {
+    content: `${content}\n\n【事项正文 · 服务端按数据库补全】\n${blocks.join("\n")}`,
+    appended: true,
+    missing_ids: missing.map((item) => item.id),
+  }
+}

@@ -74,6 +74,15 @@ export class CabinItemService {
     return this.assertItem(cabinId, itemId)
   }
 
+  /** 按 id 批量取（投递时服务端按库补全正文用）。缺的 id 跳过，不报错；
+   *  顺序按 seq 升序，和投递消息里的条目顺序一致。 */
+  getMany(cabinId: string, ids: string[]): CabinItemRow[] {
+    this.assertCabin(cabinId)
+    const list = Array.from(new Set(ids.filter((id) => typeof id === "string" && id.length > 0)))
+    if (list.length === 0) return []
+    return this.listByIds(cabinId, list)
+  }
+
   create(cabinId: string, input: { title?: string; body?: string; kind?: CabinItemKind }): CabinItemRow {
     this.assertCabin(cabinId)
     const now = nowIso()

@@ -43,6 +43,7 @@ import { createMemoryToolServer, resolveLongTermConsent } from '../../services/c
 import { createCabinToolServer, createCabinDelegationToolServer, getCabinToolsProvider, buildCabinSummaryReminder } from '../../services/chat/cabin-tools'
 import { parseDecisionEnvelope } from '../../services/cabin/cabin-brief'
 import { CabinItemService } from '../../services/cabin/cabin-item-service'
+import { expandItemDelivery } from '../../services/cabin/cabin-item-delivery'
 import { getSlashCommands, rememberSlashCommands } from '../../services/chat/slash-commands'
 import type { TokenUsageDAO } from '../../db/dao/token-usage-dao'
 import type { EffortLevel } from '@octopus/shared'
@@ -373,6 +374,21 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
       )
     }
 
+    // 事项投递的服务端兜底（2026-11-26 用户）：正文才是需求。客户端现在会
+    // 带正文，但旧客户端 / 缓存过期 / 编辑竞态都可能只发标题 —— 按 cabin_items
+    // 真源校一遍，缺的正文补在消息末尾，再落库并交给模型。事项表不可用时
+    // 退回客户端原文（不能因为小待办把整轮对话打挂）。
+    let itemDelivery: ReturnType<typeof expandItemDelivery> | null = null
+    if (viaItems && session.cabin_id) {
+      try {
+        itemDelivery = expandItemDelivery(
+          body.message!,
+          new CabinItemService(sessionDao.getDb()).getMany(session.cabin_id, itemIds),
+        )
+      } catch { /* 事项表不可用不影响对话本身 */ }
+    }
+    const userContent = itemDelivery?.content ?? body.message!
+
     // Store user message. Ephemeral wakes (task-thread event cards) reach the
     // model but are NOT persisted — the bridge already wrote the card.
     const userMsgId = crypto.randomUUID()
@@ -387,7 +403,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
           : null
       sessionDao.insertMessage({
         id: userMsgId, session_id: id, role: 'user',
-        content: body.message, created_at: now,
+        content: userContent, created_at: now,
         ...(userMeta ? { metadata: JSON.stringify(userMeta) } : {}),
       })
       sessionDao.updateLastMessageAt(id, now)
@@ -415,11 +431,11 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     // ── Safety: detect dangerous commands in user message (B5 fix) ────
     try {
       const interceptor = getSafetyInterceptor()
-      if (interceptor.isDangerousCommand(body.message)) {
-        const reason = interceptor.getDangerReason(body.message)
+      if (interceptor.isDangerousCommand(userContent)) {
+        const reason = interceptor.getDangerReason(userContent)
         safetyDAO.insertSafetyEvent({
           type: 'dangerous_command',
-          operation: body.message.slice(0, 200),
+          operation: userContent.slice(0, 200),
           decision: 'intercept',
           actor: 'user',
           context: JSON.stringify({ reason, session_id: id }),
@@ -504,7 +520,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     const roleCard = pendingRoleCard(roleState)
     const self = session.clone_name ?? null
     const consults = [
-      ...parseCloneMentions(body.message!),
+      ...parseCloneMentions(userContent),
       ...(body.subagents ?? []).map((ref) => ({ name: ref.id, displayName: ref.label ?? ref.id })),
     ].filter((c, i, all) => c.name !== self && all.findIndex((x) => x.name === c.name) === i)
     const roster = resolveSessionExpertRoster(cacheCtx, {
@@ -529,12 +545,14 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
       ? buildCabinSummaryReminder(cabinProvider.service, session.cabin_id, cabinProvider.decisions)
       : null
     // 事项投递（2026-11-24 用户）：告诉模型这是舱内小待办，按条目汇报；
-    // 关项由人在回执卡上确认 —— 模型不要自行标记完成。
+    // 关项由人在回执卡上确认 —— 模型不要自行标记完成。正文被截断时指路回读。
     const itemReminder = viaItems
-      ? `本轮消息是从舱内「事项」窗投递的 ${itemIds.length} 条小待办。请逐条处理，并在最后按条目汇报（做了什么 / 证据）；不要自行标记完成，关项由人在回执卡上确认。`
+      ? `本轮消息是从舱内「事项」窗投递的 ${itemIds.length} 条小待办（原文逐条附在本轮消息里）。`
+        + `请逐条处理，并在最后按条目汇报（做了什么 / 证据）；正文若被截断，可用 cabin_list_items / cabin_get_item 读取完整原文。`
+        + `不要自行标记完成，关项由人在回执卡上确认。`
       : null
     const turnReminder = [roleCard, mentionReminder, playbookReminder?.text, cabinReminder, itemReminder].filter(Boolean).join('\n\n')
-    const providerMessage = withTransientReminder(body.message!, turnReminder)
+    const providerMessage = withTransientReminder(userContent, turnReminder)
     // Workflow control tools (list/run/status/cancel/approve/retry) are
     // registered as an in-process MCP server bound to this chat's workspace.
     // A task thread also gets the read/action tools (spec + confirm cards).
@@ -563,7 +581,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     if (!thread) {
       toolServers['octopus-memory'] = createMemoryToolServer(
         { sessionId: id, org },
-        { longTermConsent: resolveLongTermConsent(body.message ?? '') },
+        { longTermConsent: resolveLongTermConsent(userContent) },
       )
     }
     // Cabin P3（C3）：舱主会话挂调度工具集（只调度不执行）。
@@ -628,7 +646,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
               wsPath: thread.task.wsPath!,
               taskId: thread.task.id,
               sessionId: id,
-              content: body.message!,
+              content: userContent,
               marker: quickEditMarkerFor(thread.takeover),
             })
             for (const cm of commits) {
@@ -693,7 +711,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
                 transientReminder: !!turnReminder,
               },
             })
-        const llmResult = await tryClaudeSDK(body.message!, systemPrompt, turnStream, id, org, sessionDao, undefined, undefined, model, effort, {
+        const llmResult = await tryClaudeSDK(userContent, systemPrompt, turnStream, id, org, sessionDao, undefined, undefined, model, effort, {
           streamId,
           resumeSessionId,
           providerMessage,
@@ -742,7 +760,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
         // 确定性截串才替换）。放在主调用之后跑 —— 起名请求若与主流并发，会
         // 和共享 LLMCallTracker 的 message_delta 抢同一批 active call。
         if (llmResult.generated && !aborted && thread && !body.wake) {
-          taskThread?.maybeAdoptSmartTaskName(id, body.message)
+          taskThread?.maybeAdoptSmartTaskName(id, userContent)
         }
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err)

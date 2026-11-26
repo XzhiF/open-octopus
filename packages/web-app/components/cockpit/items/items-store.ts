@@ -9,7 +9,9 @@
 // 数据真源仍是服务端 cabin_items 表；本 store 只做读缓存与乐观更新。
 
 import { useCallback, useEffect, useSyncExternalStore } from 'react'
-import type { CabinItemDTO } from '@octopus/shared'
+import {
+  cabinItemLabel, formatCabinItemDeliveryText, type CabinItemDTO,
+} from '@octopus/shared'
 import {
   closeCabinItems, createCabinItem, deleteCabinItem, fetchCabinItems,
   reopenCabinItem, updateCabinItem, type CabinItemInput,
@@ -203,13 +205,14 @@ export async function reopenItemRemote(cabinId: string, itemId: string): Promise
 // ── 投递文案 ────────────────────────────────────────────────────────────
 
 export function itemLabel(item: CabinItemDTO): string {
-  return `#IT-${item.seq}`
+  return cabinItemLabel(item)
 }
 
-/** 投递正文：人可读的条目列表；来源由消息 meta 承载，不靠正文约定。 */
+/** 投递正文：标题做索引，**正文逐字**（2026-11-26 用户事故：只发标题，
+ *  汐音拿不到需求原文）。截断 / 总量上限都由 shared 同一份口径处理；
+ *  来源仍由消息 meta 承载，不靠正文约定。 */
 export function itemDeliveryText(items: CabinItemDTO[]): string {
-  return '处理这几条事项：\n'
-    + items.map((item) => `- ${itemLabel(item)} ${item.title.trim() || '（未命名事项）'}`).join('\n')
+  return formatCabinItemDeliveryText(items)
 }
 
 // ── 投递排队（主对话在跑时先候着）───────────────────────────────────────
