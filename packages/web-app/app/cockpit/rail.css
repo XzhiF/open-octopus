@@ -471,8 +471,9 @@
 }
 .ck12-fltime.is-bgw .ck12-flspin { color: var(--ck12-amber); }
 
-/* 这条作战的 chat 窗开着：行框亮一点，和详情选中态区分（选中 = is-on）。 */
-.ck12-flrow.is-chat { border-color: rgba(46, 230, 214, 0.45); }
+/* 这条作战的 chat 窗开着：行框用它的项目色亮一点（v22 2026-11-27：与窗同色，
+   不再是统一薄荷青），和详情选中态区分（选中 = is-on）。 */
+.ck12-flrow.is-chat { border-color: color-mix(in srgb, var(--accent, var(--ck12-teal)) 60%, transparent); }
 .ck12-flrow:focus-visible { outline: 1px solid var(--ck12-teal); outline-offset: 1px; }
 
 /* ── 底部：更多 / 收起 ── */

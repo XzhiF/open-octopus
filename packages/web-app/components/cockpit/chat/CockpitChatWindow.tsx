@@ -39,6 +39,8 @@ import { MAIN_THREAD_KEY } from '../fleet/threads-model'
 import { CockpitConsoleTelemetry } from './CockpitConsoleTelemetry'
 import { CockpitReceipts } from './CockpitReceipts'
 import { CockpitItemsQueue } from '../items/CockpitItemsQueue'
+import { setActiveWin } from './active-win'
+import { toggleCrewSettings } from '../crew/crew-settings'
 
 /** plans §1.4：popover(100) → 立绘控制条(90) → 任务模块窗(80) → 编队抽屉(70)
  *  → **聊天浮窗(60)** → 作业面(50)。Esc 关栈顶 = 数字大者先关。 */
@@ -66,6 +68,11 @@ export function CockpitChatWindow() {
   /** 共享 z 栈（design 26 §5.3）：打开 / 聚焦即置顶，问答窗反而能再压回来。 */
   const [z, setZ] = useState<number | null>(null)
   const bumpZ = useCallback(() => setZ(nextZ()), [])
+  /** 点主通讯台 = 它压在最上；独立窗的焦点环随之熄灭（v22 · 2026-11-27）。 */
+  const raiseConsole = useCallback(() => {
+    bumpZ()
+    setActiveWin(null)
+  }, [bumpZ])
   const dragRef = useRef<DragState | null>(null)
   const tallRestoreRef = useRef<CockpitRect | null>(null)
   const userAdjustedRef = useRef(false)
@@ -84,9 +91,9 @@ export function CockpitChatWindow() {
     if (open && !docked) bumpZ()
   }, [open, docked, bumpZ])
   useEffect(() => {
-    window.addEventListener('octopus:chat-focus', bumpZ)
-    return () => window.removeEventListener('octopus:chat-focus', bumpZ)
-  }, [bumpZ])
+    window.addEventListener('octopus:chat-focus', raiseConsole)
+    return () => window.removeEventListener('octopus:chat-focus', raiseConsole)
+  }, [raiseConsole])
 
   const attachTranscript = useCallback((node: HTMLDivElement | null) => {
     setChatSlot('transcript', node)
@@ -281,7 +288,7 @@ export function CockpitChatWindow() {
       data-open={open ? 'true' : 'false'}
       data-mini={mini ? 'true' : 'false'}
       data-docked={docked ? 'true' : 'false'}
-      onPointerDownCapture={bumpZ}
+      onPointerDownCapture={raiseConsole}
       style={{
         zIndex: z ?? undefined,
         left: rect?.x ?? 0,
@@ -328,6 +335,18 @@ export function CockpitChatWindow() {
         />
 
         <span className="ck12-comms-spacer" />
+        {/* 2026-11-27 用户：收起旁边挂汐音头像（桌面版 icon）—— 一眼认出这是主对话。
+            点开 = 汐音档案（与 HUD「◐ 汐音」同一个浮层）。 */}
+        <button
+          type="button"
+          className="ck12-comms-avatar"
+          aria-label="汐音头像 · 主对话"
+          title="汐音 · 主对话 · 点开汐音档案"
+          data-testid="cockpit-comms-avatar"
+          onClick={() => toggleCrewSettings()}
+        >
+          <img src="/cabin/xiyin-avatar.png" alt="汐音" />
+        </button>
         {/* v22 #5：主通讯台固定主对话，头部只剩 ⌄ 收起（原型 .con-h）。 */}
         <button
           type="button"

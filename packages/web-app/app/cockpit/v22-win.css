@@ -1,0 +1,337 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   v22 · 2026-11-27 用户：编队独立 chat 窗 = 主通讯台复刻 + 每窗项目色
+   —— 边框 / 顶条 / 头带 / 输入聚焦 / 光晕全部走 --waccent（缺省薄荷青）。
+   主通讯台（.ck12-comms）本身一行不改；颜色只在这里落到 .ck12-cwin。
+   加载顺序：index.css 里排在 v21b.css 之后。
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── 窗壳：2px 项目色边框 + 顶部 3px 光条 + 项目色光晕 ───────────────── */
+.ck12-cwin {
+  border: 2px solid color-mix(in srgb, var(--waccent, var(--ck12-teal)) 78%, rgba(10, 8, 24, 0.9));
+  border-radius: var(--ck12-wrad);
+  background:
+    radial-gradient(
+      120% 80% at 82% 0%,
+      color-mix(in srgb, var(--waccent, var(--ck12-teal)) 22%, transparent),
+      transparent 58%
+    ),
+    linear-gradient(180deg, rgba(22, 17, 50, 0.8), rgba(11, 8, 26, 0.9) 38%, rgba(8, 6, 20, 0.92));
+  box-shadow:
+    0 22px 64px rgba(16, 13, 40, 0.6),
+    0 0 36px color-mix(in srgb, var(--waccent, var(--ck12-teal)) 26%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+/* 顶缘光条：一眼分清哪扇窗是哪条作战（原型 .cwin::before）。 */
+.ck12-cwin::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 3px;
+  z-index: 4;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    var(--waccent, var(--ck12-teal)),
+    color-mix(in srgb, var(--waccent, var(--ck12-teal)) 55%, #fff)
+  );
+  box-shadow: 0 0 16px color-mix(in srgb, var(--waccent, var(--ck12-teal)) 55%, transparent);
+}
+/* 置顶窗：边框纯项目色 + 更强光晕（原型 .cwin.focus）。 */
+.ck12-cwin.is-focus {
+  border-color: var(--waccent, var(--ck12-teal));
+  box-shadow:
+    0 22px 64px rgba(16, 13, 40, 0.6),
+    0 0 44px color-mix(in srgb, var(--waccent, var(--ck12-teal)) 42%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+/* ── 窗头：项目色 banner + 2px 底线（复刻主通讯台排版，窗自己的东西在右） ── */
+.ck12-cwin-head {
+  height: auto;
+  min-height: 42px;
+  gap: 8px;
+  padding: 9px 14px 7px;
+  border-bottom: 2px solid color-mix(in srgb, var(--waccent, var(--ck12-teal)) 75%, transparent);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--waccent, var(--ck12-teal)) 36%, rgba(16, 13, 40, 0.46)),
+    color-mix(in srgb, var(--waccent, var(--ck12-teal)) 12%, transparent)
+  );
+}
+.ck12-cwin-emo { font-size: 12px; }
+
+/* ✕ 与主通讯台同形：平行四边形文本按钮、左置。 */
+.ck12-cwin-head .ck12-cwin-close {
+  width: auto;
+  height: 24px;
+  padding: 0 11px;
+  border-radius: 0;
+  clip-path: var(--ck12-btncut);
+  border: 1px solid rgba(185, 179, 217, 0.28);
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--ck12-ink2);
+}
+.ck12-cwin-head .ck12-cwin-close:hover {
+  color: #fff;
+  background: var(--ck12-red, #ff3b5c);
+  border-color: var(--ck12-red, #ff3b5c);
+}
+
+/* 名称 = 窗的项目色 tint；点击等同 ▦ 详情。紧贴在「▦ 详情」左边。 */
+.ck12-cwin-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 32%;
+  width: auto;
+  height: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  clip-path: none;
+  background: none;
+  color: color-mix(in srgb, var(--waccent, var(--ck12-teal)) 30%, #fff);
+  font-size: 12.5px;
+  font-weight: 800;
+  font-family: var(--font-ui);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ck12-cwin-title:hover {
+  color: #fff;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--waccent, var(--ck12-teal)) 78%, transparent);
+  text-underline-offset: 3px;
+}
+/* 窗头文本按钮（▦ 详情 / ⌄ 收起）：与主通讯台 .ck12-comms-act 同形，
+   只把 hover 换成窗的项目色。 */
+.ck12-cwin-head .ck12-comms-act:hover {
+  color: #fff;
+  border-color: var(--waccent, var(--ck12-teal));
+  background: color-mix(in srgb, var(--waccent, var(--ck12-teal)) 16%, transparent);
+}
+
+/* ── 转录区：与主通讯台同底（项目色淡晕 + 32px 细网格） ─────────────── */
+.ck12-cwin-body {
+  background:
+    radial-gradient(
+      120% 70% at 50% 0%,
+      color-mix(in srgb, var(--waccent, var(--ck12-teal)) 7%, transparent),
+      transparent 62%
+    ),
+    linear-gradient(180deg, rgba(6, 5, 16, 0.42), rgba(6, 5, 16, 0.2)),
+    linear-gradient(color-mix(in srgb, var(--waccent, var(--ck12-teal)) 3.5%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--waccent, var(--ck12-teal)) 3.5%, transparent) 1px, transparent 1px);
+  background-size: auto, auto, 32px 32px, 32px 32px;
+  border-top: 1px solid color-mix(in srgb, var(--waccent, var(--ck12-teal)) 10%, transparent);
+  box-shadow:
+    inset 0 10px 26px rgba(4, 3, 12, 0.35),
+    inset 0 -10px 26px rgba(4, 3, 12, 0.22);
+}
+.ck12-cwin [data-tui-col] {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  min-height: 100%;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+/* 我的发言：与主通讯台同一条金色左脊 + 渐隐底，保证内容口径一致。 */
+.ck12-cwin [data-tui-msg='user'] {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--ck12-gold) 11%, transparent),
+    color-mix(in srgb, var(--ck12-gold) 4%, transparent) 72%
+  );
+  box-shadow: none;
+  border-left: 2px solid rgba(245, 197, 66, 0.5);
+  border-radius: 0;
+  padding: 1px 10px;
+  color: #fff;
+}
+
+/* ── 输入行：复刻 .ck12-comms-in，聚焦 / ❯ / 边框走项目色 ────────────── */
+.ck12-cwin-body [data-tui-dock] {
+  padding: 0;
+  border: 0;
+  border-top: 1px solid color-mix(in srgb, var(--waccent, var(--ck12-teal)) 26%, transparent);
+  background: rgba(6, 5, 16, 0.5);
+}
+.ck12-cwin-body [data-tui-composer] { margin: 0; max-width: none; }
+.ck12-cwin-body [data-composer-block] {
+  width: 100%;
+  padding: 8px 14px 10px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.ck12-cwin-body [data-tui-dock] [data-composer-block] > div {
+  align-items: flex-end;
+  gap: 9px;
+  width: 100%;
+}
+.ck12-cwin-body [data-tui-dock] [data-tui-prompt] {
+  align-self: flex-end;
+  padding: 0;
+  color: color-mix(in srgb, var(--waccent, var(--ck12-teal)) 80%, #fff);
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 36px;
+  text-shadow: 0 0 12px color-mix(in srgb, var(--waccent, var(--ck12-teal)) 55%, transparent);
+}
+.ck12-cwin-body [data-tui-dock] textarea {
+  flex: 1;
+  min-width: 0;
+  min-height: 36px;
+  padding: 6px 11px;
+  border: 1px solid color-mix(in srgb, var(--waccent, var(--ck12-teal)) 26%, transparent);
+  border-radius: 0;
+  background: rgba(6, 5, 16, 0.55);
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  resize: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.ck12-cwin-body [data-tui-dock] textarea::placeholder { color: var(--ck12-metal2); }
+.ck12-cwin-body [data-tui-dock] textarea:focus {
+  outline: none;
+  border-color: var(--waccent, var(--ck12-teal));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--waccent, var(--ck12-teal)) 35%, transparent),
+    0 0 18px color-mix(in srgb, var(--waccent, var(--ck12-teal)) 18%, transparent);
+}
+.ck12-cwin-body [data-tui-dock] [data-tui-attach-inline] { align-self: flex-end; padding-bottom: 4px; }
+.ck12-cwin-body [data-tui-dock] [data-tui-attach-inline] button {
+  width: 28px;
+  height: 32px;
+  border-radius: 0;
+  clip-path: var(--ck12-hex);
+  border: 1px solid rgba(185, 179, 217, 0.25);
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--ck12-ink2);
+}
+.ck12-cwin-body [data-tui-dock] [data-tui-attach-inline] button:hover {
+  color: #fff;
+  border-color: var(--waccent, var(--ck12-teal));
+  background: color-mix(in srgb, var(--waccent, var(--ck12-teal)) 14%, transparent);
+}
+.ck12-cwin-body [data-tui-dock] [data-tui-send-wrap] { align-self: flex-end; height: 34px; padding: 0; }
+.ck12-cwin-body [data-tui-dock] [data-tui-send] {
+  width: 38px;
+  height: 34px;
+  border: 0;
+  border-radius: 0;
+  clip-path: var(--ck12-hex);
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  font-weight: 800;
+  color: #120f2b;
+  background: linear-gradient(160deg, var(--ck12-gold, #f5c542), #ff8a3d);
+  box-shadow: 0 0 16px rgba(255, 138, 61, 0.4);
+  transition: filter 0.15s;
+}
+.ck12-cwin-body [data-tui-dock] [data-tui-send]:hover:not(:disabled) { filter: brightness(1.1); }
+.ck12-cwin-body [data-tui-dock] [data-tui-send]:disabled { opacity: 0.4; }
+.ck12-cwin-body [data-tui-dock] [data-tui-stop] {
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(255, 59, 92, 0.55);
+  border-radius: 10px;
+  clip-path: none;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 59, 92, 0.14);
+  box-shadow: 0 0 12px rgba(255, 59, 92, 0.18);
+  color: var(--ck12-red, #ff3b5c);
+}
+.ck12-cwin-body [data-tui-dock] [data-tui-stop]:hover {
+  border-color: var(--ck12-red, #ff3b5c);
+  background: rgba(255, 59, 92, 0.24);
+}
+
+/* 「待你定」dock / 提问卡：与主通讯台同一套方角终端语言。 */
+.ck12-cwin-body [data-testid='author-ask-inbox'] {
+  margin: 0;
+  padding: 2px 14px 6px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.ck12-cwin [data-testid='author-ask-card'] {
+  padding: 6px 10px;
+  border: 1px solid rgba(185, 179, 217, 0.22);
+  border-left: 3px solid var(--ck12-amber);
+  border-radius: 0;
+  background: rgba(10, 8, 24, 0.5);
+  box-shadow: none;
+}
+.ck12-cwin [data-testid='author-ask-envelope'] {
+  border-radius: 0;
+  border-color: rgba(185, 179, 217, 0.22);
+  background: rgba(10, 8, 24, 0.35);
+}
+.ck12-cwin [data-testid='author-ask-card'] [class*='rounded-[14px]'] {
+  border-radius: 0;
+  border-color: rgba(185, 179, 217, 0.18);
+  background: transparent;
+  box-shadow: none;
+  max-width: none;
+}
+.ck12-cwin [data-testid='author-ask-card'] [role='radiogroup'] { gap: 4px; }
+.ck12-cwin [data-testid='author-ask-card'] [role='radiogroup'] > label {
+  padding: 5px 10px;
+  border: 1px solid rgba(185, 179, 217, 0.22);
+  border-left: 3px solid var(--ck12-gold);
+  border-radius: 0;
+  background: rgba(10, 8, 24, 0.5);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.ck12-cwin [data-testid='author-ask-card'] [role='radiogroup'] > label:hover {
+  transform: translateX(2px);
+  background: color-mix(in srgb, var(--ck12-gold) 18%, rgba(10, 8, 24, 0.6));
+}
+
+/* ── WINDOWS chip：未最小化的窗 chip 也带项目色边框 ──────────────────── */
+.ck12-wbchip.is-wacc {
+  border-color: color-mix(in srgb, var(--waccent, var(--ck12-teal)) 50%, rgba(185, 179, 217, 0.22));
+}
+.ck12-wbchip.is-wacc:hover {
+  border-color: var(--waccent, var(--ck12-teal));
+  color: #fff;
+}
+.ck12-wbchip.is-wacc:not(.is-min) {
+  background: rgba(16, 13, 40, 0.78);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--waccent, var(--ck12-teal)) 30%, transparent);
+}
+
+/* ── 主通讯台窗头：收起左边的汐音头像（桌面版 icon） ─────────────────── */
+.ck12-comms-avatar {
+  position: relative;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 50%;
+  overflow: hidden;
+  border: 1px solid rgba(46, 230, 214, 0.55);
+  background: rgba(46, 230, 214, 0.08);
+  box-shadow: 0 0 12px rgba(46, 230, 214, 0.22);
+  transition: border-color 0.16s, box-shadow 0.16s;
+}
+.ck12-comms-avatar img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+.ck12-comms-avatar:hover {
+  border-color: var(--ck12-teal);
+  box-shadow: 0 0 16px rgba(46, 230, 214, 0.55);
+}

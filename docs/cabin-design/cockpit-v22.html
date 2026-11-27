@@ -246,10 +246,11 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .flact{position:relative;width:21px;height:23px;clip-path:var(--hex);display:grid;place-items:center;
   background:rgba(255,255,255,.07);border:1px solid rgba(185,179,217,.22);color:var(--ink2);font-size:9.5px;transition:.13s}
 .flact:hover{color:#fff;border-color:var(--teal);background:rgba(46,230,214,.16)}
-.flact.pri{color:color-mix(in srgb,var(--teal) 78%,var(--ink2))}
+.flact.pri{color:color-mix(in srgb,var(--accent,var(--teal)) 78%,var(--ink2))}
 .flactwrap .und{position:absolute;top:-4px;right:-5px;min-width:13px;height:13px;padding:0 3px;border-radius:999px;background:var(--red);color:#fff;font-size:7.5px;font-weight:800;display:grid;place-items:center;font-style:normal;font-family:var(--font-mono);line-height:1;box-shadow:0 0 7px rgba(255,59,92,.6),0 0 0 1px rgba(16,13,40,.75)}
 .flrow{cursor:pointer}
-.flrow.is-chat{border-color:rgba(46,230,214,.45)}
+/* 2026-11-27 用户：窗开着时行边框随该作战的项目色（与 chat 窗 --waccent 同源），不再统一青绿。
+   规则放在 .is-flow 之后，运行中的 open chat 也以「开着」优先。 */
 .flrow:focus-visible{outline:1px solid var(--teal);outline-offset:1px}
 /* rev6（2026-11-25 用户）：琥珀巡边不好看 —— 改回「蓝色条」，与秒表同色同律。
    · is-flow = agent 在跑（作战中 / 待验收在跑 / 待命在跑）：行左缘 2px 天蓝竖条，
@@ -259,6 +260,7 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .flrow.is-flow{border-color:rgba(53,199,240,.34)}
 .flrow.is-flow::before{content:"";position:absolute;left:0;top:20%;bottom:20%;width:2px;border-radius:2px;
   background:var(--sky);box-shadow:0 0 8px rgba(53,199,240,.55);pointer-events:none}
+.flrow.is-chat{border-color:color-mix(in srgb,var(--accent,var(--teal)) 60%,transparent)}
 .flspin{font-family:var(--font-mono);font-size:9.5px;line-height:1;color:var(--sky)}
 .fltime.bgw,.fltime.bgw::before{color:var(--amber)}
 .fltime.bgw::before{background:var(--amber);box-shadow:0 0 6px var(--amber)}
@@ -570,10 +572,7 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .rcpt-btn.ok{color:var(--green);border-color:rgba(61,220,151,.5);background:rgba(61,220,151,.12)}
 .rcpt-btn.ok:hover{background:rgba(61,220,151,.22);color:#fff}
 .rcpt-done{padding:6px 10px;font-size:9.5px;color:var(--metal2);letter-spacing:.04em}
-.cwl .tline{font-size:11px}
-.cwl .tmeta{font-size:8.5px;padding-left:0}
-.cwl .tline.me .tx{padding:0 6px}
-.cwl .tline .tm{display:none}
+/* 2026-11-27 用户：窗内转录不再缩字号 —— 与主通讯台同肤同尺寸（窗默认与通讯台同大）。 */
 .con-cur{flex:none;padding:7px 18px 9px;border-top:1px solid rgba(46,230,214,.14);background:linear-gradient(180deg,rgba(46,230,214,.035),transparent)}
 .con-cur .spk{display:flex;align-items:center;gap:7px;font-size:9px;letter-spacing:.14em;color:#C9BFFF;font-weight:700;margin-bottom:2px}
 .con-cur .spk i{width:5px;height:5px;border-radius:50%;background:#C9BFFF;box-shadow:0 0 8px rgba(201,191,255,.85)}
@@ -1497,6 +1496,10 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 @keyframes addpulse{0%,100%{opacity:.45;transform:scale(.92)}50%{opacity:1;transform:scale(1.08)}}
 .con-add i{position:absolute;right:-3px;top:-3px;min-width:14px;height:14px;padding:0 3px;display:grid;place-items:center;border-radius:999px;background:var(--sky);color:#04121c;font-size:8.5px;font-style:normal;font-weight:900}
 .con-add i[hidden]{display:none}
+/* 2026-11-27 用户：收起旁边挂汐音头像（桌面版 icon）—— 一眼认出这是主对话。 */
+.con-av{position:relative;flex:none;width:26px;height:26px;padding:0;border-radius:50%;overflow:hidden;border:1px solid rgba(46,230,214,.55);background:rgba(46,230,214,.08);box-shadow:0 0 12px rgba(46,230,214,.22);transition:.16s}
+.con-av img{width:100%;height:100%;display:block;object-fit:cover}
+.con-av:hover{border-color:var(--teal);box-shadow:0 0 16px rgba(46,230,214,.55)}
 .addpop{position:absolute;left:38px;top:48px;z-index:58;width:min(430px,calc(100% - 20px));max-height:min(432px,calc(100% - 60px));display:flex;flex-direction:column;min-height:0;border-radius:var(--wrad);overflow:hidden;background:var(--glass2);backdrop-filter:blur(16px) saturate(1.3);border:1px solid var(--edge);box-shadow:0 20px 60px rgba(16,13,40,.6)}
 .addpop[hidden]{display:none}
 .ap-h{flex:none;display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid rgba(46,230,214,.22);background:linear-gradient(180deg,rgba(46,230,214,.06),transparent)}
@@ -1771,12 +1774,21 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 #conDock.ping{animation:tping .9s ease}
 .has-wins #conDock{left:auto;right:12px;transform:none;bottom:52px}
 #winLayer{position:absolute;inset:0;z-index:30;pointer-events:none}
-.cwin{position:absolute;pointer-events:auto;display:flex;flex-direction:column;min-height:0;background:linear-gradient(180deg,rgba(20,16,48,.86),rgba(10,8,24,.9) 40%,rgba(8,6,20,.92));backdrop-filter:blur(16px) saturate(1.2);border:1px solid var(--edge);border-radius:14px;overflow:hidden;opacity:var(--winop,1);box-shadow:0 18px 50px rgba(16,13,40,.6)}
-.cwin.focus{border-color:var(--teal);box-shadow:0 18px 50px rgba(16,13,40,.6),0 0 22px rgba(46,230,214,.28)}
-.cwh{flex:none;display:flex;align-items:center;gap:7px;padding:7px 10px;border-bottom:1px solid rgba(46,230,214,.22);cursor:grab;user-select:none}
+/* 2026-11-27 用户：独立 chat 窗统一到主通讯台的窗壳语言 —— 同底色 / 同 var(--wrad) 圆角 / 同 2px 渐变顶线 / 同投影。
+   区别只在配色：每扇窗用自己的项目色 --waccent 描边（主对话不变，仍是青绿）。 */
+.cwin{position:absolute;pointer-events:auto;display:flex;flex-direction:column;min-height:0;
+  background:
+    radial-gradient(120% 80% at 82% 0%,color-mix(in srgb,var(--waccent,var(--teal)) 22%,transparent),transparent 58%),
+    linear-gradient(180deg,rgba(22,17,50,.8),rgba(11,8,26,.9) 38%,rgba(8,6,20,.92));
+  backdrop-filter:blur(16px) saturate(1.2);border:2px solid color-mix(in srgb,var(--waccent,var(--teal)) 78%,rgba(10,8,24,.9));border-radius:var(--wrad);overflow:hidden;opacity:var(--winop,1);
+  box-shadow:0 22px 64px rgba(16,13,40,.6),0 0 36px color-mix(in srgb,var(--waccent,var(--teal)) 26%,transparent),inset 0 1px 0 rgba(255,255,255,.08)}
+.cwin::before{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:linear-gradient(90deg,var(--waccent,var(--teal)),color-mix(in srgb,var(--waccent,var(--teal)) 55%,#fff));opacity:1;box-shadow:0 0 16px color-mix(in srgb,var(--waccent,var(--teal)) 55%,transparent);z-index:4}
+.cwin::after{content:"";position:absolute;inset:0;pointer-events:none;opacity:.035;background:repeating-linear-gradient(180deg,var(--waccent,var(--teal)) 0 1px,transparent 1px 4px);z-index:3}
+.cwin.focus{border-color:var(--waccent,var(--teal));box-shadow:0 22px 64px rgba(16,13,40,.6),0 0 44px color-mix(in srgb,var(--waccent,var(--teal)) 42%,transparent),inset 0 1px 0 rgba(255,255,255,.08)}
+.cwh{flex:none;display:flex;align-items:center;gap:8px;padding:9px 14px 7px;border-bottom:2px solid color-mix(in srgb,var(--waccent,var(--teal)) 75%,transparent);background:linear-gradient(180deg,color-mix(in srgb,var(--waccent,var(--teal)) 36%,rgba(16,13,40,.46)),color-mix(in srgb,var(--waccent,var(--teal)) 12%,transparent));cursor:grab;user-select:none}
 .cwh:active{cursor:grabbing}
 .cwh .te{font-size:12px}
-.cwh b{flex:0 1 auto;min-width:0;max-width:30%;font-size:11px;font-weight:800;font-family:var(--font-ui);color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cwh b{flex:0 1 auto;min-width:0;max-width:32%;font-size:12.5px;font-weight:800;font-family:var(--font-ui);color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .cwh .cwid{flex:none;max-width:42%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-left:7px;border-left:1px solid rgba(185,179,217,.25);font-size:9.5px;font-family:var(--font-mono);color:var(--ink2)}
 /* v22 #5：窗头遥测 = 通讯台同一套芯片（模型 / CTX / token·费用）+ ≡ 轮次，
    数据来自该窗自己的会话。窗头空间紧，芯片收一档；窄窗由脚本按宽度省略。 */
@@ -1788,33 +1800,48 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .cwh .telem button.tok b{color:var(--gold)}
 .cwh .cwidx{flex:none;display:flex;align-items:center;gap:3px;padding:0 6px;border-left:1px solid rgba(185,179,217,.22);font-size:9px;color:var(--ink2);white-space:nowrap;font-family:var(--font-mono)}
 .cwh .cwidx b{font-size:9.5px;color:#fff}
-.cwh button{flex:none;width:22px;height:22px;clip-path:var(--hex);display:grid;place-items:center;background:rgba(255,255,255,.08);border:1px solid rgba(185,179,217,.25);color:var(--ink2);font-size:10px}
-.cwh button:hover{color:#fff;border-color:var(--teal)}
+.cwh button{flex:none;width:24px;height:26px;clip-path:var(--hex);display:grid;place-items:center;background:rgba(255,255,255,.08);border:1px solid rgba(185,179,217,.25);color:var(--ink2);font-size:10px}
+.cwh button:hover{color:#fff;border-color:var(--waccent,var(--teal))}
 .cwh button[data-wclose]:hover{background:var(--red);border-color:var(--red)}
 .cwh button[data-warch]{color:var(--pink);border-color:rgba(255,92,138,.5);background:rgba(255,92,138,.12)}
 .cwh button[data-warch]:hover{color:#fff;background:rgba(255,92,138,.28);border-color:var(--pink)}
-/* 窗头星核（技能 / 分身 / MCP）—— 与主通讯台同位：紧跟 ✕，不在输入行。 */
-.cwh .cwadd{clip-path:none;border-radius:50%;border-color:rgba(46,230,214,.5);background:rgba(46,230,214,.1);color:#9ff7ee;font-size:11px}
-.cwh .cwadd:hover{border-color:rgba(46,230,214,.95);background:rgba(46,230,214,.24);color:#eafffd;box-shadow:0 0 12px rgba(46,230,214,.45)}
-.cwl{flex:1;min-height:40px;overflow:auto;display:flex;flex-direction:column;gap:5px;padding:8px 12px;
+/* 2026-11-27 用户：窗头排版对齐主通讯台 —— 左上只留 ✕ / ✦；右侧 = 详情 + 收起（最右）。
+   会话 / 任务名可点，直接开详情。 */
+.cwh .cwbtn{width:auto;height:24px;padding:0 11px;clip-path:var(--btncut);display:inline-flex;align-items:center;gap:4px;background:rgba(255,255,255,.07);border:1px solid rgba(185,179,217,.28);color:var(--ink2);font-size:9.5px;font-weight:700;font-family:var(--font-ui);white-space:nowrap}
+.cwh .cwbtn:hover{color:#fff;border-color:var(--waccent,var(--teal));background:color-mix(in srgb,var(--waccent,var(--teal)) 16%,transparent)}
+.cwh .cwtitle{flex:0 1 auto;min-width:0;max-width:32%;width:auto;height:auto;padding:0;clip-path:none;border:0;background:none;color:color-mix(in srgb,var(--waccent,var(--teal)) 30%,#fff);font-size:12.5px;font-weight:800;font-family:var(--font-ui);text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cwh .cwtitle:hover{color:#fff;text-decoration:underline;text-decoration-color:color-mix(in srgb,var(--waccent,var(--teal)) 78%,transparent);text-underline-offset:3px}
+/* 2026-11-27 用户：星环按钮复刻主通讯台 .con-add —— 同 26px 圆形、同 SVG 星＋轨道。 */
+.cwh .cwadd{position:relative;flex:none;width:26px;height:26px;display:grid;place-items:center;border-radius:50%;clip-path:none;border:1px solid rgba(46,230,214,.5);background:rgba(46,230,214,.1);color:#9ff7ee;transition:.16s}
+.cwh .cwadd svg{width:15px;height:15px;display:block;overflow:visible}
+.cwh .cwadd:hover{border-color:rgba(46,230,214,.95);background:rgba(46,230,214,.24);color:#eafffd;box-shadow:0 0 14px rgba(46,230,214,.45)}
+.cwh .cwadd .orbit{transform-origin:12px 12px;opacity:.55;transition:.16s}
+.cwh .cwadd .pulse{transform-origin:12px 12px}
+.cwl{flex:1;min-height:40px;overflow:auto;display:flex;flex-direction:column;gap:7px;padding:12px 18px;
   background:
-    linear-gradient(180deg,rgba(6,5,16,.4),rgba(6,5,16,.22)),
-    linear-gradient(rgba(46,230,214,.03) 1px,transparent 1px),
-    linear-gradient(90deg,rgba(46,230,214,.03) 1px,transparent 1px);
-  background-size:auto,28px 28px,28px 28px;
-  box-shadow:inset 0 8px 20px rgba(4,3,12,.32)}
+    radial-gradient(120% 70% at 50% 0%,color-mix(in srgb,var(--waccent,var(--teal)) 6%,transparent),transparent 62%),
+    linear-gradient(180deg,rgba(6,5,16,.42),rgba(6,5,16,.2)),
+    linear-gradient(color-mix(in srgb,var(--waccent,var(--teal)) 4%,transparent) 1px,transparent 1px),
+    linear-gradient(90deg,color-mix(in srgb,var(--waccent,var(--teal)) 4%,transparent) 1px,transparent 1px);
+  background-size:auto,auto,32px 32px,32px 32px;
+  border-top:1px solid color-mix(in srgb,var(--waccent,var(--teal)) 12%,transparent);
+  box-shadow:inset 0 10px 26px rgba(4,3,12,.35),inset 0 -10px 26px rgba(4,3,12,.22)}
 .cwl::before{content:"";margin-top:auto}
-.cwc{flex:none;padding:5px 10px;border-top:1px solid rgba(46,230,214,.16);font-size:10.5px;line-height:1.55;color:#fff;font-family:var(--font-mono);max-height:64px;overflow:auto}
-.cwch{flex:none;display:flex;flex-direction:column;gap:4px;padding:4px 10px}
-.cwch .vchoice{padding:4px 8px;font-size:10px}
-.cwch .vchoice span{display:none}
-.cwi{flex:none;display:flex;align-items:flex-end;gap:6px;padding:6px 8px;border-top:1px solid rgba(46,230,214,.2);background:rgba(6,5,16,.5)}
-.cwi .pr{flex:none;color:var(--teal);font-weight:800;line-height:28px}
-.cwi textarea{flex:1;min-width:0;resize:none;border:1px solid rgba(46,230,214,.22);background:rgba(6,5,16,.55);color:#fff;padding:5px 8px;font-size:11px;line-height:1.4;font-family:var(--font-mono);min-height:28px;max-height:70px;overflow:auto}
-.cwi textarea:focus{outline:none;border-color:var(--teal)}
-.cwi .send{flex:none;width:30px;height:28px;clip-path:var(--hex);display:grid;place-items:center;font-size:12px;font-weight:800;color:var(--indigo);background:linear-gradient(160deg,var(--gold),var(--sun))}
+/* 当前行 / 选项区与主通讯台 .con-cur / .con-choices 同构，边框与高光随窗色。 */
+.cwc{flex:none;padding:7px 18px 9px;border-top:1px solid color-mix(in srgb,var(--waccent,var(--teal)) 18%,transparent);background:linear-gradient(180deg,color-mix(in srgb,var(--waccent,var(--teal)) 4%,transparent),transparent)}
+.cwc .spk{display:flex;align-items:center;gap:7px;font-size:9px;letter-spacing:.14em;color:#C9BFFF;font-weight:700;margin-bottom:2px}
+.cwc .spk i{width:5px;height:5px;border-radius:50%;background:#C9BFFF;box-shadow:0 0 8px rgba(201,191,255,.85)}
+.cwc .line{font-size:12.5px;line-height:1.65;color:#fff;font-family:var(--font-mono);font-weight:500;min-height:36px;text-shadow:0 0 16px rgba(53,199,240,.22);word-break:break-word}
+.cwch{flex:none;display:flex;flex-direction:column;gap:4px;padding:2px 18px 8px}
+.cwi{flex:none;display:flex;align-items:flex-end;gap:9px;padding:8px 14px 10px;border-top:1px solid color-mix(in srgb,var(--waccent,var(--teal)) 26%,transparent);background:rgba(6,5,16,.5)}
+.cwi .pr{flex:none;color:color-mix(in srgb,var(--waccent,var(--teal)) 80%,#fff);font-size:14px;font-weight:800;line-height:36px;text-shadow:0 0 12px color-mix(in srgb,var(--waccent,var(--teal)) 55%,transparent)}
+.cwi textarea{flex:1;min-width:0;resize:none;border:1px solid color-mix(in srgb,var(--waccent,var(--teal)) 26%,transparent);background:rgba(6,5,16,.55);color:#fff;padding:7px 11px;font-size:12.5px;line-height:1.5;font-family:var(--font-mono);min-height:36px;max-height:92px;overflow:auto;transition:.2s}
+.cwi textarea::placeholder{color:var(--metal2)}
+.cwi textarea:focus{outline:none;border-color:var(--waccent,var(--teal));box-shadow:0 0 0 1px color-mix(in srgb,var(--waccent,var(--teal)) 35%,transparent),0 0 18px color-mix(in srgb,var(--waccent,var(--teal)) 18%,transparent)}
+.cwi .send{flex:none;width:38px;height:34px;clip-path:var(--hex);display:grid;place-items:center;font-size:14px;font-weight:800;color:var(--indigo);background:linear-gradient(160deg,var(--gold),var(--sun));box-shadow:0 0 16px rgba(255,138,61,.4);transition:.15s}
+.cwi .send:hover{filter:brightness(1.1)}
 .cwi.shake{animation:sh .3s}
-.cwgr{position:absolute;right:0;bottom:0;width:14px;height:14px;cursor:nwse-resize;background:linear-gradient(135deg,transparent 50%,var(--teal) 50%);opacity:.5}
+.cwgr{position:absolute;right:0;bottom:0;width:14px;height:14px;cursor:nwse-resize;background:linear-gradient(135deg,transparent 50%,var(--waccent,var(--teal)) 50%);opacity:.5}
 #winBar{position:absolute;left:10px;bottom:10px;z-index:55;display:flex;gap:6px;align-items:center;padding:5px 8px;border-radius:12px;opacity:var(--winop,1);background:var(--glass2);backdrop-filter:blur(12px);border:1px solid rgba(185,179,217,.3);max-width:calc(100vw - 20px);overflow-x:auto;scrollbar-width:thin}
 #winBar .wl{flex:none;font-size:8px;letter-spacing:.14em;color:var(--metal2);font-weight:800;margin-right:2px}
 .wbchip{position:relative;flex:none;display:flex;align-items:center;gap:5px;height:24px;padding:0 9px;clip-path:polygon(5px 0,100% 0,calc(100% - 5px) 100%,0 100%);background:rgba(255,255,255,.07);border:1px solid rgba(185,179,217,.22);color:var(--ink2);font-size:9.5px;font-weight:700;font-family:var(--font-ui);max-width:120px}
@@ -1822,6 +1849,8 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .wbchip:hover{color:#fff;border-color:var(--teal)}
 .wbchip.on{background:linear-gradient(90deg,var(--sky),var(--violet));color:#fff}
 .wbchip.min{opacity:.65;border-style:dashed}
+.wbchip.wacc{border-color:color-mix(in srgb,var(--waccent,var(--teal)) 50%,rgba(185,179,217,.22))}
+.wbchip.wacc.on{background:rgba(16,13,40,.78);color:#fff;border-color:var(--waccent,var(--teal));box-shadow:0 0 12px color-mix(in srgb,var(--waccent,var(--teal)) 30%,transparent)}
 .wbchip .un{min-width:13px;height:13px;padding:0 3px;border-radius:999px;background:var(--dot);color:#fff;font-size:8px;font-weight:800;display:grid;place-items:center}
 
 /* ═══ 响应式 ═══ */
@@ -2218,6 +2247,7 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
         <div class="turndrop" id="turnDrop" hidden></div>
       </span>
       <span class="sp"></span>
+      <button class="con-av" id="conAvatar" title="汐音 · 主对话 · 点开汐音档案" aria-label="汐音头像 · 主对话"><img src="./assets/xiyin-avatar.png" alt="汐音"/></button>
       <button class="cbtn" id="conMin" title="收起通讯台（⌥C）· 停靠pill 点击展开">⌄ 收起</button>
     </div>
     <div class="addpop" id="addPop" hidden role="dialog" aria-label="添加技能 / 分身 / MCP"></div>
@@ -2295,17 +2325,17 @@ const SCENES=[{name:'舰桥 · 日落',short:'舰桥·日落',file:'./assets/sce
 const PROJECTS=[
  /* 2026-11-23 用户 #1：时间来真值（yyyy-MM-dd HH:mm:ss）；gateway 故意留长分支，
     验「分支吃剩余宽度 + 截断，HEAD / 时间定宽不越框」。 */
- {id:'ledger',name:'账务核心',color:'#35C7F0',org:'octo-finance',group:'ledger',
+ {id:'ledger',name:'账务核心',color:'#4D8DFF',org:'octo-finance',group:'ledger',
   branch:'main',head:'a74bee6',msg:'chore: bump settlement snapshot to 11-18',at:'2026-11-23 12:04:18',dirty:false,
   remote:'git@github.com:octo-finance/ledger.git',
   worktrees:[{branch:'fix/reconcile',path:'D:/octopus-ws/cabin/worktrees/ledger/reconcile'}]},
- {id:'gateway',name:'API 网关',color:'#8B7CF6',org:'octo-finance',group:'gateway',
+ {id:'gateway',name:'API 网关',color:'#D45BFF',org:'octo-finance',group:'gateway',
   branch:'feat/rate-limit-token-bucket-per-tenant-v2-with-fallback-budget',head:'de29609',msg:'feat: per-tenant token bucket limiter',at:'2026-11-23 13:41:52',dirty:true,
   remote:'git@github.com:octo-finance/gateway.git',worktrees:[]},
- {id:'risk',name:'风控引擎',color:'#FFB020',org:'octo-finance',group:'risk',
+ {id:'risk',name:'风控引擎',color:'#FF9E2C',org:'octo-finance',group:'risk',
   branch:'main',head:'ec8a626',msg:'fix: alert dedup window',at:'2026-11-22 18:26:07',dirty:false,
   remote:'git@github.com:octo-finance/risk.git',worktrees:[]},
- {id:'edge',name:'边缘节点',color:'#3DDC97',org:'octo-edge',group:'edge',
+ {id:'edge',name:'边缘节点',color:'#8FE24B',org:'octo-edge',group:'edge',
   branch:'main',head:'3acd561',msg:'chore: canary probe labels',at:'2026-11-20 09:12:45',dirty:false,
   remote:'git@github.com:octo-edge/edge.git',worktrees:[]}];
 const projOf=id=>PROJECTS.find(p=>p.id===id)||PROJECTS[0];
@@ -3568,7 +3598,7 @@ function bindArcWins(){
 function openDetail(jid,tab,keepInbox){if(!jid)return;state.detailJob=jid;state.detailTab=tab||detailTabFor(jobOf(jid));state.archTab='overview';state.panel='detail';openPanel('detail',!!keepInbox);Audio.sfx('click');}
 
 /* ── send / spawn / resolve ── */
-function autoGrowEl(t){const win=!!t.closest('.cwi');t.style.height='auto';const min=win?28:36,max=win?70:92;const h=Math.max(min,Math.min(t.scrollHeight,max));t.style.height=h+'px';t.style.overflowY=t.scrollHeight>max?'auto':'hidden';}
+function autoGrowEl(t){t.style.height='auto';const min=36,max=92;const h=Math.max(min,Math.min(t.scrollHeight,max));t.style.height=h+'px';t.style.overflowY=t.scrollHeight>max?'auto':'hidden';}
 function autoGrow(){autoGrowEl($('#cmdInput'));}
 function sendCommand(){const t=$('#cmdInput');const raw=t.value.trim();
  if(raw&&state.attSkill&&!raw.startsWith('/'))t.value='/'+state.attSkill+' '+raw;
@@ -5072,10 +5102,10 @@ function renderWins(){const L=$('#winLayer');const top=state.wins.reduce((m,w)=>
   const turns=msgs.filter(m=>m.who==='you').length;
   const ctxTok=Math.min(260000,Math.round((j.tok||0)*0.4)+48000);
   const ctxLabel=fmtK(ctxTok)+' / 1M '+(ctxTok/1e6*100).toFixed(1)+'%';
-  return `<div class="cwin${w.z===top?' focus':''}${w.max?' maxed':''}" data-win="${w.id}" style="left:${X}px;top:${Y}px;width:${W}px;height:${H}px;z-index:${w.z}">
-  <div class="cwh" data-wdrag="${w.id}"><button data-wclose="${w.id}" title="关闭窗口（历史保留）">✕</button><button class="cwadd" title="添加：技能 / 分身 / MCP">✦</button><button data-wmin="${w.id}" title="最小化到切换条">—</button><button data-wmax="${w.id}" title="全屏 / 还原">${w.max?'⤡':'⛶'}</button><span class="te">${STATE_EMO[j.status]}</span><b>${esc(j.title)}</b>${W>=640?`<span class="telem" title="本窗会话的模型 / 上下文 / token 账"><button class="tc" title="模型设置 · 模型 / 思考强度 / 最大上下文"><i>MODEL</i><b>pro · 高</b></button><button class="tc" title="上下文占用"><i>CTX</i><b>${ctxLabel}</b></button><button class="tc tok" title="本次会话 token / 费用"><i>TOKEN</i><b>${fmtK(j.tok||0)} · ¥${(j.cost||0).toFixed(2)}</b></button></span>`:''}<span class="cwidx" title="用户输入历史 · 这是一个聊天窗的轮次索引">≡ <b>${turns}</b> 轮</span><span class="cwid" title="对话对象 · 身份由任务状态派生">${esc(j.agent)}</span><span class="csp"></span>${ARCHIVE[j.id]&&ARCHIVE[j.id].state!=='done'?`<button data-warch="${w.id}" title="📦 归档 · 待归档 / 编排中（打开作战详情 · 归档页签）">📦</button>`:''}<button data-wdetail="${w.id}" title="▦ ${j.kind==='chat'?'会话详情':'作战详情'}（chat 窗留着）">▦</button></div>
+  return `<div class="cwin${w.z===top?' focus':''}${w.max?' maxed':''}" data-win="${w.id}" style="left:${X}px;top:${Y}px;width:${W}px;height:${H}px;z-index:${w.z};--waccent:${projOf(j.proj).color}">
+  <div class="cwh" data-wdrag="${w.id}"><button class="cwbtn" data-wclose="${w.id}" title="关闭窗口（历史保留）">✕</button><button class="cwadd" title="添加：技能 / 分身 / MCP"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.4l1.75 5.6 5.6 1.75-5.6 1.75L12 18.1l-1.75-5.6-5.6-1.75 5.6-1.75z" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round" class="pulse"/><g class="orbit" fill="none" stroke="currentColor" stroke-width=".9"><ellipse cx="12" cy="12" rx="9" ry="3.4" transform="rotate(-28 12 12)"/></g><circle cx="20.2" cy="7.6" r="1" fill="currentColor" class="core"/></svg></button>${W>=640?`<span class="telem" title="本窗会话的模型 / 上下文 / token 账"><button class="tc" title="模型设置 · 模型 / 思考强度 / 最大上下文"><i>MODEL</i><b>pro · 高</b></button><button class="tc" title="上下文占用"><i>CTX</i><b>${ctxLabel}</b></button><button class="tc tok" title="本次会话 token / 费用"><i>TOKEN</i><b>${fmtK(j.tok||0)} · ¥${(j.cost||0).toFixed(2)}</b></button></span>`:''}<span class="cwidx" title="用户输入历史 · 这是一个聊天窗的轮次索引">≡ <b>${turns}</b> 轮</span><span class="csp"></span><span class="te">${STATE_EMO[j.status]}</span><span class="cwid" title="对话对象 · 身份由任务状态派生">${esc(j.agent)}</span>${ARCHIVE[j.id]&&ARCHIVE[j.id].state!=='done'?`<button data-warch="${w.id}" title="📦 归档 · 待归档 / 编排中（打开作战详情 · 归档页签）">📦</button>`:''}<button class="cwtitle" data-wdetail="${w.id}" title="点击看详情 · ${esc(j.title)}">${esc(j.title)}</button><button class="cwbtn" data-wdetail="${w.id}" title="▦ ${j.kind==='chat'?'会话详情':'作战详情'}（chat 窗留着）">▦ 详情</button><button class="cwbtn" data-wmin="${w.id}" title="收起窗口 · 底部窗口条展开">⌄ 收起</button></div>
   <div class="cwl">${msgs.filter(m=>m!==cur).slice(-40).map(tlHTML).join('')}</div>
-  <div class="cwc">${cur?esc(cur.text):''}</div>
+  <div class="cwc"><div class="spk"><i></i><span>${cur?(cur.who==='doer'?esc(cur.name||j.agent):'汐音'):esc(j.agent)}</span></div><div class="line">${cur?esc(cur.text):''}</div></div>
   ${o?`<div class="cwch">${o.options.map((opt,i)=>`<button class="vchoice${opt.label===o.rec?' rec':''}" data-wchoice="${o.id}" data-wlabel="${esc(opt.label)}" data-wid="${w.id}" style="--accent:${OP_KIND[o.kind].color}"><span class="n">[${i+1}]</span><b>${esc(opt.label)}</b></button>`).join('')}</div>`:''}
   <div class="cwi"><span class="pr">❯</span><textarea data-winput="${w.id}" rows="1" placeholder="回应 ${esc(j.agent)} / 下指令…"></textarea><button class="send" data-wsend="${w.id}">⏎</button></div>
   ${w.max?'':'<span class="cwgr" data-wgr="'+w.id+'" title="拖拽调整窗口大小"></span>'}</div>`;}).join('');
@@ -5104,7 +5134,7 @@ function bindWins(){const L=$('#winLayer');
   addEventListener('pointermove',mv);addEventListener('pointerup',up);});});}
 function renderBar(){const bar=$('#winBar');$('#app').classList.toggle('has-wins',state.wins.length>0);if(!state.wins.length){bar.hidden=true;bar.innerHTML='';return;}
  bar.hidden=false;const top=state.wins.reduce((m,w)=>Math.max(m,w.z),0);
- bar.innerHTML=`<span class="wl">WINDOWS</span><button class="wbchip${!state.conMin?' on':''}" data-wb="main"><span class="te">⬢</span><span class="tt2">主通讯</span></button>`+state.wins.map(w=>{const j=jobOf(w.job);const un=state.unread[w.job]||0;return `<button class="wbchip${w.z===top&&!w.min?' on':''}${w.min?' min':''}" data-wb="${w.id}" title="${esc(j.title)}${w.min?'（已最小化）':''}"><span class="te">${STATE_EMO[j.status]}</span><span class="tt2">${esc(j.short)}</span>${un?`<span class="un">${un}</span>`:''}</button>`;}).join('');
+ bar.innerHTML=`<span class="wl">WINDOWS</span><button class="wbchip${!state.conMin?' on':''}" data-wb="main"><span class="te">⬢</span><span class="tt2">主通讯</span></button>`+state.wins.map(w=>{const j=jobOf(w.job);const un=state.unread[w.job]||0;return `<button class="wbchip wacc${w.z===top&&!w.min?' on':''}${w.min?' min':''}" data-wb="${w.id}" style="--waccent:${projOf(j.proj).color}" title="${esc(j.title)}${w.min?'（已最小化）':''}"><span class="te">${STATE_EMO[j.status]}</span><span class="tt2">${esc(j.short)}</span>${un?`<span class="un">${un}</span>`:''}</button>`;}).join('');
  $$('[data-wb]',bar).forEach(b=>b.addEventListener('click',()=>{const id=b.dataset.wb;if(id==='main'){setConMin(false);}else focusWin(id);}));}
 /* ── 主对话窗口：标题栏拖动 / 四边缩放 / 双击复位（几何会话内保留） ── */
 function bindGrips(){const c=$('#console');
@@ -5217,13 +5247,13 @@ function closeSettings(){state.settings=false;$('#setwrap').hidden=true;Audio.sf
    保存 = 与已绑求差集（取消勾选即解绑）。 */
 const ORG_CATALOG={
  'octo-finance':[
-  {group:'ledger',name:'账务核心',branch:'main',head:'a74bee6',msg:'chore: bump settlement snapshot to 11-18',at:'2026-11-23 12:04:18',dirty:false,color:'#35C7F0'},
-  {group:'gateway',name:'API 网关',branch:'feat/rate-limit-token-bucket-per-tenant-v2-with-fallback-budget',head:'de29609',msg:'feat: per-tenant token bucket limiter',at:'2026-11-23 13:41:52',dirty:true,color:'#8B7CF6'},
-  {group:'risk',name:'风控引擎',branch:'main',head:'ec8a626',msg:'fix: alert dedup window',at:'2026-11-22 18:26:07',dirty:false,color:'#FFB020'},
+  {group:'ledger',name:'账务核心',branch:'main',head:'a74bee6',msg:'chore: bump settlement snapshot to 11-18',at:'2026-11-23 12:04:18',dirty:false,color:'#4D8DFF'},
+  {group:'gateway',name:'API 网关',branch:'feat/rate-limit-token-bucket-per-tenant-v2-with-fallback-budget',head:'de29609',msg:'feat: per-tenant token bucket limiter',at:'2026-11-23 13:41:52',dirty:true,color:'#D45BFF'},
+  {group:'risk',name:'风控引擎',branch:'main',head:'ec8a626',msg:'fix: alert dedup window',at:'2026-11-22 18:26:07',dirty:false,color:'#FF9E2C'},
   {group:'settlement',name:'结算清分',branch:'main',head:'51cd9ab',msg:'feat: settling window v2',at:'2026-11-21 16:03:44',dirty:false,color:'#FF5C8A'},
   {group:'billing',name:'计费中心',branch:'release/2026-11',head:'9f2e804',msg:'chore: rate card sync',at:'2026-11-20 10:22:19',dirty:false,color:'#3DDC97'}],
  'octo-edge':[
-  {group:'edge',name:'边缘节点',branch:'main',head:'3acd561',msg:'chore: canary probe labels',at:'2026-11-20 09:12:45',dirty:false,color:'#3DDC97'},
+  {group:'edge',name:'边缘节点',branch:'main',head:'3acd561',msg:'chore: canary probe labels',at:'2026-11-20 09:12:45',dirty:false,color:'#8FE24B'},
   {group:'probe',name:'探针服务',branch:'main',head:'c41d7e2',msg:'fix: heartbeat jitter',at:'2026-11-19 22:48:31',dirty:false,color:'#35C7F0'},
   {group:'canary',name:'灰度调度',branch:'feat/step-rollout',head:'88ab30f',msg:'feat: step rollout weights',at:'2026-11-23 08:15:02',dirty:true,color:'#FFB020'}],
  'open-octopus':[
@@ -5519,6 +5549,7 @@ $('#btnProj').addEventListener('click',e=>{e.stopPropagation();togglePjPop();});
 $('#character').addEventListener('click',()=>{Audio.sfx('click');state.lastAct=Date.now();playClip(state.clip+1);});
 $('#conClose').addEventListener('click',()=>setConMin(true));
 $('#conMin').addEventListener('click',()=>setConMin(!state.conMin));
+$('#conAvatar').addEventListener('click',()=>toggleXyPanel());
 $('#conAdd').addEventListener('click',e=>{e.stopPropagation();openAdd();});
 addEventListener('pointerdown',e=>{if(!state.addOpen)return;if(e.target.closest('#addPop,#conAdd'))return;openAdd(false);});
 $('#conTurns').addEventListener('click',e=>{e.stopPropagation();closeConPop();state.conTurns=!state.conTurns;state.conTurnSel=0;renderTurnDrop();Audio.sfx('click');});

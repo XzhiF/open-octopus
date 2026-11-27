@@ -32,6 +32,7 @@ import {
 } from '../fleet/fleet-model'
 import { sameCockpitRef, defaultTabForRef, type CockpitRef } from '../state/cockpit-state'
 import { projectNameFromKey, rowProjectKeys } from '../projects/project-model'
+import { accentOfRow } from '../fleet/project-accent'
 import { taskDisplayStatus } from '@/components/cabin/modules/ui'
 import { jobStatusLabel } from '@/components/cabin/job-status'
 import { useCockpitState } from '../state/CockpitStateProvider'
@@ -52,16 +53,6 @@ const STATUS_LABEL: Record<FleetStatus, string> = {
   // done 组按实体细分（见 statusTextOf）：非会话作业跑完 = 已完成。
   done: '已完成',
   archived: '已归档',
-}
-
-/** 原型四个项目色 —— 用项目 key 稳定 hash 取一个，不依赖服务端多给字段。 */
-const ACCENTS = ['#35C7F0', '#8B7CF6', '#FFB020', '#3DDC97']
-
-function accentOf(row: CockpitRow): string {
-  const anchor = row.kind === 'job' ? rowProjectKeys(row)[0] ?? row.key : row.key
-  let hash = 0
-  for (let i = 0; i < anchor.length; i += 1) hash = (hash * 31 + anchor.charCodeAt(i)) | 0
-  return ACCENTS[Math.abs(hash) % ACCENTS.length]
 }
 
 /** 类型字形（原型 KIND）；attention 行不进编队。
@@ -436,7 +427,7 @@ export function CockpitFleetRail() {
           const liveText = live ? (backgroundWait ? '作者在等后台' : '作者在跑') : null
           const endedStage = stage === 'done' || stage === 'archived'
           const statusText = statusTextOf(row, stage)
-          const accent = accentOf(row)
+          const accent = accentOfRow(row)
           const title = titleOf(row)
           const talkable = byKey.has(row.key)
           const chatOpen = wins.windows.some((win) => win.threadKey === row.key && !win.min)

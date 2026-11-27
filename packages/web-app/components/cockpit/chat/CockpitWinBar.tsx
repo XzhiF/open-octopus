@@ -38,7 +38,8 @@ export function CockpitWinBar() {
           <button
             key={win.id}
             type="button"
-            className={`ck12-wbchip${win.min ? ' is-min' : ''}`}
+            className={`ck12-wbchip is-wacc${win.min ? ' is-min' : ''}`}
+            style={{ ['--waccent' as string]: thread.accent }}
             data-testid={`cockpit-winbar-chip-${win.id}`}
             title={win.min ? `恢复 ${thread.title}` : `聚焦 ${thread.title}`}
             onClick={() => openFleetChat(wins, api, win.threadKey, chatWindow)}

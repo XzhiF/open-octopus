@@ -7,6 +7,7 @@
 
 import type { CockpitRef } from '../state/cockpit-state'
 import { groupOf, sortRows, type CockpitRow } from './fleet-model'
+import { accentOfRow, MAIN_ACCENT } from './project-accent'
 
 export type CockpitThreadState = 'run' | 'wait' | 'blocked' | 'queue' | 'done'
 
@@ -42,6 +43,9 @@ export interface CockpitThread {
   identity: string
   /** ▦ 详情目标；2026-11-25 起会话（delegation）也有详情面（六页签）。 */
   ref: CockpitRef | null
+  /** v22（2026-11-27）：本线程的项目色 —— 独立 chat 窗边框 / 头带 / 输入行 /
+   *  WINDOWS chip 共用；主对话固定薄荷青。与编队行同一锚点算法。 */
+  accent: string
 }
 
 export const MAIN_THREAD_KEY = 'main'
@@ -88,6 +92,7 @@ function threadOfRow(row: CockpitRow): CockpitThread | null {
       state: threadStateOf(row),
       identity: identityOfStatus(row.job.status),
       ref: { kind: 'job', cabinId: row.cabinId, id: row.job.id },
+      accent: accentOfRow(row),
     }
   }
   if (row.kind === 'task') {
@@ -103,6 +108,7 @@ function threadOfRow(row: CockpitRow): CockpitThread | null {
       state: threadStateOf(row),
       identity: identityOfStatus(row.task.status),
       ref: { kind: 'task', cabinId: row.cabinId, id: row.task.id },
+      accent: accentOfRow(row),
     }
   }
   if (row.kind === 'delegation') {
@@ -117,6 +123,7 @@ function threadOfRow(row: CockpitRow): CockpitThread | null {
       state: threadStateOf(row),
       identity: '执行者 · task-doer',
       ref: { kind: 'delegation', cabinId: row.cabinId, id: row.delegation.id },
+      accent: accentOfRow(row),
     }
   }
   return null
@@ -137,6 +144,7 @@ export function threadsFromRows(
     state: 'queue',
     identity: '汐音',
     ref: null,
+    accent: MAIN_ACCENT,
   }
   const seen = new Set<string>()
   if (mainSessionId) seen.add(mainSessionId)
