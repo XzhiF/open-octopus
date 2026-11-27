@@ -1,6 +1,6 @@
 "use client"
 
-import { Palette, type LucideIcon } from "lucide-react"
+import { Palette, Smartphone, type LucideIcon } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 export interface SettingsMenuItem {
@@ -16,6 +16,12 @@ export const settingsMenuItems: SettingsMenuItem[] = [
     label: "外观",
     icon: Palette,
     description: "作业坞与界面显示",
+  },
+  {
+    id: "pairing",
+    label: "手机配对",
+    icon: Smartphone,
+    description: "一次性配对码与已配对设备",
   },
 ]
 
