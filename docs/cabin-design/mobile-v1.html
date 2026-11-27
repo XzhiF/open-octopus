@@ -229,6 +229,8 @@
   /* 输入区 */
   .composer{position:relative;z-index:3;flex:none;padding:9px 12px 2px;
             background:linear-gradient(180deg,rgba(8,6,18,.4),rgba(8,6,18,.72))}
+  .ctrlrow{display:flex;align-items:center;gap:6px;padding:0 2px 8px}
+  .ctrlrow .sp{flex:1}
   .chips{display:flex;gap:6px;margin-bottom:8px;overflow:hidden}
   .chips span{font:600 10.5px/1 var(--ui);color:var(--metal);border:1px solid rgba(185,179,217,.2);
               padding:8px 11px;border-radius:999px;white-space:nowrap;background:rgba(255,255,255,.045)}
@@ -238,6 +240,110 @@
                  backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
   .send{width:44px;height:44px;flex:none;display:grid;place-items:center;border-radius:50%;
         background:linear-gradient(180deg,#69f2e4,#22d9c8);color:#06131a;font-size:15px;font-weight:800}
+
+  /* ── 通讯台头（2026-11-27）：星核 + 模型 / ctx / tok + 身份 + 轮次 ── */
+  .console{position:relative;z-index:3;flex:none;display:flex;align-items:center;gap:6px;
+           padding:7px 12px 0;overflow:hidden}
+  .core{width:28px;height:28px;flex:none;border-radius:50%;display:grid;place-items:center;
+        font-size:12px;line-height:1;color:var(--teal);
+        border:1px solid rgba(46,230,214,.4);
+        background:radial-gradient(60% 60% at 50% 40%,rgba(46,230,214,.18),rgba(10,8,24,.62));
+        box-shadow:0 0 12px rgba(46,230,214,.2),inset 0 0 8px rgba(46,230,214,.12)}
+  .console .sp{flex:1;min-width:2px}
+  .console .cchips{display:flex;align-items:center;gap:6px;min-width:0;overflow-x:auto;scrollbar-width:none}
+  .console .cchips::-webkit-scrollbar{display:none}
+  .console .cchips > *{flex:none}
+  .cchip{display:inline-flex;align-items:center;gap:4px;height:24px;flex:none;white-space:nowrap;
+         border-radius:999px;border:1px solid rgba(185,179,217,.18);
+         background:rgba(16,13,40,.66);padding:0 8px;
+         font:10.5px/1 var(--mono);letter-spacing:.02em;color:var(--dim)}
+  .cchip b{font-weight:700}
+  .cchip .tip{font-size:8px;color:rgba(141,134,184,.7)}
+  .cchip.model b{color:var(--green)}
+  .cchip.ctx{position:relative;overflow:hidden}
+  .cchip.ctx .fill{position:absolute;inset:0;width:6.2%;background:rgba(46,230,214,.14)}
+  .cchip.ctx .bar{position:absolute;left:0;right:0;bottom:0;height:2px;background:rgba(185,179,217,.16)}
+  .cchip.ctx .bar i{display:block;height:100%;width:6.2%;background:var(--teal)}
+  .cchip.ctx b{color:var(--teal)}
+  .cchip.tok b{color:var(--teal)}
+  .cchip.identity{border-color:rgba(201,191,255,.45);background:rgba(123,77,255,.16);color:var(--purple)}
+  .cchip.turn{margin-left:auto;border-color:rgba(46,230,214,.38);color:var(--teal);font-weight:700}
+
+  /* ── 折叠过程 meta：一行摘要；点开是左侧细线的步骤列表 ── */
+  .m .head{cursor:pointer}
+  .m .head .fold{color:var(--teal);font-size:8.5px;margin-left:1px}
+  .m .head.run{color:var(--dim)}
+  .m .head.run .run{color:var(--amber);font-weight:700}
+  .metabody{margin:3px 0 0 3px;padding-left:9px;border-left:1px solid rgba(141,134,184,.28);
+            display:flex;flex-direction:column;gap:2px}
+  .metabody .tool,.metabody .think{margin:0}
+
+  /* ── 弹出层：底部抽屉（轮次 / 星核 / 模型 / ctx / tok） ── */
+  .scrim{position:absolute;inset:0;z-index:6;background:rgba(4,3,10,.58)}
+  .sheet{position:absolute;left:0;right:0;bottom:0;z-index:7;padding:9px 14px 16px;
+         border-radius:24px 24px 0 0;border:1px solid rgba(185,179,217,.16);border-bottom:0;
+         background:linear-gradient(180deg,rgba(21,17,50,.985),rgba(10,8,24,.99));
+         box-shadow:0 -20px 54px rgba(0,0,0,.6)}
+  .sheet .grab{width:38px;height:4px;border-radius:3px;background:rgba(185,179,217,.32);margin:0 auto 10px}
+  .sheet .sh{display:flex;align-items:baseline;gap:8px;margin:0 1px 10px}
+  .sheet .sh b{font:700 14px/1.2 var(--ui);color:#fff}
+  .sheet .sh .n{font:800 8.5px/1 var(--mono);letter-spacing:.16em;color:var(--teal)}
+  .sheet .sh .r{margin-left:auto;font:9.5px/1 var(--mono);color:var(--dim)}
+  .stabs{display:flex;gap:4px;background:rgba(10,8,24,.7);border:1px solid rgba(185,179,217,.14);
+         border-radius:999px;padding:3px;margin-bottom:10px}
+  .stabs span{flex:1;text-align:center;font:600 11.5px/1 var(--ui);color:var(--dim);padding:8px 0;border-radius:999px}
+  .stabs span.on{color:#06131a;background:linear-gradient(180deg,#69f2e4,#22d9c8);font-weight:700}
+  .sfield{display:flex;align-items:center;gap:7px;margin-bottom:9px;padding:9px 11px;border-radius:12px;
+          border:1px solid rgba(185,179,217,.16);background:rgba(16,13,40,.62);
+          font:11px/1 var(--mono);color:var(--dim)}
+  .ssec{font:800 8.5px/1 var(--mono);letter-spacing:.14em;color:rgba(46,230,214,.8);margin:9px 2px 6px}
+  .srow{display:flex;align-items:center;gap:10px;padding:9px 11px;margin-bottom:6px;border-radius:13px;
+        border:1px solid rgba(185,179,217,.12);background:rgba(255,255,255,.03)}
+  .srow .ic{width:26px;height:26px;flex:none;border-radius:8px;display:grid;place-items:center;font-size:12px;
+            color:var(--teal);border:1px solid rgba(46,230,214,.28);background:rgba(46,230,214,.08)}
+  .srow .m{flex:1;min-width:0}
+  .srow .n{font:600 12.5px/1.35 var(--ui);color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .srow .d{font:9.5px/1.55 var(--mono);color:var(--dim);margin-top:3px}
+  .srow .r{font:9.5px/1 var(--mono);color:var(--dim);flex:none}
+  .srow .ck{width:19px;height:19px;flex:none;border-radius:50%;border:1px solid rgba(185,179,217,.3)}
+  .srow.on{border-color:rgba(46,230,214,.4);background:rgba(46,230,214,.06)}
+  .srow.on .ck{display:grid;place-items:center;background:var(--teal);border-color:var(--teal);
+               color:#06131a;font-size:11px;font-weight:800}
+  .srow.lock .ic{color:var(--purple);border-color:rgba(201,191,255,.35);background:rgba(123,77,255,.12)}
+  .srow.danger .ic{color:var(--red);border-color:rgba(255,59,92,.35);background:rgba(255,59,92,.08)}
+  .srow .btn{flex:none;font:800 10px/1 var(--mono);letter-spacing:.06em;color:#06131a;
+             background:linear-gradient(180deg,#69f2e4,#22d9c8);padding:7px 11px;border-radius:999px}
+  .srow .btn.ghost{background:rgba(46,230,214,.07);border:1px solid rgba(46,230,214,.4);color:var(--teal)}
+  .srow .btn.red{background:rgba(255,59,92,.12);border:1px solid rgba(255,59,92,.42);color:var(--red)}
+  .srow .sw{width:34px;height:20px;flex:none;border-radius:999px;background:rgba(46,230,214,.16);
+            border:1px solid rgba(46,230,214,.4);position:relative}
+  .srow .sw::after{content:"";position:absolute;right:2px;top:2px;width:14px;height:14px;border-radius:50%;
+                   background:var(--teal);box-shadow:0 0 8px rgba(46,230,214,.5)}
+  .sfoot{font:9.5px/1.7 var(--mono);color:rgba(141,134,184,.85);margin-top:9px;text-align:left}
+
+  /* 轮次索引 */
+  .trow{display:flex;align-items:baseline;gap:9px;padding:8px 9px;border-radius:11px;margin-bottom:3px}
+  .trow .no{width:20px;flex:none;text-align:right;font:800 9.5px/1 var(--mono);color:var(--dim)}
+  .trow .tx{flex:1;min-width:0;font:11px/1.5 var(--mono);color:var(--metal);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .trow .tm{flex:none;font:8.5px/1 var(--mono);color:rgba(141,134,184,.7)}
+  .trow.cur{border:1px solid rgba(46,230,214,.28);background:rgba(46,230,214,.07)}
+  .trow.cur .no{color:var(--teal)}
+  .trow.sel{border:1px solid rgba(255,111,181,.3);background:rgba(255,111,181,.08)}
+  .trow.sel .no{color:var(--pink)}
+  .m.flash .me{border-left-color:var(--pink);background:rgba(255,111,181,.08);border-radius:0 8px 8px 0}
+
+  /* 明细面板（ctx / tok / 模型 / 工具） */
+  .kv{display:flex;align-items:baseline;gap:10px;padding:5px 2px;font:10.5px/1.5 var(--mono);color:var(--metal)}
+  .kv .k{flex:none;width:86px;color:var(--dim)}
+  .kv .v{flex:1;min-width:0;text-align:right;color:var(--ink)}
+  .bar2{height:6px;border-radius:999px;background:rgba(185,179,217,.14);overflow:hidden;margin:4px 0 10px}
+  .bar2 i{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,#2EE6D6,#7B4DFF)}
+  .sseg{display:flex;gap:4px;margin-bottom:6px}
+  .sseg span{flex:1;text-align:center;font:600 11px/1 var(--ui);color:var(--dim);padding:8px 0;border-radius:9px;
+            border:1px solid rgba(185,179,217,.14);background:rgba(16,13,40,.6)}
+  .sseg span.on{color:var(--teal);border-color:rgba(46,230,214,.4);background:rgba(46,230,214,.08);font-weight:700}
+  .code{font:10px/1.7 var(--mono);color:var(--metal);background:rgba(10,8,24,.72);
+        border:1px solid rgba(185,179,217,.14);border-radius:10px;padding:8px 10px;white-space:pre-wrap}
 
   /* 空态 */
   .empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:0 22px;text-align:center}
@@ -289,14 +395,17 @@
 <body>
 <div class="wrap">
 
-<h1>手机端 · V1 定版<span class="v">定稿 · 2026-11-26 · 2026-11-27 同步立绘 WebP 动画</span></h1>
+<h1>手机端 · V1 定版<span class="v">定稿 · 2026-11-26 · 2026-11-27 chat 内场</span></h1>
 <p class="sub">
   目标：<b>人在外面，能把家里那台机器上的活推进一格。</b>
   结构按调研稿 §5.6–5.7：设备 →（作业舱 | 新建单独会话）。
   视觉直接用<strong>全舱模式那套素材</strong>：12 幕 <code>assets/scene-*.png</code> 底景 ·
   v22 的星流 canvas · 3 支透明 WebP 立绘动画 <code>assets/v22/*.webp</code>（其余 10 支按需再加）；
   但壳子改成<strong>圆角矩形</strong> —— 比桌面舰桥柔一档，不再是切角 + 六边形那套硬边。
-  会话内容仍是桌面 TUI 语法 <code>❯ / ✦ 汐音 / ◌ / ▸ tool[✓] / ✳</code>。
+  会话内容仍是桌面 TUI 语法 <code>❯ / ✦ 汐音 / ◌ / ▸ tool[✓] / ✳</code>；
+  <strong>工具与 think 默认折叠</strong>，点开才看步骤。
+  主 chat 的通讯台头一行放 <code>model / ctx / tok / 身份 / ≡ 轮次</code>；
+  星核抽屉收纳技能 · 分身 · MCP，会话级动作（压缩 / 清空 …）单独一栏。
   应用图标与 PC 现用 exe 图标同源；落地计划见 <code>design/35-mobile-dev-plan.md</code>。
 </p>
 <p class="rule">
@@ -313,6 +422,10 @@
       <b>选中设备</b><span class="ar">→</span>
       <span class="pill">作业舱列表</span><span class="ar">|</span><span class="pill">新建单独会话</span>
       <span class="ar">→</span><span class="pill">主 chat</span><span class="ar">→</span><span class="pill">☰ 编队</span><span class="ar">→</span><span class="pill">待你定 / 会话 / 任务</span>
+    </div>
+    <div class="flow" style="margin-top:13px">
+      <span class="pill">通讯台头</span><span class="ar">=</span>
+      <span class="pill">✦ 星核</span><span class="pill">model</span><span class="pill">ctx</span><span class="pill">tok</span><span class="pill">身份</span><span class="pill">≡ 轮次</span>
     </div>
     <div class="flow" style="margin-top:13px">
       <span class="pill">设备状态</span><span class="ar">=</span>
@@ -501,24 +614,42 @@
         <div class="sbar"><span>9:41</span><span class="r"><span class="ts"><i></i>TAILNET</span><span class="bat"></span></span></div>
         <div class="bar"><div class="back">‹</div><div><div class="t">octopus-web<span class="num">主 CHAT</span></div><div class="s">书房 PC · 运行中</div></div><div class="sp"></div><div class="act">☰ 编队</div></div>
 
+        <div class="console">
+          <span class="core">✦</span>
+          <span class="cchips">
+          <span class="cchip model">model <b>pro</b> <span class="tip">▾</span></span>
+          <span class="cchip ctx"><span class="fill"></span><span class="bar"><i></i></span>ctx <b>6.2%</b> <span class="tip">▾</span></span>
+          <span class="cchip tok">tok <b>1.2K</b> <span class="tip">▾</span></span>
+          </span>
+          <span class="sp"></span>
+          <span class="cchip turn">≡ 12轮</span>
+        </div>
+
         <div class="body" style="padding:12px 12px 0">
           <img class="chatcrew" src="assets/v22/07-idle.webp" alt="汐音">
           <div class="stream">
             <div class="m">
-              <div class="head"><span class="tag">✦ 汐音</span><span class="ok">已完成</span><span>·</span><span class="pk">15s</span><span>·</span><span class="nt">4 步</span><span>·</span><span class="tl">工具 2</span></div>
+              <div class="head"><span class="tag">✦ 汐音</span><span class="ok">已完成</span><span>·</span><span class="pk">15s</span><span>·</span><span class="nt">4 步</span><span>·</span><span class="tl">工具 2</span><span>·</span><span class="gr">1.2K tok</span><span>·</span><span class="am">¥0.06</span><span class="fold">▸</span></div>
               <div class="bodyx"><span class="mk">✳</span>三处 spec 引用 + 两行验收清单都还在。要清就说一声，我删完给你 diff 摘要。</div>
             </div>
             <div class="m"><div class="me"><span class="p">❯</span><div class="tx">好，一起清掉</div></div></div>
             <div class="m">
-              <div class="head"><span class="tag">✦ 汐音</span><span class="ok">已完成</span><span>·</span><span class="pk">8s</span><span>·</span><span class="nt">2 步</span><span>·</span><span class="tl">工具 1</span></div>
-              <div class="tool"><span class="ar">▸ </span><span class="nm">Edit</span> spec/phase-1.md <span class="st">[✓]</span></div>
+              <div class="head"><span class="tag">✦ 汐音</span><span class="ok">已完成</span><span>·</span><span class="pk">8s</span><span>·</span><span class="nt">2 步</span><span>·</span><span class="tl">工具 1</span><span class="fold">▾</span></div>
+              <div class="metabody">
+                <div class="think">◌ 先核对 manifest 里的引用，再一起改 spec 和验收清单</div>
+                <div class="tool"><span class="ar">▸ </span><span class="nm">Edit</span> spec/phase-1.md <span class="st">[✓]</span></div>
+              </div>
               <div class="bodyx"><span class="mk">✳</span>清完了。任务停在<span style="color:var(--pink);font-weight:700">待验收</span>，编队里那两条留着等你点头。</div>
+            </div>
+            <div class="m">
+              <div class="head run"><span class="tag">✦ 汐音</span><span class="run">运行中</span><span>·</span><span class="nt">2 步</span><span>·</span><span class="tl">工具 1</span><span class="fold">▸</span></div>
             </div>
             <div class="hint" style="text-align:left;padding:2px 2px 0;line-height:1.6">待你定 / 会话 / 任务 → 右上角「☰ 编队」</div>
           </div>
         </div>
 
         <div class="composer">
+          <div class="ctrlrow"><span class="cchip identity">◉ 执行者</span><span class="sp"></span></div>
           <div class="chips"><span>看看编队</span><span>看 diff</span><span>最近怎么样</span></div>
           <div class="inputrow">
             <div class="box">说点什么…</div>
@@ -527,7 +658,7 @@
         </div>
         <div class="homebar"><i></i></div>
       </div></div>
-      <figcaption><b>E · 舱内主 chat</b><br><em>点进舱先落到这</em>：直接跟汐音说话，她站在聊天面板后侧动着，消息列满宽不打折。待你定 / 会话 / 任务走右上角「☰ 编队」。</figcaption>
+      <figcaption><b>E · 舱内主 chat</b><br><em>点进舱先落到这</em>：直接跟汐音说话，她站在聊天面板后侧动着，消息列满宽不打折。通讯台头一行：<em>星核 / model / ctx / tok / ≡ 轮次</em>；身份贴纸在输入区上方。工具与 think 默认折成一行，<b>点开才看步骤</b>；跑动中也只占一行。待你定 / 会话 / 任务走右上角「☰ 编队」。</figcaption>
     </figure>
 
     <figure>
@@ -568,9 +699,435 @@
   </div>
 </section>
 
-<!-- ══════ 3 · 会话与待你定 ══════ -->
+<!-- ══════ 3 · chat 内场 ══════ -->
 <section class="grp">
-  <h2>3 · 会话与待你定</h2>
+  <h2>3 · chat 内场（轮次 · 星核 · 遥测）</h2>
+  <div class="gd">桌面通讯台的三件事搬进手机：过程折叠、轮次索引、遥测与星核。全部走底部抽屉 —— 拇指够得着，也不挡消息。</div>
+  <div class="row">
+
+    <figure>
+      <div class="frame"><div class="island"></div><div class="screen">
+        <div class="scene"><img src="assets/scene-deepspace.png" alt=""></div>
+        <canvas class="warp"></canvas>
+        <div class="grade"></div><div class="grain"></div>
+
+        <div class="sbar"><span>9:41</span><span class="r"><span class="ts"><i></i>TAILNET</span><span class="bat"></span></span></div>
+        <div class="bar"><div class="back">‹</div><div><div class="t">octopus-web<span class="num">主 CHAT</span></div><div class="s">书房 PC · 运行中</div></div><div class="sp"></div><div class="act">☰ 编队</div></div>
+
+        <div class="console">
+          <span class="core">✦</span>
+          <span class="cchips">
+          <span class="cchip model">model <b>pro</b> <span class="tip">▾</span></span>
+          <span class="cchip ctx"><span class="fill"></span><span class="bar"><i></i></span>ctx <b>6.2%</b> <span class="tip">▾</span></span>
+          <span class="cchip tok">tok <b>1.2K</b> <span class="tip">▾</span></span>
+          </span>
+          <span class="sp"></span>
+          <span class="cchip turn" style="background:rgba(46,230,214,.12)">≡ 12轮</span>
+        </div>
+
+        <div class="body" style="padding:12px 12px 0">
+          <img class="chatcrew" src="assets/v22/07-idle.webp" alt="汐音" style="opacity:.55">
+          <div class="stream">
+            <div class="m"><div class="me"><span class="p">❯</span><div class="tx">刚才那个 diff 里，验收清单是不是也被改到了？</div></div></div>
+            <div class="m">
+              <div class="head"><span class="tag">✦ 汐音</span><span class="ok">已完成</span><span>·</span><span class="pk">9s</span><span>·</span><span class="nt">3 步</span><span>·</span><span class="tl">工具 1</span><span class="fold">▸</span></div>
+              <div class="bodyx"><span class="mk">✳</span>动了：`acceptance-plan-r2.json` 里两行跟着 phase 2 一起删了，diff 在下面。</div>
+            </div>
+            <div class="m flash"><div class="me"><span class="p">❯</span><div class="tx">好，一起清掉</div></div></div>
+          </div>
+        </div>
+
+        <div class="scrim"></div>
+        <div class="sheet">
+          <div class="grab"></div>
+          <div class="sh"><b>轮次</b><span class="n">TURNS</span><span class="r">12 轮 · 新的在上</span></div>
+          <div class="trow cur"><span class="no">12</span><span class="tx">好，一起清掉</span><span class="tm">刚刚</span></div>
+          <div class="trow"><span class="no">11</span><span class="tx">刚才那个 diff 里，验收清单是不是也被改到了？</span><span class="tm">2 分钟</span></div>
+          <div class="trow sel"><span class="no">10</span><span class="tx">phase 1 的 spec 里还有三处把 phase 2 当后续写…</span><span class="tm">8 分钟</span></div>
+          <div class="trow"><span class="no">9</span><span class="tx">phase-2 如果不做的话，任务把相关产物也删除了</span><span class="tm">12 分钟</span></div>
+          <div class="trow"><span class="no">8</span><span class="tx">先看下现在任务停在哪一步</span><span class="tm">26 分钟</span></div>
+          <div class="trow"><span class="no">7</span><span class="tx">把 api 那几个接口的返回补上 items</span><span class="tm">40 分钟</span></div>
+          <div class="sfoot">点一条 = 抽屉收起，消息滚到那一行并闪一下（粉）。当前轮青色，跳转目标粉色。</div>
+        </div>
+        <div class="homebar"><i></i></div>
+      </div></div>
+      <figcaption><b>E3 · 轮次索引</b><br>通讯台头「≡ 12轮」点开：<em>一条 = 你的一句话</em>，新的在上。点任意一条就<em>定位到聊天里那一行</em>，抽屉同时收起；不用再翻回去找。</figcaption>
+    </figure>
+
+    <figure>
+      <div class="frame"><div class="island"></div><div class="screen">
+        <div class="scene"><img src="assets/scene-deepspace.png" alt=""></div>
+        <canvas class="warp"></canvas>
+        <div class="grade"></div><div class="grain"></div>
+
+        <div class="sbar"><span>9:41</span><span class="r"><span class="ts"><i></i>TAILNET</span><span class="bat"></span></span></div>
+        <div class="bar"><div class="back">‹</div><div><div class="t">octopus-web<span class="num">主 CHAT</span></div><div class="s">书房 PC · 运行中</div></div><div class="sp"></div><div class="act">☰ 编队</div></div>
+
+        <div class="console">
+          <span class="core" style="border-color:rgba(46,230,214,.75);box-shadow:0 0 16px rgba(46,230,214,.4)">✦</span>
+          <span class="cchips">
+          <span class="cchip model">model <b>pro</b> <span class="tip">▾</span></span>
+          <span class="cchip ctx"><span class="fill"></span><span class="bar"><i></i></span>ctx <b>6.2%</b> <span class="tip">▾</span></span>
+          <span class="cchip tok">tok <b>1.2K</b> <span class="tip">▾</span></span>
+          </span>
+          <span class="sp"></span>
+          <span class="cchip turn">≡ 12轮</span>
+        </div>
+
+        <div class="body" style="padding:12px 12px 0">
+          <div class="stream">
+            <div class="m"><div class="me"><span class="p">❯</span><div class="tx">好，一起清掉</div></div></div>
+            <div class="m">
+              <div class="head"><span class="tag">✦ 汐音</span><span class="ok">已完成</span><span>·</span><span class="pk">8s</span><span>·</span><span class="nt">2 步</span><span>·</span><span class="tl">工具 1</span><span class="fold">▸</span></div>
+              <div class="bodyx"><span class="mk">✳</span>清完了。任务停在待验收，编队里那两条留着等你点头。</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="scrim"></div>
+        <div class="sheet">
+          <div class="grab"></div>
+          <div class="sh"><b>星核</b><span class="n">CORE</span><span class="r">✦ 技能 · 分身 · MCP · 会话</span></div>
+          <div class="stabs"><span class="on">技能</span><span>分身</span><span>MCP</span><span>会话</span></div>
+          <div class="sfield"><span style="color:var(--teal)">⌕</span> 搜技能名，如 octo-wiki</div>
+          <div class="ssec">当前身份自带 · 只读</div>
+          <div class="srow lock">
+            <span class="ic">✦</span>
+            <div class="m"><div class="n">octo-dev-copilot</div><div class="d">随「执行者」生效 · 不能摘</div></div>
+            <span class="r">🔒</span>
+          </div>
+          <div class="ssec">全部技能</div>
+          <div class="srow on">
+            <span class="ic">⌘</span>
+            <div class="m"><div class="n">octo-wiki</div><div class="d">内置 · 查 ~/.octopus/knowledge/wiki</div></div>
+            <span class="r">1.2K tok</span>
+            <span class="ck">✓</span>
+          </div>
+          <div class="srow">
+            <span class="ic">⌘</span>
+            <div class="m"><div class="n">matt-spec-dev</div><div class="d">内置 · 规格共建 / 逐票开发</div></div>
+            <span class="r">3.4K tok</span>
+            <span class="ck"></span>
+          </div>
+          <div class="srow">
+            <span class="ic">⌘</span>
+            <div class="m"><div class="n">octo-guide</div><div class="d">内置 · 上手与操作向导</div></div>
+            <span class="r">0.8K tok</span>
+            <span class="ck"></span>
+          </div>
+          <div class="srow">
+            <span class="ic" style="color:var(--purple);border-color:rgba(201,191,255,.3);background:rgba(123,77,255,.1)">✎</span>
+            <div class="m"><div class="n">api-review-evolve</div><div class="d">本地进化 · 上次用是 5 天前</div></div>
+            <span class="r">0.4K tok</span>
+            <span class="ck"></span>
+          </div>
+          <div class="sfoot">选中 = 挂到下一条消息（发送后自动摘掉）。技能 ↔ 会话操作分成两栏，见「会话」。</div>
+        </div>
+        <div class="homebar"><i></i></div>
+      </div></div>
+      <figcaption><b>E4 · 星核 · 技能</b><br>通讯台头左侧的<em>星环</em>点开：技能 / 分身 / MCP / 会话四栏。<em>当前身份自带的 SKILL 只读置顶</em>，下面是可挂载的技能；每行带来源与 token 量级。</figcaption>
+    </figure>
+
+    <figure>
+      <div class="frame"><div class="island"></div><div class="screen">
+        <div class="scene"><img src="assets/scene-deepspace.png" alt=""></div>
+        <canvas class="warp"></canvas>
+        <div class="grade"></div><div class="grain"></div>
+
+        <div class="sbar"><span>9:41</span><span class="r"><span class="ts"><i></i>TAILNET</span><span class="bat"></span></span></div>
+        <div class="bar"><div class="back">‹</div><div><div class="t">octopus-web<span class="num">主 CHAT</span></div><div class="s">书房 PC · 运行中</div></div><div class="sp"></div><div class="act">☰ 编队</div></div>
+
+        <div class="console">
+          <span class="core">✦</span>
+          <span class="cchips">
+          <span class="cchip model">model <b>pro</b> <span class="tip">▾</span></span>
+          <span class="cchip ctx"><span class="fill"></span><span class="bar"><i></i></span>ctx <b>6.2%</b> <span class="tip">▾</span></span>
+          <span class="cchip tok">tok <b>1.2K</b> <span class="tip">▾</span></span>
+          </span>
+          <span class="sp"></span>
+          <span class="cchip turn">≡ 12轮</span>
+        </div>
+
+        <div class="body" style="padding:12px 12px 0">
+          <div class="stream">
+            <div class="m"><div class="me"><span class="p">❯</span><div class="tx">好，一起清掉</div></div></div>
+          </div>
+        </div>
+
+        <div class="scrim"></div>
+        <div class="sheet">
+          <div class="grab"></div>
+          <div class="sh"><b>星核</b><span class="n">CORE</span><span class="r">✦ 技能 · 分身 · MCP · 会话</span></div>
+          <div class="stabs"><span>技能</span><span class="on">分身</span><span>MCP</span><span>会话</span></div>
+          <div class="ssec">当前身份 · 紫幽兰</div>
+          <div class="srow on">
+            <span class="ic" style="color:var(--purple);border-color:rgba(201,191,255,.4);background:rgba(123,77,255,.14)">◉</span>
+            <div class="m"><div class="n">执行者 · 汐音</div><div class="d">octo-dev-copilot 分身担任 · 下一条消息生效</div></div>
+            <span class="r" style="color:var(--purple)">当前</span>
+            <span class="ck">✓</span>
+          </div>
+          <div class="srow">
+            <span class="ic" style="color:var(--dim);border-color:rgba(185,179,217,.25);background:rgba(255,255,255,.04)">○</span>
+            <div class="m"><div class="n">主 Agent</div><div class="d">基础身份 · 平台默认</div></div>
+            <span class="btn ghost">切回</span>
+          </div>
+          <div class="ssec">委派 · 一次性，随下一条消息消费</div>
+          <div class="srow">
+            <span class="ic">⚙</span>
+            <div class="m"><div class="n">matt-dev-runner</div><div class="d">单票实现 · 只改一个包</div></div>
+            <span class="btn">委派</span>
+          </div>
+          <div class="srow">
+            <span class="ic">⚙</span>
+            <div class="m"><div class="n">author-verified 写规格</div><div class="d">规格作者 · 只产 spec 与票</div></div>
+            <span class="btn">委派</span>
+          </div>
+          <div class="srow">
+            <span class="ic">⚙</span>
+            <div class="m"><div class="n">matt-e2e-tester</div><div class="d">验收跑真机 · 出证据表</div></div>
+            <span class="btn">委派</span>
+          </div>
+          <div class="sfoot">身份切换不改历史；输入区上方的身份贴纸点 ✕ 也能直接回主身份。</div>
+        </div>
+        <div class="homebar"><i></i></div>
+      </div></div>
+      <figcaption><b>E5 · 星核 · 分身</b><br>「当前身份」常驻在输入区上方（通讯台头放不下的东西，交给拇指）；点开切回主身份或换成别的分身（<em>下一条消息生效</em>）。委派是一次性的：选中后随下一条消息发出，像桌面端一样。</figcaption>
+    </figure>
+
+    <figure>
+      <div class="frame"><div class="island"></div><div class="screen">
+        <div class="scene"><img src="assets/scene-deepspace.png" alt=""></div>
+        <canvas class="warp"></canvas>
+        <div class="grade"></div><div class="grain"></div>
+
+        <div class="sbar"><span>9:41</span><span class="r"><span class="ts"><i></i>TAILNET</span><span class="bat"></span></span></div>
+        <div class="bar"><div class="back">‹</div><div><div class="t">octopus-web<span class="num">主 CHAT</span></div><div class="s">书房 PC · 运行中</div></div><div class="sp"></div><div class="act">☰ 编队</div></div>
+
+        <div class="console">
+          <span class="core">✦</span>
+          <span class="cchips">
+          <span class="cchip model">model <b>pro</b> <span class="tip">▾</span></span>
+          <span class="cchip ctx"><span class="fill"></span><span class="bar"><i></i></span>ctx <b>6.2%</b> <span class="tip">▾</span></span>
+          <span class="cchip tok">tok <b>1.2K</b> <span class="tip">▾</span></span>
+          </span>
+          <span class="sp"></span>
+          <span class="cchip turn">≡ 12轮</span>
+        </div>
+
+        <div class="body" style="padding:12px 12px 0">
+          <div class="stream">
+            <div class="m"><div class="me"><span class="p">❯</span><div class="tx">好，一起清掉</div></div></div>
+          </div>
+        </div>
+
+        <div class="scrim"></div>
+        <div class="sheet">
+          <div class="grab"></div>
+          <div class="sh"><b>星核</b><span class="n">CORE</span><span class="r">✦ 与内置命令同源</span></div>
+          <div class="stabs"><span>技能</span><span>分身</span><span>MCP</span><span class="on">会话</span></div>
+          <div class="ssec">上下文</div>
+          <div class="srow">
+            <span class="ic">⚡</span>
+            <div class="m"><div class="n">压缩上下文</div><div class="d">12.3K → 摘要，保留关键事实（/compact）</div></div>
+            <span class="btn">压缩</span>
+          </div>
+          <div class="srow danger">
+            <span class="ic">⌫</span>
+            <div class="m"><div class="n">清空上下文</div><div class="d">清掉 SDK 上下文，聊天记录保留（/clear）</div></div>
+            <span class="btn red">清空</span>
+          </div>
+          <div class="srow">
+            <span class="ic">↻</span>
+            <div class="m"><div class="n">自动压缩</div><div class="d">到 85% 自动压，压完提示一句（/autocompact）</div></div>
+            <span class="sw"></span>
+          </div>
+          <div class="ssec">会话</div>
+          <div class="srow">
+            <span class="ic">✎</span>
+            <div class="m"><div class="n">重命名会话</div><div class="d">现在叫「octopus-web 主 chat」（/rename）</div></div>
+            <span class="btn ghost">改名</span>
+          </div>
+          <div class="srow">
+            <span class="ic">⇥</span>
+            <div class="m"><div class="n">导出最近 20 轮</div><div class="d">纯文本，走系统分享（只读，不改会话）</div></div>
+            <span class="btn ghost">导出</span>
+          </div>
+          <div class="sfoot">这些是「对这次会话动手」的开关 —— 与技能 / 分身 / MCP 分清；清空要二次确认，压完在转录里留一条系统行。</div>
+        </div>
+        <div class="homebar"><i></i></div>
+      </div></div>
+      <figcaption><b>E6 · 星核 · 会话（单独打开）</b><br>压缩 / 清空 / 自动压缩这类<em>会话级动作单独一栏</em>，不和技能混在一个列表里。危险动作红色 + 二次确认；跑动中禁用与「打断」相关的项。</figcaption>
+    </figure>
+
+    <figure>
+      <div class="frame"><div class="island"></div><div class="screen">
+        <div class="scene"><img src="assets/scene-deepspace.png" alt=""></div>
+        <canvas class="warp"></canvas>
+        <div class="grade"></div><div class="grain"></div>
+
+        <div class="sbar"><span>9:41</span><span class="r"><span class="ts"><i></i>TAILNET</span><span class="bat"></span></span></div>
+        <div class="bar"><div class="back">‹</div><div><div class="t">octopus-web<span class="num">主 CHAT</span></div><div class="s">书房 PC · 运行中</div></div><div class="sp"></div><div class="act">☰ 编队</div></div>
+
+        <div class="console">
+          <span class="core">✦</span>
+          <span class="cchips">
+          <span class="cchip model" style="border-color:rgba(61,220,151,.5)">model <b>pro</b> <span class="tip">▾</span></span>
+          <span class="cchip ctx"><span class="fill"></span><span class="bar"><i></i></span>ctx <b>6.2%</b> <span class="tip">▾</span></span>
+          <span class="cchip tok">tok <b>1.2K</b> <span class="tip">▾</span></span>
+          </span>
+          <span class="sp"></span>
+          <span class="cchip turn">≡ 12轮</span>
+        </div>
+
+        <div class="body" style="padding:12px 12px 0">
+          <div class="stream">
+            <div class="m"><div class="me"><span class="p">❯</span><div class="tx">好，一起清掉</div></div></div>
+          </div>
+        </div>
+
+        <div class="scrim"></div>
+        <div class="sheet">
+          <div class="grab"></div>
+          <div class="sh"><b>模型设置</b><span class="n">MODEL</span><span class="r">每个模型独立预设</span></div>
+          <div class="srow on">
+            <span class="ic">◆</span>
+            <div class="m"><div class="n">pro-max</div><div class="d">最强 · 复杂重构与 Spec 共建</div></div>
+            <span class="r">极高 · 1M</span>
+            <span class="ck">✓</span>
+          </div>
+          <div class="srow">
+            <span class="ic">◆</span>
+            <div class="m"><div class="n">pro</div><div class="d">均衡 · 日常执行</div></div>
+            <span class="r">标准 · 200K</span>
+            <span class="ck"></span>
+          </div>
+          <div class="srow">
+            <span class="ic">◆</span>
+            <div class="m"><div class="n">se</div><div class="d">轻量 · 快，走查与轻任务</div></div>
+            <span class="r">低 · 200K</span>
+            <span class="ck"></span>
+          </div>
+          <div class="ssec">思考强度</div>
+          <div class="sseg"><span>低</span><span class="on">标准</span><span>高</span><span>极深</span></div>
+          <div class="ssec">上下文窗口</div>
+          <div class="sseg"><span class="on">200K</span><span>1M · 长上下文</span></div>
+          <div class="sfoot">只影响本轮及之后；跑动中换模型要等这一轮跑完。实际运行模型与别名不同时，在 ctx 明细里标注。</div>
+        </div>
+        <div class="homebar"><i></i></div>
+      </div></div>
+      <figcaption><b>E7 · 模型设置</b><br>通讯台头的 <code>model pro ▾</code> 点开：<em>选模型 + 它自己的思考强度 / 上下文窗口</em>。预设跟随模型记住，和桌面端同一套。</figcaption>
+    </figure>
+
+    <figure>
+      <div class="frame"><div class="island"></div><div class="screen">
+        <div class="scene"><img src="assets/scene-deepspace.png" alt=""></div>
+        <canvas class="warp"></canvas>
+        <div class="grade"></div><div class="grain"></div>
+
+        <div class="sbar"><span>9:41</span><span class="r"><span class="ts"><i></i>TAILNET</span><span class="bat"></span></span></div>
+        <div class="bar"><div class="back">‹</div><div><div class="t">octopus-web<span class="num">主 CHAT</span></div><div class="s">书房 PC · 运行中</div></div><div class="sp"></div><div class="act">☰ 编队</div></div>
+
+        <div class="console">
+          <span class="core">✦</span>
+          <span class="cchips">
+          <span class="cchip model">model <b>pro</b> <span class="tip">▾</span></span>
+          <span class="cchip ctx" style="border-color:rgba(46,230,214,.6)"><span class="fill"></span><span class="bar"><i></i></span>ctx <b>6.2%</b> <span class="tip">▾</span></span>
+          <span class="cchip tok">tok <b>1.2K</b> <span class="tip">▾</span></span>
+          </span>
+          <span class="sp"></span>
+          <span class="cchip turn">≡ 12轮</span>
+        </div>
+
+        <div class="body" style="padding:12px 12px 0">
+          <div class="stream">
+            <div class="m"><div class="me"><span class="p">❯</span><div class="tx">好，一起清掉</div></div></div>
+          </div>
+        </div>
+
+        <div class="scrim"></div>
+        <div class="sheet">
+          <div class="grab"></div>
+          <div class="sh"><b>上下文</b><span class="n">CTX</span><span class="r">12.3K / 200K · 6.2%</span></div>
+          <div class="bar2" style="margin-top:2px"><i style="width:6.2%"></i></div>
+          <div class="kv"><span class="k">系统提示</span><span class="v">3.1K</span></div>
+          <div class="kv"><span class="k">工具定义</span><span class="v">2.4K</span></div>
+          <div class="kv"><span class="k">消息</span><span class="v">5.6K</span></div>
+          <div class="kv"><span class="k">缓存命中</span><span class="v">62.4%</span></div>
+          <div class="kv"><span class="k">可用</span><span class="v">187.7K</span></div>
+          <div class="sfoot">数字来自 SDK context_usage；估算值前面带 ~。60% 起转琥珀，85% 转红。</div>
+          <div class="srow" style="margin-top:9px">
+            <span class="ic">⚡</span>
+            <div class="m"><div class="n">现在压一下</div><div class="d">保留关键事实，丢冗余（/compact）</div></div>
+            <span class="btn">压缩</span>
+          </div>
+        </div>
+        <div class="homebar"><i></i></div>
+      </div></div>
+      <figcaption><b>E8 · ctx 明细</b><br>通讯台头的 <code>ctx 6.2% ▾</code> 点开：<em>窗口占用 + 构成</em>，并可直接压缩。占用色随档位走，红之前就该压。</figcaption>
+    </figure>
+
+    <figure>
+      <div class="frame"><div class="island"></div><div class="screen">
+        <div class="scene"><img src="assets/scene-deepspace.png" alt=""></div>
+        <canvas class="warp"></canvas>
+        <div class="grade"></div><div class="grain"></div>
+
+        <div class="sbar"><span>9:41</span><span class="r"><span class="ts"><i></i>TAILNET</span><span class="bat"></span></span></div>
+        <div class="bar"><div class="back">‹</div><div><div class="t">octopus-web<span class="num">主 CHAT</span></div><div class="s">书房 PC · 运行中</div></div><div class="sp"></div><div class="act">☰ 编队</div></div>
+
+        <div class="console">
+          <span class="core">✦</span>
+          <span class="cchips">
+          <span class="cchip model">model <b>pro</b> <span class="tip">▾</span></span>
+          <span class="cchip ctx"><span class="fill"></span><span class="bar"><i></i></span>ctx <b>6.2%</b> <span class="tip">▾</span></span>
+          <span class="cchip tok" style="border-color:rgba(46,230,214,.6)">tok <b>1.2K</b> <span class="tip">▾</span></span>
+          </span>
+          <span class="sp"></span>
+          <span class="cchip turn">≡ 12轮</span>
+        </div>
+
+        <div class="body" style="padding:12px 12px 0">
+          <div class="stream">
+            <div class="m"><div class="me"><span class="p">❯</span><div class="tx">好，一起清掉</div></div></div>
+          </div>
+        </div>
+
+        <div class="scrim"></div>
+        <div class="sheet">
+          <div class="grab"></div>
+          <div class="sh"><b>本会话 TOKEN</b><span class="n">TOK</span><span class="r">1.2K tok · ¥0.06</span></div>
+          <div class="kv"><span class="k">调用</span><span class="v">18 次</span></div>
+          <div class="kv"><span class="k">tokens</span><span class="v">1.2K（入 980 · 出 240）</span></div>
+          <div class="kv"><span class="k">缓存命中</span><span class="v">62.4%</span></div>
+          <div class="kv"><span class="k">费用</span><span class="v">¥0.06</span></div>
+          <div class="ssec">按模型</div>
+          <div class="srow">
+            <span class="ic">◆</span>
+            <div class="m"><div class="n">pro</div><div class="d">14 次 · 入 820 · 出 200</div></div>
+            <span class="r">¥0.05</span>
+          </div>
+          <div class="srow">
+            <span class="ic">◆</span>
+            <div class="m"><div class="n">se</div><div class="d">4 次 · 入 160 · 出 40</div></div>
+            <span class="r">¥0.01</span>
+          </div>
+          <div class="srow">
+            <span class="ic">▤</span>
+            <div class="m"><div class="n">本舱账本</div><div class="d">全域累计 · 只读（任务 / 会话分开记）</div></div>
+            <span class="btn ghost">去看看 ›</span>
+          </div>
+          <div class="sfoot">本会话账来自 llm_calls；缓存命中率是复用率，和 ctx 占用不是一回事。未定价的模型费用显示「—」。</div>
+        </div>
+        <div class="homebar"><i></i></div>
+      </div></div>
+      <figcaption><b>E9 · token 明细</b><br>通讯台头的 <code>tok 1.2K ▾</code> 点开：<em>本会话账</em>（调用 / 入出 / 缓存 / 费用，按模型拆）。本舱全域账本只读，另开一页。</figcaption>
+    </figure>
+  </div>
+</section>
+
+
+<section class="grp">
+  <h2>4 · 会话与待你定</h2>
   <div class="gd">主 chat 里直接聊；或者从「☰ 编队」的待你定里点进来——后者只是把问题引用到输入框上方。同一个 chat，两种入口。</div>
   <div class="row">
 
@@ -583,6 +1140,17 @@
         <div class="sbar"><span>9:41</span><span class="r"><span class="ts"><i></i>TAILNET</span><span class="bat"></span></span></div>
         <div class="bar"><div class="back">‹</div><div><div class="t">phase-2 删产物<span class="num">CHAT</span></div><div class="s">octopus-web</div></div><div class="sp"></div><div class="act">⋯</div></div>
 
+        <div class="console">
+          <span class="core">✦</span>
+          <span class="cchips">
+          <span class="cchip model">model <b>pro-max</b> <span class="tip">▾</span></span>
+          <span class="cchip ctx"><span class="fill" style="width:31%"></span><span class="bar"><i style="width:31%"></i></span>ctx <b>31%</b> <span class="tip">▾</span></span>
+          <span class="cchip tok">tok <b>8.4K</b> <span class="tip">▾</span></span>
+          </span>
+          <span class="sp"></span>
+          <span class="cchip turn">≡ 7轮</span>
+        </div>
+
         <div class="body" style="padding-right:12px;padding-top:12px">
           <div class="stream">
             <div class="m"><div class="me"><span class="p">❯</span><div class="tx">phase-2 如果不做的话，任务把相关产物也删除了</div></div></div>
@@ -592,7 +1160,7 @@
                 <span class="tag">✦ 汐音</span><span class="ok">已完成</span><span>·</span>
                 <span class="pk">56s</span><span>·</span><span class="nt">20 步</span><span>·</span>
                 <span class="tl">工具 9</span><span>·</span><span class="gr">1.2M tok</span><span>·</span>
-                <span class="am">¥0.15</span>
+                <span class="am">¥0.15</span><span class="fold">▸</span>
               </div>
               <div class="bodyx"><span class="mk">✳</span>phase 2 产物已删除完毕。删掉的 7 个文件、整个 app-address-selfservice/ 目录：</div>
             </div>
@@ -603,10 +1171,8 @@
               <div class="head">
                 <span class="tag">✦ 汐音</span><span class="ok">已完成</span><span>·</span>
                 <span class="pk">15s</span><span>·</span><span class="nt">4 步</span><span>·</span>
-                <span class="tl">工具 2</span>
+                <span class="tl">工具 2</span><span>·</span><span class="gr">2.1K tok</span><span class="fold">▸</span>
               </div>
-              <div class="think">◌ 先核对 manifest 里的引用，再一起改 spec 和验收清单</div>
-              <div class="tool"><span class="ar">▸ </span><span class="nm">Read</span> .task/manifest.json <span class="st">[✓]</span></div>
               <div class="bodyx"><span class="mk">✳</span>三处都在，验收清单里也有两行 —— 一起删，删完给你 diff 摘要。</div>
             </div>
 
@@ -615,6 +1181,7 @@
         </div>
 
         <div class="composer">
+          <div class="ctrlrow"><span class="cchip identity">◉ 主 Agent</span><span class="sp"></span></div>
           <div class="chips"><span>继续</span><span>停下</span><span>看 diff</span><span>切到验收</span></div>
           <div class="inputrow">
             <div class="box">说点什么…</div>
@@ -623,7 +1190,7 @@
         </div>
         <div class="homebar"><i></i></div>
       </div></div>
-      <figcaption><b>F · 会话</b><br>材质、行头、元信息（步数 / tok / 花费）都和桌面一致。<em>窄屏只做一条改动：meta 允许折两行</em>。</figcaption>
+      <figcaption><b>F · 会话</b><br>与 E 同一套通讯台头与折叠 meta：<em>工具 / think 默认收起</em>，点开才看步骤；运行中也只占一行。行头、步数 / tok / 花费与桌面同源。</figcaption>
     </figure>
 
     <figure>
@@ -634,6 +1201,17 @@
 
         <div class="sbar"><span>9:41</span><span class="r"><span class="ts"><i></i>TAILNET</span><span class="bat"></span></span></div>
         <div class="bar"><div class="back">‹</div><div><div class="t">回复<span class="num">QUOTE</span></div><div class="s">octopus-web · 待你定</div></div></div>
+
+        <div class="console">
+          <span class="core">✦</span>
+          <span class="cchips">
+          <span class="cchip model">model <b>pro</b> <span class="tip">▾</span></span>
+          <span class="cchip ctx"><span class="fill" style="width:22%"></span><span class="bar"><i style="width:22%"></i></span>ctx <b>22%</b> <span class="tip">▾</span></span>
+          <span class="cchip tok">tok <b>3.6K</b> <span class="tip">▾</span></span>
+          </span>
+          <span class="sp"></span>
+          <span class="cchip turn">≡ 9轮</span>
+        </div>
 
         <div class="quote">
           <div class="qh">正在回复</div>
@@ -648,17 +1226,15 @@
               <div class="head">
                 <span class="tag">✦ 汐音</span><span class="ok">已完成</span><span>·</span>
                 <span class="pk">15s</span><span>·</span><span class="nt">4 步</span><span>·</span>
-                <span class="tl">工具 2</span>
+                <span class="tl">工具 2</span><span class="fold">▸</span>
               </div>
-              <div class="think">◌ 先核对 manifest 里的引用，再一起改 spec 和验收清单</div>
-              <div class="tool"><span class="ar">▸ </span><span class="nm">Read</span> .task/manifest.json <span class="st">[✓]</span></div>
-              <div class="tool"><span class="ar">▸ </span><span class="nm">Grep</span> phase-2 --include=*.md <span class="st">[✓ 5 处]</span></div>
               <div class="bodyx"><span class="mk">✳</span>三处 spec 引用 + 两行验收清单都还在。删除不可逆，我停在这儿 —— 你说清就清。</div>
             </div>
           </div>
         </div>
 
         <div class="composer">
+          <div class="ctrlrow"><span class="cchip identity">◉ 执行者</span><span class="sp"></span></div>
           <div class="hint" style="text-align:left;padding:0 4px 8px;line-height:1.5">
             说清楚就行：清掉 / 先别动 / 只删 spec 不动验收清单
           </div>
@@ -674,9 +1250,9 @@
   </div>
 </section>
 
-<!-- ══════ 4 · 单独会话 ══════ -->
+<!-- ══════ 5 · 单独会话 ══════ -->
 <section class="grp">
-  <h2>4 · 单独会话</h2>
+  <h2>5 · 单独会话</h2>
   <div class="gd">不进舱、不建任务，问完就走的场景。</div>
   <div class="row">
 
@@ -699,6 +1275,7 @@
           </div>
         </div>
         <div class="composer">
+          <div class="ctrlrow"><span class="cchip identity">◉ 主 Agent</span><span class="sp"></span></div>
           <div class="inputrow">
             <div class="box">说点什么…</div>
             <div class="send">↑</div>
@@ -728,6 +1305,9 @@
     <div class="panel" style="width:390px;flex:none;align-self:flex-start">
       <h3>要你拍板的</h3>
       <div class="dots">
+        <div><span class="dot d-warn"></span><span><b style="color:#fff">通讯台头放什么</b>：现在放 <code>✦ 星核 · model · ctx · tok · ≡ 轮次</code>；<em>身份贴纸挪到输入区上方</em>（桌面端也在 composer）。要不要把身份塞回台头、改用图标省字？</span></div>
+        <div><span class="dot d-warn"></span><span><b style="color:#fff">折叠默认</b>：运行中与结束后都把 think / 工具折成一行摘要，<em>点开才看步骤</em>；要不要「运行中自动展开、结束后自动折」？</span></div>
+        <div><span class="dot d-warn"></span><span><b style="color:#fff">星核分栏</b>：技能 / 分身 / MCP / 会话 四栏；压缩 / 清空 / 自动压缩<em>单独放「会话」</em>。这样分够不够？</span></div>
         <div><span class="dot d-warn"></span><span><b style="color:#fff">设备切换入口</b>：现在放在舱列表顶栏（点机器名回列表）。要不要改成底部 tab「设备 / 我的」？</span></div>
         <div><span class="dot d-warn"></span><span><b style="color:#fff">待你定列表的信息量</b>：现在给「来源 + 一句话 + 明细」。要不要压到只剩一句话？</span></div>
         <div><span class="dot d-warn"></span><span><b style="color:#fff">附件/图片上传</b>：本轮没画。要不要能在手机上传截图？</span></div>
