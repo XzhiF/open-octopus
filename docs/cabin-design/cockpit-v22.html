@@ -1841,6 +1841,35 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .cwi .send{flex:none;width:38px;height:34px;clip-path:var(--hex);display:grid;place-items:center;font-size:14px;font-weight:800;color:var(--indigo);background:linear-gradient(160deg,var(--gold),var(--sun));box-shadow:0 0 16px rgba(255,138,61,.4);transition:.15s}
 .cwi .send:hover{filter:brightness(1.1)}
 .cwi.shake{animation:sh .3s}
+/* 2026-11-27 用户：编队「新会话」—— 无内容窗口；发第一条消息才落成正式会话。
+   版式参考 classic：中间输入框，下面一行 工作区 / 模型 / 分身。 */
+.cwl.nw-body{justify-content:flex-start}
+.cwl.nw-body::before{display:none}
+.nw-main{width:100%;max-width:560px;margin:auto;padding:6px 2px 10px;display:flex;flex-direction:column;gap:11px}
+.nw-kick{font-size:8.5px;letter-spacing:.18em;color:var(--sky);font-weight:800;font-family:var(--font-ui)}
+.nw-h1{font-size:16px;font-weight:800;font-family:var(--font-ui);color:#fff;line-height:1.35}
+.nw-p{font-size:10.5px;line-height:1.7;color:var(--ink2);margin-top:-5px}
+.nw-compose{display:flex;align-items:flex-start;gap:9px;padding:8px 12px;border:1px solid color-mix(in srgb,var(--sky) 30%,transparent);background:rgba(6,5,16,.62);transition:border-color .2s,box-shadow .2s}
+.nw-compose:focus-within{border-color:var(--sky);box-shadow:0 0 0 1px rgba(53,199,240,.35),0 0 18px rgba(53,199,240,.16)}
+.nw-compose .pr{flex:none;color:color-mix(in srgb,var(--sky) 80%,#fff);font-size:13px;font-weight:800;line-height:20.8px;padding-top:7px;text-shadow:0 0 12px rgba(53,199,240,.55)}
+.nw-compose textarea{flex:1;min-width:0;min-height:36px;max-height:98px;padding:7px 2px;border:0;background:transparent;color:#fff;font:500 13px/1.6 var(--font-mono);resize:none;outline:none}
+.nw-compose textarea::placeholder{color:var(--metal2)}
+.nw-compose .send{flex:none;width:38px;height:34px;clip-path:var(--hex);display:grid;place-items:center;font-size:14px;font-weight:800;color:var(--indigo);background:linear-gradient(160deg,var(--gold),var(--sun));box-shadow:0 0 16px rgba(255,138,61,.4);transition:.15s}
+.nw-compose .send:hover{filter:brightness(1.1)}
+.nw-compose.shake{animation:sh .3s}
+.nw-row{display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:6px}
+.nw-chip{display:flex;flex-direction:column;align-items:stretch;gap:2px;min-width:0;padding:6px 9px;border:1px solid rgba(185,179,217,.22);background:rgba(10,8,24,.52);text-align:left;transition:.14s}
+.nw-chip:hover{border-color:color-mix(in srgb,var(--sky) 55%,transparent);background:rgba(16,13,40,.7)}
+.nw-chip>span{font-size:7px;letter-spacing:.14em;color:var(--metal2);font-weight:800;font-family:var(--font-ui)}
+.nw-chip>b{display:block;width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#fff;font-family:var(--font-mono);font-size:10.5px;font-weight:700}
+.nw-chip select{width:100%;min-width:0;padding:0;border:0;background:transparent;color:#fff;font-family:var(--font-mono);font-size:10.5px;font-weight:700;outline:none;color-scheme:dark;cursor:pointer}
+.nw-tip{display:flex;align-items:center;gap:6px;margin-top:1px;font-size:9px;color:var(--metal2);font-family:var(--font-mono)}
+.nw-tip b{color:var(--gold);font-weight:800}
+/* 编队头部同时有「新会话」和「全部 →」：这一枚收紧内边距，行不溢出。 */
+.fr-h [data-new-chat]{padding:0 5px;letter-spacing:0}
+@media (max-width:560px){.nw-row{grid-template-columns:1fr}.nw-main{max-width:none}}
+
+
 .cwgr{position:absolute;right:0;bottom:0;width:14px;height:14px;cursor:nwse-resize;background:linear-gradient(135deg,transparent 50%,var(--waccent,var(--teal)) 50%);opacity:.5}
 #winBar{position:absolute;left:10px;bottom:10px;z-index:55;display:flex;gap:6px;align-items:center;padding:5px 8px;border-radius:12px;opacity:var(--winop,1);background:var(--glass2);backdrop-filter:blur(12px);border:1px solid rgba(185,179,217,.3);max-width:calc(100vw - 20px);overflow-x:auto;scrollbar-width:thin}
 #winBar .wl{flex:none;font-size:8px;letter-spacing:.14em;color:var(--metal2);font-weight:800;margin-right:2px}
@@ -2519,7 +2548,7 @@ const state={sound:true,theme:0,winAlpha:1,thread:'main',panel:null,detailJob:nu
  actLogOpen:false,actLogSel:'a-bg-3',actLogFilter:'all',actLogQ:'',
  doc:null,
  addOpen:false,addTab:'skill',addQ:'',attSkill:null,attExpert:null,attLb:null,apMcp:null,
- flash:{job:null,op:null,at:0},autoWarp:true,conMin:false,conLeft:null,conTop:null,conGeo:null,wins:[],winSeq:0,zTop:30,
+ flash:{job:null,op:null,at:0},autoWarp:true,conMin:false,conLeft:null,conTop:null,conGeo:null,wins:[],winSeq:0,nwSeq:0,nwPickWin:null,zTop:30,
  inboxOpen:false,inboxSel:null,inboxPick:null,fanOpen:false,fleetOpen:false,relayJump:false,panelGeo:null,panelMax:false,panelAside:false,
  pjPop:false,projFocus:null,pjDiff:null,pjTab:'files',pjChgOpen:{},
  notes:NOTES_SEED.map(n=>({...n})),notesOpen:false,noteSel:'nt1',noteQ:'',noteUndo:null,notesGeo:null,notesMax:false,
@@ -2680,7 +2709,7 @@ function renderFleetRail(){
   const more=list.length>LIMIT
     ? `<div class="fr-foot"><button class="fr-more" data-fleet-more>${state.fleetOpen?'<span class="fml">收起</span><b>⌃</b>':`<span class="fml">更多</span><b>+${hidden}</b><span class="fmc">⌄</span>`}</button></div>`
     : '';
-  el.innerHTML=`<div class="fr-h"><span class="fr-mark">⬡</span><span class="lh"><span>编队</span><b>${total}</b>${run?'<i class="live"></i>':''}</span><span class="sp"></span><button class="fr-all" data-fleet-all title="展开编队面板 · 按项目筛选">全部 →</button></div>
+  el.innerHTML=`<div class="fr-h"><span class="fr-mark">⬡</span><span class="lh"><span>编队</span><b>${total}</b>${run?'<i class="live"></i>':''}</span><span class="sp"></span><button class="fr-all" data-new-chat title="新建会话 · 发第一条消息才创建">新会话</button><button class="fr-all" data-fleet-all title="展开编队面板 · 按项目筛选">全部 →</button></div>
    <div class="fr-sub"><span>在跑 <b>${run}</b></span><span>待命 <b>${queue}</b></span>${arch?`<span style="color:var(--pink)">待归档 <b style="color:var(--pink)">${arch}</b></span>`:''}<span>归档 <b>${done}</b></span></div>
    <div class="fr-list">${shownList.map(row).join('')||'<div class="fr-empty">本舱还没有作战</div>'}</div>${more}`;
   /* #5：行体 = 进这条作战的 chat；💬 同义；▦ 只是打开详情，不换主通讯台。 */
@@ -2689,7 +2718,8 @@ function renderFleetRail(){
   $$('[data-rail-job]',el).forEach(r=>{const go=()=>openJobChat(r.dataset.railJob);
     r.addEventListener('click',e=>{if(e.target.closest('.flact'))return;go();});
     r.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go();}});});
-  $('[data-fleet-all]',el)?.addEventListener('click',()=>{openPanel('fleet');Audio.sfx('click');});
+  $('[data-new-chat]',el)?.addEventListener('click',()=>{openNewWin();Audio.sfx('open');});
+ $('[data-fleet-all]',el)?.addEventListener('click',()=>{openPanel('fleet');Audio.sfx('click');});
   $('[data-fleet-more]',el)?.addEventListener('click',()=>{state.fleetOpen=!state.fleetOpen;renderFleetRail();Audio.sfx('click');});
 }
 /* 统一秒表每秒走字：只改这一格的 textContent，不重建整行。 */
@@ -3598,7 +3628,7 @@ function bindArcWins(){
 function openDetail(jid,tab,keepInbox){if(!jid)return;state.detailJob=jid;state.detailTab=tab||detailTabFor(jobOf(jid));state.archTab='overview';state.panel='detail';openPanel('detail',!!keepInbox);Audio.sfx('click');}
 
 /* ── send / spawn / resolve ── */
-function autoGrowEl(t){t.style.height='auto';const min=36,max=92;const h=Math.max(min,Math.min(t.scrollHeight,max));t.style.height=h+'px';t.style.overflowY=t.scrollHeight>max?'auto':'hidden';}
+function autoGrowEl(t,maxCap){t.style.height='auto';const min=36,max=maxCap||92;const h=Math.max(min,Math.min(t.scrollHeight,max));t.style.height=h+'px';t.style.overflowY=t.scrollHeight>max?'auto':'hidden';}
 function autoGrow(){autoGrowEl($('#cmdInput'));}
 function sendCommand(){const t=$('#cmdInput');const raw=t.value.trim();
  if(raw&&state.attSkill&&!raw.startsWith('/'))t.value='/'+state.attSkill+' '+raw;
@@ -5095,15 +5125,97 @@ function openWin(jid){const ex=state.wins.find(w=>w.job===jid);if(ex){focusWin(e
 function focusWin(id){const w=state.wins.find(x=>x.id===id);if(!w)return;bumpZ(w);w.min=false;state.unread[w.job]=0;renderWins();renderBar();}
 function closeWin(id){state.wins=state.wins.filter(w=>w.id!==id);renderWins();renderBar();Audio.sfx('close');}
 function minWin(id){const w=state.wins.find(x=>x.id===id);if(w){w.min=true;renderWins();renderBar();Audio.sfx('close');}}
+/* ═══ 2026-11-27 用户：编队「＋ 新会话」—— 无内容窗口；发第一条消息才落成正式会话。
+   不占汐音的线程；窗口就地转正（不重开、不换台），编队同步多一行。 ═══ */
+function openNewWin(){
+ if(state.wins.length>=5){toast('独立窗口最多 5 个 · 先关一些');return;}
+ const ex=state.wins.find(w=>w.isNew);
+ if(ex){focusWin(ex.id);requestAnimationFrame(()=>{const t=document.querySelector('[data-winput="'+ex.id+'"]');if(t)t.focus();});return;}
+ const n=state.wins.length;
+ const con=$('#console');const cr=con&&!con.hidden?con.getBoundingClientRect():null;
+ if(cr)lastConRect={x:Math.round(cr.left),y:Math.round(cr.top),w:Math.round(cr.width),h:Math.round(cr.height)};
+ const base=cr?{x:Math.round(cr.left),y:Math.round(cr.top),w:Math.round(cr.width),h:Math.round(cr.height)}:lastConRect;
+ const dw=base?base.w:Math.min(560,innerWidth-24);
+ const dh=base?base.h:Math.min(520,innerHeight-140);
+ const ww=clamp(dw,300,innerWidth-16);
+ const hh=clamp(dh,260,innerHeight-70);
+ const shift=n*18;
+ const w={id:'w'+(++state.winSeq),job:'new-'+(++state.nwSeq),isNew:true,nw:{ws:'cabin',model:'pro',clone:''},
+  x:clamp((base?base.x:120)+shift,8,Math.max(8,innerWidth-ww-8)),
+  y:clamp((base?base.y:66)+shift,54,Math.max(54,innerHeight-hh-8)),
+  w:ww,h:hh,z:31,min:false};
+ state.wins.push(w);bumpZ(w);renderWins();renderBar();
+ requestAnimationFrame(()=>{const t=document.querySelector('[data-winput="'+w.id+'"]');if(t)t.focus();});
+}
+function newWinHTML(w,top){
+ const X=w.max?4:w.x,Y=w.max?52:w.y,W=w.max?Math.max(320,innerWidth-8):w.w,H=w.max?Math.max(260,innerHeight-56):w.h;
+ const m=modelOf(w.nw.model);
+ const eff=m.id==='pro'?'高':m.id==='pro-max'?'极深':'标准';
+ const clone=w.nw.clone?AP_CLONES.find(c=>c[0]===w.nw.clone):null;
+ const who=clone?clone[0]:'汐音';
+ const wsOpts=[['cabin','本舱工作区 · Workspace'],['ledger','projects/ledger · 账务中台'],['gateway','projects/gateway · 网关'],['risk','projects/risk · 风控'],['edge','projects/edge · 边缘']];
+ return `<div class="cwin${w.z===top?' focus':''}${w.max?' maxed':''}" data-win="${w.id}" style="left:${X}px;top:${Y}px;width:${W}px;height:${H}px;z-index:${w.z};--waccent:var(--sky)">
+  <div class="cwh" data-wdrag="${w.id}"><button class="cwbtn" data-wclose="${w.id}" title="关闭窗口 · 还没发送就不创建会话">✕</button><button class="cwadd" title="添加：技能 / 分身 / MCP"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.4l1.75 5.6 5.6 1.75-5.6 1.75L12 18.1l-1.75-5.6-5.6-1.75 5.6-1.75z" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round" class="pulse"/><g class="orbit" fill="none" stroke="currentColor" stroke-width=".9"><ellipse cx="12" cy="12" rx="9" ry="3.4" transform="rotate(-28 12 12)"/></g><circle cx="20.2" cy="7.6" r="1" fill="currentColor" class="core"/></svg></button>${W>=640?`<span class="telem" title="新会话 · 还没落盘"><button class="tc" title="模型 · 只影响本会话"><i>MODEL</i><b>${esc(m.id)} · ${eff}</b></button><button class="tc" title="上下文占用 · 发送后才开始计账"><i>CTX</i><b>— / 1M 0.0%</b></button><button class="tc tok" title="token / 费用 · 发送后才开始计账"><i>TOKEN</i><b>0 · ¥0.00</b></button></span>`:''}<span class="cwidx" title="用户输入历史 · 新会话 0 轮">≡ <b>0</b> 轮</span><span class="csp"></span><span class="te">✚</span><span class="cwid" title="对话身份 · 发第一条消息前都能改">${esc(who)} · 待创建</span><b class="cwtitle" style="cursor:default" title="新会话 · 发送第一条消息后转正">新会话</b><button class="cwbtn" data-wmin="${w.id}" title="收起窗口 · 底部窗口条展开">⌄ 收起</button></div>
+  <div class="cwl nw-body"><div class="nw-main">
+   <div class="nw-kick">NEW SESSION · 并行会话</div>
+   <div class="nw-h1">不和汐音抢线程，单独开一条</div>
+   <div class="nw-p">汐音在干活时也能立刻开新会话。发送第一条消息才真正创建；不发送关掉，什么都不会留下。</div>
+   <div class="nw-compose"><span class="pr">❯</span><textarea data-winput="${w.id}" rows="1" placeholder="描述你要做的事…（⏎ 创建会话 · ⇧⏎ 换行）"></textarea><button class="send" data-wsend="${w.id}">⏎</button></div>
+   <div class="nw-row">
+    <button type="button" class="nw-chip" data-nw-dir title="选择系统里的一个文件夹作为工作区"><span>工作区</span><b>${w.nw.dir?'📁 '+esc(w.nw.dir):'📁 本舱工作区 · 选择目录'}</b></button>
+    <label class="nw-chip"><span>模型</span><select data-nw-model>${MODELS.map(x=>`<option value="${x.id}"${w.nw.model===x.id?' selected':''}>${x.id} · ${x.desc}</option>`).join('')}</select></label>
+    <label class="nw-chip"><span>分身</span><select data-nw-clone><option value=""${!w.nw.clone?' selected':''}>汐音 · 自己接</option>${AP_CLONES.map(c=>`<option value="${c[0]}"${w.nw.clone===c[0]?' selected':''}>${c[0]}</option>`).join('')}</select></label>
+   </div>
+   <div class="nw-tip"><b>⏎</b> 发送 · 窗口就地转正，左侧编队同步多一行</div>
+  </div></div>
+  ${w.max?'':'<span class="cwgr" data-wgr="'+w.id+'" title="拖拽调整窗口大小"></span>'}</div>`;
+}
+function pickNewDir(id){
+ state.nwPickWin=id;
+ let inp=document.getElementById('nwDirPick');
+ if(!inp){
+  inp=document.createElement('input');
+  inp.type='file';inp.id='nwDirPick';inp.multiple=true;inp.hidden=true;
+  inp.setAttribute('webkitdirectory','');inp.setAttribute('directory','');
+  inp.addEventListener('change',()=>{
+   const w=state.wins.find(x=>x.id===state.nwPickWin);
+   const f=inp.files&&inp.files[0];
+   if(w&&w.isNew&&f){const rel=f.webkitRelativePath||'';w.nw.dir=rel.split('/')[0]||f.name;renderWins();}
+   inp.value='';state.nwPickWin=null;
+  });
+  document.body.appendChild(inp);
+ }
+ inp.click();
+}
+function sendFromNew(w,t){
+ const text=t.value.trim();
+ if(!text){const box=t.closest('.nw-compose')||t.closest('.cwi');if(box){box.classList.remove('shake');void box.offsetWidth;box.classList.add('shake');}Audio.sfx('deny');return;}
+ const dir=(w.nw.dir||'').toLowerCase();
+ const dirProj=['ledger','gateway','risk','edge'].find(p=>dir.includes(p));
+ const proj=dirProj||(/网关|限流|退款|路由/.test(text)?'gateway':/风控|告警/.test(text)?'risk':/边缘|灰度|节点/.test(text)?'edge':'ledger');
+ const seq=++state.seq;const id='j-sess'+seq;
+ const title=text.length>18?text.slice(0,18)+'…':text;
+ const clone=AP_CLONES.find(c=>c[0]===w.nw.clone);
+ const where=w.nw.dir?('📁 '+w.nw.dir):'本舱工作区';
+ state.jobs.unshift({id,proj,kind:'chat',title,short:title.length>6?title.slice(0,6)+'…':title,status:'run',pct:null,doing:'刚创建 · 汐音已接单',agent:clone?clone[0]:'汐音',branch:'—',clock:'0m',live:'在跑',liveSec:0,cost:0,tok:0,rarity:2,tid:'s-'+(2600+seq),slug:'session-'+seq,born:0});
+ state.threads[id]=[
+  {who:'sys',text:'—— 新会话 · '+where+' · '+w.nw.model+' ——'},
+  {who:'you',name:'指挥官',text,t:nowHM()},
+  clone?{who:'doer',name:clone[0],text:'收到，指挥官。这条会话我独立接，不占主对话的上下文；有要拍板的我举上来。',t:nowHM()}
+       :{who:'xy',name:'汐音',text:'收到，指挥官。这条会话独立跑，不占主对话的上下文；我先看一遍，有要拍板的举上来。',t:nowHM(),mood:'working'}];
+ w.model=w.nw.model;w.isNew=false;w.job=id;t.value='';autoGrowEl(t);
+ state.fleetOpen=true;renderWins();renderBar();renderFleetRail();renderDots();Audio.sfx('confirm');toast('会话已创建 · '+title);
+}
 function renderWins(){const L=$('#winLayer');const top=state.wins.reduce((m,w)=>Math.max(m,w.z),0);
- L.innerHTML=state.wins.filter(w=>!w.min).map(w=>{const j=jobOf(w.job);const msgs=threadOf(w.job);const cur=currentOf(w.job);const o=opForJob(w.job);
+ L.innerHTML=state.wins.filter(w=>!w.min).map(w=>{if(w.isNew)return newWinHTML(w,top);const j=jobOf(w.job);const msgs=threadOf(w.job);const cur=currentOf(w.job);const o=opForJob(w.job);
   const X=w.max?4:w.x,Y=w.max?52:w.y,W=w.max?Math.max(320,innerWidth-8):w.w,H=w.max?Math.max(260,innerHeight-56):w.h;
+  const mdl=modelOf(w.model||'pro'),mdlEff=mdl.id==='pro'?'高':mdl.id==='pro-max'?'极深':'标准',mdlLabel=mdl.id+' · '+mdlEff;
   /* v22 #5：窗 = 同一条会话的真 chat —— 遥测也用通讯台同一套芯片，读这扇窗自己的账。 */
   const turns=msgs.filter(m=>m.who==='you').length;
   const ctxTok=Math.min(260000,Math.round((j.tok||0)*0.4)+48000);
   const ctxLabel=fmtK(ctxTok)+' / 1M '+(ctxTok/1e6*100).toFixed(1)+'%';
   return `<div class="cwin${w.z===top?' focus':''}${w.max?' maxed':''}" data-win="${w.id}" style="left:${X}px;top:${Y}px;width:${W}px;height:${H}px;z-index:${w.z};--waccent:${projOf(j.proj).color}">
-  <div class="cwh" data-wdrag="${w.id}"><button class="cwbtn" data-wclose="${w.id}" title="关闭窗口（历史保留）">✕</button><button class="cwadd" title="添加：技能 / 分身 / MCP"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.4l1.75 5.6 5.6 1.75-5.6 1.75L12 18.1l-1.75-5.6-5.6-1.75 5.6-1.75z" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round" class="pulse"/><g class="orbit" fill="none" stroke="currentColor" stroke-width=".9"><ellipse cx="12" cy="12" rx="9" ry="3.4" transform="rotate(-28 12 12)"/></g><circle cx="20.2" cy="7.6" r="1" fill="currentColor" class="core"/></svg></button>${W>=640?`<span class="telem" title="本窗会话的模型 / 上下文 / token 账"><button class="tc" title="模型设置 · 模型 / 思考强度 / 最大上下文"><i>MODEL</i><b>pro · 高</b></button><button class="tc" title="上下文占用"><i>CTX</i><b>${ctxLabel}</b></button><button class="tc tok" title="本次会话 token / 费用"><i>TOKEN</i><b>${fmtK(j.tok||0)} · ¥${(j.cost||0).toFixed(2)}</b></button></span>`:''}<span class="cwidx" title="用户输入历史 · 这是一个聊天窗的轮次索引">≡ <b>${turns}</b> 轮</span><span class="csp"></span><span class="te">${STATE_EMO[j.status]}</span><span class="cwid" title="对话对象 · 身份由任务状态派生">${esc(j.agent)}</span>${ARCHIVE[j.id]&&ARCHIVE[j.id].state!=='done'?`<button data-warch="${w.id}" title="📦 归档 · 待归档 / 编排中（打开作战详情 · 归档页签）">📦</button>`:''}<button class="cwtitle" data-wdetail="${w.id}" title="点击看详情 · ${esc(j.title)}">${esc(j.title)}</button><button class="cwbtn" data-wdetail="${w.id}" title="▦ ${j.kind==='chat'?'会话详情':'作战详情'}（chat 窗留着）">▦ 详情</button><button class="cwbtn" data-wmin="${w.id}" title="收起窗口 · 底部窗口条展开">⌄ 收起</button></div>
+  <div class="cwh" data-wdrag="${w.id}"><button class="cwbtn" data-wclose="${w.id}" title="关闭窗口（历史保留）">✕</button><button class="cwadd" title="添加：技能 / 分身 / MCP"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.4l1.75 5.6 5.6 1.75-5.6 1.75L12 18.1l-1.75-5.6-5.6-1.75 5.6-1.75z" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round" class="pulse"/><g class="orbit" fill="none" stroke="currentColor" stroke-width=".9"><ellipse cx="12" cy="12" rx="9" ry="3.4" transform="rotate(-28 12 12)"/></g><circle cx="20.2" cy="7.6" r="1" fill="currentColor" class="core"/></svg></button>${W>=640?`<span class="telem" title="本窗会话的模型 / 上下文 / token 账"><button class="tc" title="模型设置 · 模型 / 思考强度 / 最大上下文"><i>MODEL</i><b>${mdlLabel}</b></button><button class="tc" title="上下文占用"><i>CTX</i><b>${ctxLabel}</b></button><button class="tc tok" title="本次会话 token / 费用"><i>TOKEN</i><b>${fmtK(j.tok||0)} · ¥${(j.cost||0).toFixed(2)}</b></button></span>`:''}<span class="cwidx" title="用户输入历史 · 这是一个聊天窗的轮次索引">≡ <b>${turns}</b> 轮</span><span class="csp"></span><span class="te">${STATE_EMO[j.status]}</span><span class="cwid" title="对话对象 · 身份由任务状态派生">${esc(j.agent)}</span>${ARCHIVE[j.id]&&ARCHIVE[j.id].state!=='done'?`<button data-warch="${w.id}" title="📦 归档 · 待归档 / 编排中（打开作战详情 · 归档页签）">📦</button>`:''}<button class="cwtitle" data-wdetail="${w.id}" title="点击看详情 · ${esc(j.title)}">${esc(j.title)}</button><button class="cwbtn" data-wdetail="${w.id}" title="▦ ${j.kind==='chat'?'会话详情':'作战详情'}（chat 窗留着）">▦ 详情</button><button class="cwbtn" data-wmin="${w.id}" title="收起窗口 · 底部窗口条展开">⌄ 收起</button></div>
   <div class="cwl">${msgs.filter(m=>m!==cur).slice(-40).map(tlHTML).join('')}</div>
   <div class="cwc"><div class="spk"><i></i><span>${cur?(cur.who==='doer'?esc(cur.name||j.agent):'汐音'):esc(j.agent)}</span></div><div class="line">${cur?esc(cur.text):''}</div></div>
   ${o?`<div class="cwch">${o.options.map((opt,i)=>`<button class="vchoice${opt.label===o.rec?' rec':''}" data-wchoice="${o.id}" data-wlabel="${esc(opt.label)}" data-wid="${w.id}" style="--accent:${OP_KIND[o.kind].color}"><span class="n">[${i+1}]</span><b>${esc(opt.label)}</b></button>`).join('')}</div>`:''}
@@ -5125,16 +5237,20 @@ function bindWins(){const L=$('#winLayer');
  $$('[data-wclose]',L).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();closeWin(b.dataset.wclose);}));
  $$('[data-wdetail]',L).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();const w=state.wins.find(x=>x.id===b.dataset.wdetail);if(w)openDetail(w.job,detailTabFor(jobOf(w.job)));}));
  $$('[data-warch]',L).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();const w=state.wins.find(x=>x.id===b.dataset.warch);if(w)openDetail(w.job,'archive');}));
- $$('[data-wsend]',L).forEach(b=>b.addEventListener('click',()=>{const w=state.wins.find(x=>x.id===b.dataset.wsend);const ta=$(`[data-winput="${b.dataset.wsend}"]`);if(w&&ta)sendFrom(w.job,ta);}));
- $$('[data-winput]',L).forEach(t=>{t.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();const w=state.wins.find(x=>x.id===t.dataset.winput);if(w)sendFrom(w.job,t);}});t.addEventListener('input',()=>autoGrowEl(t));});
+ $$('[data-wsend]',L).forEach(b=>b.addEventListener('click',()=>{const w=state.wins.find(x=>x.id===b.dataset.wsend);const ta=$(`[data-winput="${b.dataset.wsend}"]`);if(w&&ta){if(w.isNew)sendFromNew(w,ta);else sendFrom(w.job,ta);}}));
+ $$('[data-winput]',L).forEach(t=>{t.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.altKey){e.preventDefault();const s=t.selectionStart,en=t.selectionEnd;const ok=document.execCommand?document.execCommand('insertText',false,'\n'):false;if(!ok){t.value=t.value.slice(0,s)+'\n'+t.value.slice(en);t.selectionStart=t.selectionEnd=s+1;}autoGrowEl(t,t.closest('.nw-compose')?98:undefined);return;}if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();const w=state.wins.find(x=>x.id===t.dataset.winput);if(w){if(w.isNew)sendFromNew(w,t);else sendFrom(w.job,t);}}});t.addEventListener('input',()=>autoGrowEl(t,t.closest('.nw-compose')?98:undefined));});
  $$('[data-wchoice]',L).forEach(b=>b.addEventListener('click',()=>{const ta=$(`[data-winput="${b.dataset.wid}"]`);const note=ta?ta.value.trim():'';resolveOp(b.dataset.wchoice,b.dataset.wlabel,note===b.dataset.wlabel?'':note);if(ta){ta.value='';autoGrowEl(ta);}}));
+ $$('[data-nw-dir]',L).forEach(b=>b.addEventListener('click',()=>{const w=state.wins.find(x=>x.id===b.closest('[data-win]')?.dataset.win);if(w&&w.isNew)pickNewDir(w.id);}));
+ $$('[data-nw-model]',L).forEach(s=>s.addEventListener('change',()=>{const w=state.wins.find(x=>x.id===s.closest('[data-win]')?.dataset.win);if(w&&w.isNew){w.nw.model=s.value;renderWins();}}));
+ $$('[data-nw-clone]',L).forEach(s=>s.addEventListener('change',()=>{const w=state.wins.find(x=>x.id===s.closest('[data-win]')?.dataset.win);if(w&&w.isNew){w.nw.clone=s.value;renderWins();}}));
  $$('[data-wgr]',L).forEach(g=>{g.addEventListener('pointerdown',e=>{e.stopPropagation();e.preventDefault();const w=state.wins.find(x=>x.id===g.dataset.wgr);if(!w||w.max)return;const sx=e.clientX,sy=e.clientY,ow=w.w,oh=w.h;
   const mv=ev=>{w.w=clamp(ow+ev.clientX-sx,300,innerWidth-16);w.h=clamp(oh+ev.clientY-sy,260,Math.max(260,innerHeight-70));const el=$(`[data-win="${w.id}"]`);if(el){el.style.width=w.w+'px';el.style.height=w.h+'px';}};
   const up=()=>{removeEventListener('pointermove',mv);removeEventListener('pointerup',up);};
   addEventListener('pointermove',mv);addEventListener('pointerup',up);});});}
 function renderBar(){const bar=$('#winBar');$('#app').classList.toggle('has-wins',state.wins.length>0);if(!state.wins.length){bar.hidden=true;bar.innerHTML='';return;}
  bar.hidden=false;const top=state.wins.reduce((m,w)=>Math.max(m,w.z),0);
- bar.innerHTML=`<span class="wl">WINDOWS</span><button class="wbchip${!state.conMin?' on':''}" data-wb="main"><span class="te">⬢</span><span class="tt2">主通讯</span></button>`+state.wins.map(w=>{const j=jobOf(w.job);const un=state.unread[w.job]||0;return `<button class="wbchip wacc${w.z===top&&!w.min?' on':''}${w.min?' min':''}" data-wb="${w.id}" style="--waccent:${projOf(j.proj).color}" title="${esc(j.title)}${w.min?'（已最小化）':''}"><span class="te">${STATE_EMO[j.status]}</span><span class="tt2">${esc(j.short)}</span>${un?`<span class="un">${un}</span>`:''}</button>`;}).join('');
+ bar.innerHTML=`<span class="wl">WINDOWS</span><button class="wbchip${!state.conMin?' on':''}" data-wb="main"><span class="te">⬢</span><span class="tt2">主通讯</span></button>`+state.wins.map(w=>{if(w.isNew)return `<button class="wbchip wacc${w.z===top&&!w.min?' on':''}${w.min?' min':''}" data-wb="${w.id}" style="--waccent:var(--sky)" title="新会话 · 尚未创建"><span class="te">✚</span><span class="tt2">新会话</span></button>`;
+const j=jobOf(w.job);const un=state.unread[w.job]||0;return `<button class="wbchip wacc${w.z===top&&!w.min?' on':''}${w.min?' min':''}" data-wb="${w.id}" style="--waccent:${projOf(j.proj).color}" title="${esc(j.title)}${w.min?'（已最小化）':''}"><span class="te">${STATE_EMO[j.status]}</span><span class="tt2">${esc(j.short)}</span>${un?`<span class="un">${un}</span>`:''}</button>`;}).join('');
  $$('[data-wb]',bar).forEach(b=>b.addEventListener('click',()=>{const id=b.dataset.wb;if(id==='main'){setConMin(false);}else focusWin(id);}));}
 /* ── 主对话窗口：标题栏拖动 / 四边缩放 / 双击复位（几何会话内保留） ── */
 function bindGrips(){const c=$('#console');
@@ -5571,7 +5687,7 @@ addEventListener('pointerdown',e=>{if(!state.conTurns)return;if(e.target.closest
 $('#conDock').addEventListener('click',()=>setConMin(false));
 $('#btnSend').addEventListener('click',sendCommand);
 $('#cmdInput').addEventListener('input',autoGrow);
-$('#cmdInput').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendCommand();}});
+$('#cmdInput').addEventListener('keydown',e=>{if(e.key==='Enter'&&e.altKey){e.preventDefault();const t=e.currentTarget,s=t.selectionStart,en=t.selectionEnd;const ok=document.execCommand?document.execCommand('insertText',false,'\n'):false;if(!ok){t.value=t.value.slice(0,s)+'\n'+t.value.slice(en);t.selectionStart=t.selectionEnd=s+1;}return;}if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendCommand();}});
 $('#conChoices').addEventListener('click',e=>{const b=e.target.closest('[data-choice]');if(b){const note=$('#cmdInput').value.trim();resolveOp(b.dataset.choice,b.dataset.label,note===b.dataset.label?'':note);$('#cmdInput').value='';autoGrow();}});
 $('#banner').addEventListener('click',e=>{if(e.target.closest('#bannerX'))return;const o=state.brief;if(o){hideBanner();state.inboxOpen=true;state.inboxSel=o.id;state.inboxPick=null;renderInbox();Audio.sfx('open');}});
 $('#bannerX').addEventListener('click',e=>{e.stopPropagation();hideBanner();Audio.sfx('close');});
