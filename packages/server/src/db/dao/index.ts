@@ -43,3 +43,4 @@ export type { BillingPriceRow, BillingPriceInput, BillingPricePatch, BillingCurr
 export { WikiArticleDAO } from "./wiki-article-dao"
 export type { WikiArticleRow, WikiArticleUpsert, WikiFtsRow } from "./wiki-article-dao"
 export { CabinDAO } from "./cabin-dao"
+export { DeviceDAO } from "./device-dao"

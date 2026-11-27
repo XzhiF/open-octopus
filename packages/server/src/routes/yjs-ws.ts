@@ -109,8 +109,25 @@ function send(conn: WebSocket, msg: Uint8Array): void {
   }
 }
 
-export function createYjsWebSocketServer(server: http.Server): void {
-  const wss = new WebSocket.Server({ server, maxPayload: 100 * 1024 * 1024 })
+export function createYjsWebSocketServer(
+  server: http.Server,
+  authorize?: (req: http.IncomingMessage) => boolean,
+): void {
+  const wss = new WebSocket.Server({
+    server,
+    maxPayload: 100 * 1024 * 1024,
+    // M3：远程的 WS 升级也要令牌（HTTP 中间件管不到 upgrade 请求）。
+    // 没给 authorize（单测 / 旧装配）就保持原行为。
+    verifyClient: authorize
+      ? (info: { req: http.IncomingMessage }) => {
+          try {
+            return authorize(info.req)
+          } catch {
+            return false
+          }
+        }
+      : undefined,
+  })
 
   wss.on("connection", (ws: WebSocket, req: http.IncomingMessage) => {
     const url = new URL(req.url ?? "/", "http://localhost")

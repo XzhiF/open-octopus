@@ -152,6 +152,15 @@ const trayDest = path.join(resources, 'tray')
 if (!fs.existsSync(traySrc)) throw new Error(`tray icons missing: ${traySrc}`)
 fs.cpSync(traySrc, trayDest, { recursive: true })
 
+// 远程拉起（M4）：install-remote.ps1 + octopus-ctl.ps1 跟着桌面端走。
+// 设置页「启用远程拉起」→ server 以管理员身份调用它（server 用 OCTOPUS_REMOTE_DIR 找）。
+const remoteSrc = path.join(repoRoot, 'scripts', 'remote')
+const remoteDest = path.join(resources, 'remote')
+if (!fs.existsSync(path.join(remoteSrc, 'install-remote.ps1'))) {
+  throw new Error(`remote installer missing: ${remoteSrc}`)
+}
+fs.cpSync(remoteSrc, remoteDest, { recursive: true })
+
 const corePackSrc = path.join(repoRoot, 'packages', 'core-pack')
 const corePackDest = path.join(resources, 'packages', 'core-pack')
 fs.mkdirSync(corePackDest, { recursive: true })
@@ -182,6 +191,8 @@ for (const [label, file] of [
   ['node runtime', nodeDest],
   ['web index', path.join(webDest, 'index.html')],
   ['tray icons', path.join(trayDest, process.platform === 'darwin' ? 'tray-mac.png' : 'tray-16.png')],
+  ['remote installer', path.join(remoteDest, 'install-remote.ps1')],
+  ['remote ctl', path.join(remoteDest, 'octopus-ctl.ps1')],
   ['core-pack skills', path.join(corePackDest, 'skills')],
 ]) {
   if (!fs.existsSync(file)) throw new Error(`missing ${label}: ${file}`)

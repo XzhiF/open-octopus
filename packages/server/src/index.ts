@@ -134,6 +134,14 @@ import { RepoSyncService } from "./services/tasks/repo-sync-service"
 import { syncOrgsFromFilesystem } from "./services/org"
 import { ExecutionService } from "./services/execution"
 import { errorHandler } from "./middleware/error"
+import {
+  PEER_HEADER,
+  createDeviceAuthMiddleware,
+  isAllowedUpgrade,
+  peerFromConnection,
+} from "./middleware/device-auth"
+import { getDeviceAuthService } from "./services/device-auth"
+import { createDeviceRoutes } from "./routes/devices"
 import { agentAuthMiddleware, setAgentAuthOrgDAO } from "./routes/agent/middleware"
 import { installGlobalErrorHandlers, logInfo, getLogFilePath } from "./file-logger"
 import { registerProvider, ClaudeSDKProvider, PiAgentProvider } from "@octopus/providers"
@@ -475,6 +483,11 @@ app.use("*", async (c, next) => {
   c.res.headers.set("X-Frame-Options", "DENY")
   c.res.headers.set("Referrer-Policy", "strict-origin-when-cross-origin")
 })
+
+// ── M3 · 设备令牌闸（2026-11-27）────────────────────────────────
+// 本机直连（回环、未经反向代理）放行，桌面端零回归；经 tailscale serve 或
+// 任何转发头进来的请求必须带 Bearer。peer 由下方 http 桥注入，客户端不可伪造。
+app.use("*", createDeviceAuthMiddleware((token) => getDeviceAuthService().authenticate(token)))
 
 // ── Route Registration ─────────────────────────────────────────
 // Routes are always registered. In test mode (VITEST), daos is null
@@ -1083,6 +1096,11 @@ try {
 // ── System management: model config + connectivity test ─────────────
 app.route("/api/system", createSystemRoutes())
 
+// ── M3 · 设备令牌 / 配对（2026-11-27）─────────────────────────────────
+// /api/pair/code、/api/devices* 只允许回环（路由自己把关）；
+// /api/pair/redeem 在鉴权闸外，一次性 6 位码换长期令牌。
+app.route("/api", createDeviceRoutes(getDeviceAuthService))
+
 // ── Desktop sidecar readiness (routes mounted after listen) ──────────
 app.get("/api/actuator/ready", (c) =>
   routesReady ? c.json({ status: "UP" }) : c.json({ status: "STARTING" }, 503),
@@ -1122,12 +1140,17 @@ if (shouldServe) {
     }
     const body = Buffer.concat(chunks)
 
+    const requestHeaders = new Headers()
+    for (const [k, v] of Object.entries(req.headers)) {
+      if (v !== undefined) requestHeaders.set(k, Array.isArray(v) ? v.join(", ") : v)
+    }
+    // 鉴权闸只信这个头：按 socket 地址 + 代理信号（XFF / 转发头 / ts.net Host）
+    // 判定，并覆盖客户端自带的同名值。客户端伪造它没有任何收益。
+    requestHeaders.set(PEER_HEADER, peerFromConnection(req.socket.remoteAddress, req.headers))
+
     const request = new Request(url, {
       method: req.method,
-      headers: Object.entries(req.headers).reduce((h, [k, v]) => {
-        if (v !== undefined) h.set(k, Array.isArray(v) ? v.join(", ") : v)
-        return h
-      }, new Headers()),
+      headers: requestHeaders,
       body: body.length > 0 ? body : undefined,
     })
 
@@ -1149,7 +1172,14 @@ if (shouldServe) {
       res.end()
     }
   })
-  createYjsWebSocketServer(server)
+  createYjsWebSocketServer(server, (req) =>
+    isAllowedUpgrade(
+      req.socket.remoteAddress,
+      req.headers,
+      req.url,
+      (token) => getDeviceAuthService().authenticate(token),
+    ),
+  )
 
   const forceRestart = process.argv.includes("--force")
 

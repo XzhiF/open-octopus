@@ -287,6 +287,8 @@ function startSidecar(): void {
       OCTOPUS_BRANCH: 'desktop',
       OCTOPUS_HOST_PID: String(process.pid),
       OCTOPUS_HOST_PORTS: String(DESKTOP_PORT),
+      // M4：设置页「启用远程拉起」用这个目录里的 install-remote.ps1。
+      OCTOPUS_REMOTE_DIR: path.join(resources, 'remote'),
       // 依赖树保留 node_modules 原名（ESM 的裸模块解析不认 NODE_PATH）；
       // NODE_PATH 只作为 CJS 兜底，与部署树保持一致。
       NODE_PATH: path.join(resources, 'server', 'node_modules'),
