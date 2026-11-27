@@ -86,32 +86,23 @@ class _CrewFigureState extends State<CrewFigure> {
   }
 }
 
-/// 右下角站立位 + 地面光晕 + 动作标签（原型 `.stage`）。
-/// 动画关掉时整块不画（不给静态图兜底）。
-class CrewStage extends StatefulWidget {
+/// 右下角站立位 + 地面光晕（原型 `.stage`）。
+/// 动画关掉时整块不画（不给静态图兜底）。不写动作文字标签。
+class CrewStage extends StatelessWidget {
   const CrewStage({
     super.key,
     required this.height,
     this.animated = true,
-    this.label = '汐音 · 待命 IDLE',
   });
 
   final double height;
   final bool animated;
-  final String label;
-
-  @override
-  State<CrewStage> createState() => _CrewStageState();
-}
-
-class _CrewStageState extends State<CrewStage> {
-  late String _label = widget.label;
 
   @override
   Widget build(BuildContext context) {
-    if (!widget.animated) return const SizedBox.shrink();
+    if (!animated) return const SizedBox.shrink();
     return SizedBox(
-      height: widget.height + 26,
+      height: height + 26,
       child: Stack(
         clipBehavior: Clip.none,
         children: [
@@ -133,47 +124,60 @@ class _CrewStageState extends State<CrewStage> {
           Positioned(
             right: -10,
             bottom: 0,
-            child: CrewFigure(
-              height: widget.height,
-              animated: widget.animated,
-              // 点一下换支，标签跟着走 —— 不然视频换了她还写着「待命」。
-              onClipChanged: (clip) => setState(() => _label = '汐音 · ${clip.label}'),
+            child: CrewFigure(height: height, animated: animated),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 主 chat 的立绘（原型方案 A）：她站在聊天面板后面、右侧，底缘淡出。
+/// 面板压暗但不模糊，消息列满宽压在她身上；不接点击（pointer-events:none）。
+class CrewBackdrop extends StatelessWidget {
+  const CrewBackdrop({super.key, this.height = 300, this.animated = true});
+
+  final double height;
+  final bool animated;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!animated) return const SizedBox.shrink();
+    return IgnorePointer(
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Positioned(
+            right: 4,
+            bottom: 6,
+            child: Container(
+              width: 190,
+              height: 32,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(999),
+                gradient: RadialGradient(
+                  colors: [Octo.teal.withValues(alpha: .2), Colors.transparent],
+                  stops: const [0, .72],
+                ),
+              ),
             ),
           ),
           Positioned(
-            right: 8,
-            bottom: 2,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
-              decoration: BoxDecoration(
-                color: const Color(0xA80A0818),
-                borderRadius: BorderRadius.circular(999),
-                border: Border.all(color: Octo.edge),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 4,
-                    height: 4,
-                    decoration: const BoxDecoration(
-                      color: Octo.teal,
-                      shape: BoxShape.circle,
-                      boxShadow: [BoxShadow(color: Octo.teal, blurRadius: 7)],
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    _label,
-                    style: const TextStyle(
-                      fontFamily: Octo.mono,
-                      fontSize: 9,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: .9,
-                      color: Octo.teal,
-                    ),
-                  ),
-                ],
+            right: -14,
+            bottom: -2,
+            child: ShaderMask(
+              blendMode: BlendMode.dstIn,
+              shaderCallback: (rect) => const LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                stops: [.72, .94, 1],
+                colors: [Colors.black, Color(0x4D000000), Colors.transparent],
+              ).createShader(rect),
+              child: CrewFigure(
+                height: height,
+                animated: animated,
+                cycleOnTap: false,
+                alignment: Alignment.bottomRight,
               ),
             ),
           ),

@@ -49,7 +49,48 @@ void main() {
         home: Scaffold(body: CrewStage(height: 250, animated: false)),
       ),
     );
-    // 连标签和地面光晕一起收掉。
+    // 连地面光晕一起收掉。
+    expect(find.byType(Image), findsNothing);
+  });
+
+  testWidgets('立绘不带动作文字标签（待命 IDLE / 汐音 · … 都不画）', (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(home: Scaffold(body: CrewStage(height: 250))),
+    );
     expect(find.textContaining('汐音'), findsNothing);
+    expect(find.textContaining('待命'), findsNothing);
+    expect(find.textContaining('IDLE'), findsNothing);
+  });
+
+  testWidgets('主 chat 立绘：开时在面板后，关掉整块不画', (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 390,
+            height: 600,
+            child: Stack(fit: StackFit.expand, children: [CrewBackdrop()]),
+          ),
+        ),
+      ),
+    );
+    expect(find.byType(CrewFigure), findsOneWidget);
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 390,
+            height: 600,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [CrewBackdrop(animated: false)],
+            ),
+          ),
+        ),
+      ),
+    );
+    expect(find.byType(CrewFigure), findsNothing);
+    expect(find.byType(Image), findsNothing);
   });
 }

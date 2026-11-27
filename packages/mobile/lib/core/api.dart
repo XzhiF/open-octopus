@@ -103,6 +103,83 @@ class OctopusApi {
     }
   }
 
+  // ── 舱会话（agent sessions）────────────────────────────────────────
+  //
+  // 舱主会话与任务线程都在 `sessions` 表，走 /api/agent；上面那组 chat/sessions
+  // 是旧的自由聊天域（chat_sessions 表），舱里根本没有行。
+
+  Future<ChatSession> agentSession(String sessionId, {int limit = 100}) async {
+    final data = await _getJson(
+      '/api/agent/sessions/$sessionId',
+      query: {'limit': '$limit'},
+    );
+    if (data is! Map) throw ApiException('会话返回格式不对', kind: 'parse');
+    return ChatSession.fromAgentJson(data.cast<String, dynamic>());
+  }
+
+  Future<ChatSession> createAgentSession(String workspaceId) async {
+    final data = await _postJson(
+      '/api/agent/sessions',
+      body: {'workspace_id': workspaceId},
+    );
+    if (data is! Map) throw ApiException('新会话返回格式不对', kind: 'parse');
+    return ChatSession.fromAgentJson(data.cast<String, dynamic>());
+  }
+
+  /// 舱会话发消息：POST 响应体内联 SSE（与桌面主对话同一条管道）。
+  Stream<SseEvent> sendAgentMessage({
+    required String sessionId,
+    required String content,
+    CancelToken? cancelToken,
+  }) {
+    return _sse(
+      () => _dio.post<ResponseBody>(
+        '/api/agent/sessions/$sessionId/chat',
+        data: {'message': content, 'session_id': sessionId},
+        cancelToken: cancelToken,
+        options: Options(
+          responseType: ResponseType.stream,
+          headers: {'Accept': 'text/event-stream'},
+          receiveTimeout: const Duration(minutes: 30),
+        ),
+      ),
+    );
+  }
+
+  /// 舱内登记过的会话（委派 / 用户自开会话）。老服务没有这条路由就返回空。
+  Future<List<CabinSessionRef>> cabinDelegations(String cabinId) async {
+    try {
+      final data = await _getJson('/api/cabins/$cabinId/delegations');
+      final list = data is Map ? data['delegations'] : data;
+      if (list is! List) return const [];
+      return list
+          .whereType<Map>()
+          .map((e) => CabinSessionRef.fromJson(e.cast<String, dynamic>()))
+          .toList(growable: false);
+    } on ApiException {
+      return const [];
+    }
+  }
+
+  /// 新开的舱会话向舱登记（origin=user）—— 桌面舱里才看得见这条。
+  Future<void> registerCabinSession(
+    String cabinId,
+    String sessionId, {
+    String? title,
+  }) async {
+    try {
+      await _postJson(
+        '/api/cabins/$cabinId/delegations/register',
+        body: {
+          'session_id': sessionId,
+          if (title != null && title.trim().isNotEmpty) 'title': title,
+        },
+      );
+    } on ApiException {
+      // 老服务没有登记口：会话本身已经建好，不因此判失败。
+    }
+  }
+
   // ── 任务（只读） ────────────────────────────────────────────────────
 
   Future<List<TaskItem>> tasks({String? cabinId}) async {

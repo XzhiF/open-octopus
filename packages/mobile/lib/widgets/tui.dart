@@ -49,6 +49,10 @@ class TuiTranscript extends StatelessWidget {
           status: 'done',
           duration: null,
         ));
+      } else if (type == 'system') {
+        // 舱的系统行（就绪说明 / 事件回执）：不是汐音说的，别挂 her 的头。
+        if (m.content.trim().isEmpty) continue;
+        rows.add(_TuiSystemRow(text: m.content));
       } else {
         if (m.content.trim().isEmpty) continue;
         stepsInTurn++;
@@ -99,6 +103,31 @@ class TuiTranscript extends StatelessWidget {
           child: row,
         ),
       ],
+    );
+  }
+}
+
+class _TuiSystemRow extends StatelessWidget {
+  const _TuiSystemRow({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.only(left: 8),
+      decoration: const BoxDecoration(
+        border: Border(left: BorderSide(color: Color(0x338D86B8))),
+      ),
+      child: Text(
+        '· $text',
+        style: const TextStyle(
+          fontFamily: Octo.mono,
+          fontSize: 10.5,
+          height: 1.65,
+          color: Octo.dim,
+        ),
+      ),
     );
   }
 }

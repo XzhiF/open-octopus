@@ -89,7 +89,6 @@ class DevicesScreen extends ConsumerWidget {
                             CrewStage(
                               height: 250,
                               animated: ref.watch(crewVideoProvider),
-                              label: '待命 IDLE',
                             ),
                           ],
                         ),

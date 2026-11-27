@@ -480,13 +480,50 @@ final cabinEventsProvider =
   }
 });
 
-final sessionsProvider =
-    FutureProvider.autoDispose.family<List<SessionRef>, String>((ref, workspaceId) async {
+/// 舱自己的会话：主会话（`cabins.main_session_id`）+ 舱里登记过的会话
+/// （委派 / 用户自开）。旧的 chat/sessions 域在舱里没有行，不能用。
+final cabinSessionsProvider =
+    FutureProvider.autoDispose.family<List<SessionRef>, String>((ref, cabinId) async {
   final api = ref.watch(apiProvider);
   if (api == null) throw ApiException('还没选设备', kind: 'network');
-  return (await api.sessions(workspaceId))
-      .map((s) => SessionRef(workspaceId: workspaceId, session: s))
-      .toList(growable: false);
+  final detail = await ref.watch(cabinDetailProvider(cabinId).future);
+  final cabin = detail.cabin;
+  final workspaceId = cabin.workspaceId;
+  final mainId = cabin.mainSessionId;
+
+  final out = <SessionRef>[];
+  if (mainId != null && workspaceId != null) {
+    ChatSession main;
+    try {
+      main = await api.agentSession(mainId);
+    } catch (_) {
+      // 快照拉不到也别让列表空着：先按主会话 id 占一行。
+      main = ChatSession(
+        id: mainId,
+        workspaceId: workspaceId,
+        title: '舱主对话',
+        createdAt: '',
+        updatedAt: '',
+      );
+    }
+    out.add(SessionRef(workspaceId: workspaceId, session: main));
+  }
+
+  for (final ref in await api.cabinDelegations(cabinId)) {
+    final id = ref.sessionId;
+    if (id == null || id.isEmpty || id == mainId) continue;
+    out.add(SessionRef(
+      workspaceId: workspaceId,
+      session: ChatSession(
+        id: id,
+        workspaceId: workspaceId ?? '',
+        title: ref.title.trim().isEmpty ? null : ref.title,
+        createdAt: ref.createdAt ?? '',
+        updatedAt: ref.updatedAt ?? '',
+      ),
+    ));
+  }
+  return out;
 });
 
 /// 会话列表行的轻量包装（带上它所属的工作区，便于跳转）。

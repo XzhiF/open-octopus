@@ -18,11 +18,15 @@ class ChatController extends ChangeNotifier {
     required this.api,
     required this.workspaceId,
     required this.sessionId,
+    this.agent = false,
   });
 
   final OctopusApi api;
   final String? workspaceId;
   final String sessionId;
+
+  /// 舱会话走 /api/agent（sessions 表）；单独会话仍走旧的 chat/sessions。
+  final bool agent;
 
   ChatSession? session;
   Object? loadError;
@@ -42,7 +46,9 @@ class ChatController extends ChangeNotifier {
     loadError = null;
     _notify();
     try {
-      session = await api.session(workspaceId, sessionId);
+      session = agent
+          ? await api.agentSession(sessionId)
+          : await api.session(workspaceId, sessionId);
     } catch (e) {
       loadError = e;
     } finally {
@@ -64,12 +70,18 @@ class ChatController extends ChangeNotifier {
     _cancel = cancel;
 
     try {
-      final stream = api.sendMessage(
-        workspaceId: workspaceId,
-        sessionId: sessionId,
-        content: trimmed,
-        cancelToken: cancel,
-      );
+      final stream = agent
+          ? api.sendAgentMessage(
+              sessionId: sessionId,
+              content: trimmed,
+              cancelToken: cancel,
+            )
+          : api.sendMessage(
+              workspaceId: workspaceId,
+              sessionId: sessionId,
+              content: trimmed,
+              cancelToken: cancel,
+            );
       await for (final event in stream) {
         if (_disposed) break;
         _apply(event);
@@ -99,7 +111,9 @@ class ChatController extends ChangeNotifier {
 
   Future<void> _refreshSnapshot() async {
     try {
-      final fresh = await api.session(workspaceId, sessionId);
+      final fresh = agent
+          ? await api.agentSession(sessionId)
+          : await api.session(workspaceId, sessionId);
       if (_disposed) return;
       session = fresh;
       live = LiveTurn();
@@ -119,32 +133,35 @@ class ChatController extends ChangeNotifier {
     final l = live;
     switch (event.event) {
       case 'message_start':
+      case 'turn_phase':
         l.started = true;
         break;
       case 'text_delta':
       case 'local_command_output':
         l.started = true;
-        l.text += (data?['content'] as String?) ?? '';
+        // agent 域是 {delta, content(累计)}；旧 chat 域只有 {content}(增量)。
+        l.text += (data?['delta'] as String?) ?? (data?['content'] as String?) ?? '';
+        break;
+      case 'assistant_continue':
+        // 后台任务唤醒的续轮：服务端用 separator 把两段话分开。
+        final separator = data?['separator'] as String?;
+        if (separator != null && separator.isNotEmpty) l.text += separator;
         break;
       case 'thinking':
-        l.thinking += (data?['content'] as String?) ?? '';
+        l.thinking += (data?['delta'] as String?) ?? (data?['content'] as String?) ?? '';
         break;
       case 'thinking_done':
+        l.thinkingDone = true;
         l.thinkingDuration = data?['thinkingDuration'] as String?;
         break;
-      case 'tool_call':
-        final id = (data?['toolCallId'] as String?) ?? '';
-        final name = (data?['toolName'] as String?) ?? 'tool';
-        final input = data?['toolInput'];
-        final inputText = input == null ? null : _encode(input);
-        final existing = l.tools.indexWhere((t) => t.id == id);
-        if (existing >= 0) {
-          l.tools[existing]
-            ..inputText = inputText ?? l.tools[existing].inputText
-            ..status = 'running';
-        } else {
-          l.tools.add(LiveTool(id: id, name: name, inputText: inputText));
+      case 'ask_user_question':
+        final askId = (data?['tool_call_id'] as String?) ?? '';
+        if (askId.isNotEmpty && l.tools.every((t) => t.id != askId)) {
+          l.tools.add(LiveTool(id: askId, name: 'AskUserQuestion', status: 'done'));
         }
+        break;
+      case 'tool_call':
+        _applyToolCall(data);
         break;
       case 'tool_result':
         final resultId = (data?['toolCallId'] as String?) ?? '';
@@ -156,6 +173,7 @@ class ChatController extends ChangeNotifier {
         }
         break;
       case 'result':
+      case 'done':
         l.done = true;
         l.numTurns = (data?['numTurns'] as num?)?.toInt();
         l.applyUsage((data?['usage'] as Map?)?.cast<String, dynamic>());
@@ -171,9 +189,44 @@ class ChatController extends ChangeNotifier {
         l.done = true;
         break;
       default:
-        // heartbeat / message_delta / context_usage … 手机端不需要
+        // heartbeat / context_usage / status / background_tasks … 手机端不需要
         break;
     }
+  }
+
+  /// agent 域的 tool_call 是一条事件带三种 `type`：start / input / result。
+  void _applyToolCall(Map<String, dynamic>? data) {
+    final l = live;
+    final type = data?['type'] as String?;
+    final id = (data?['tool_call_id'] as String?) ?? (data?['toolCallId'] as String?) ?? '';
+    if (id.isEmpty) return;
+    final name = (data?['tool_name'] as String?) ??
+        (data?['toolName'] as String?) ??
+        'tool';
+    final index = l.tools.indexWhere((t) => t.id == id);
+
+    if (type == 'result') {
+      if (index >= 0) {
+        l.tools[index].status = data?['is_error'] == true ? 'error' : 'done';
+      }
+      return;
+    }
+
+    final input = data?['input'] ?? data?['toolInput'];
+    final inputText = input == null ? null : _encode(input);
+    if (index >= 0) {
+      l.tools[index]
+        ..inputText = inputText ?? l.tools[index].inputText
+        ..status = type == 'start' ? 'running' : l.tools[index].status;
+    } else {
+      l.tools.add(LiveTool(
+        id: id,
+        name: name,
+        inputText: inputText,
+        status: 'running',
+      ));
+    }
+    l.started = true;
   }
 
   static String _encode(Object value) {

@@ -371,6 +371,40 @@ List<AttentionItem> buildAttentionList(Iterable<AttentionItem> raw) {
   return kept.map((e) => e.$3).toList(growable: false);
 }
 
+/// 舱内的一路会话（委派 / 用户自开会话）。`GET /api/cabins/:id/delegations`
+/// 只给登记过 session_id 的行；舱主会话不在里面（走 `main_session_id`）。
+class CabinSessionRef {
+  const CabinSessionRef({
+    required this.id,
+    required this.title,
+    this.sessionId,
+    this.state,
+    this.origin,
+    this.createdAt,
+    this.updatedAt,
+  });
+
+  final String id;
+  final String? sessionId;
+  final String title;
+  final String? state;
+
+  /// `xiyin` / `user`。
+  final String? origin;
+  final String? createdAt;
+  final String? updatedAt;
+
+  factory CabinSessionRef.fromJson(Map<String, dynamic> json) => CabinSessionRef(
+        id: (json['id'] as String?) ?? '',
+        sessionId: json['session_id'] as String?,
+        title: (json['title'] as String?) ?? '',
+        state: json['state'] as String?,
+        origin: json['origin'] as String?,
+        createdAt: json['created_at'] as String?,
+        updatedAt: json['updated_at'] as String?,
+      );
+}
+
 class CabinHealth {
   const CabinHealth({
     this.running = 0,

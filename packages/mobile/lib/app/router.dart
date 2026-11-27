@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import '../core/models/quote.dart';
 import '../features/cabins/cabin_list_screen.dart';
 import '../features/cabins/cabin_screen.dart';
+import '../features/cabins/fleet_screen.dart';
 import '../features/chat/global_chat_screen.dart';
 import '../features/chat/session_screen.dart';
 import '../features/devices/add_device_screen.dart';
@@ -24,6 +25,11 @@ final routerProvider = Provider<GoRouter>((ref) {
             CabinScreen(cabinId: state.pathParameters['cabinId'] ?? ''),
       ),
       GoRoute(
+        path: '/cabin/:cabinId/fleet',
+        builder: (context, state) =>
+            FleetScreen(cabinId: state.pathParameters['cabinId'] ?? ''),
+      ),
+      GoRoute(
         path: '/cabin/:cabinId/task/:taskId',
         builder: (context, state) =>
             TaskDetailScreen(taskId: state.pathParameters['taskId'] ?? ''),
@@ -33,6 +39,7 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => SessionScreen(
           workspaceId: state.pathParameters['workspaceId'],
           sessionId: state.pathParameters['sessionId'] ?? '',
+          agent: state.uri.queryParameters['agent'] == '1',
           quote: state.extra is SessionQuote ? state.extra! as SessionQuote : null,
         ),
       ),

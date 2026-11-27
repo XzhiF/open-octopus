@@ -14,10 +14,11 @@ import '../../widgets/octo_bar.dart';
 import '../../widgets/panel.dart';
 import '../../widgets/scene_background.dart';
 
-/// B · 添加设备：手填 Tailscale 域名；这台机器开了设备令牌时，用配对码换令牌。
+/// B · 添加设备（原型 `mobile-v1.html` B 屏）：一张表填完 ——
+/// Tailscale 域名 + 名字 + 6 位配对码（或直接粘贴设备令牌）。
 ///
-/// 流程：探活（免鉴权的 /health）→ 试 `/api/cabins` 看要不要令牌 →
-/// 需要就展开配对卡（6 位码 / 直接粘贴令牌）→ 兑换成功后才存设备。
+/// 流程：填了配对码就直接兑换令牌；没填先探活（免鉴权的 /health）→
+/// 试 `/api/cabins`，401 就提示补配对码，再点「连接」走兑换。
 class AddDeviceScreen extends ConsumerStatefulWidget {
   const AddDeviceScreen({super.key});
 
@@ -30,10 +31,13 @@ class _AddDeviceScreenState extends ConsumerState<AddDeviceScreen> {
   final TextEditingController _name = TextEditingController();
   final TextEditingController _code = TextEditingController();
   final TextEditingController _token = TextEditingController();
+  final FocusNode _codeFocus = FocusNode();
   bool _busy = false;
-  bool _needsPairing = false;
+  bool _showToken = false;
+
+  /// 探活发现这台机器开了设备令牌：把配对码框标出来，并把焦点送过去。
+  bool _needsCode = false;
   String? _error;
-  String? _pairError;
 
   @override
   void dispose() {
@@ -41,6 +45,7 @@ class _AddDeviceScreenState extends ConsumerState<AddDeviceScreen> {
     _name.dispose();
     _code.dispose();
     _token.dispose();
+    _codeFocus.dispose();
     super.dispose();
   }
 
@@ -54,13 +59,15 @@ class _AddDeviceScreenState extends ConsumerState<AddDeviceScreen> {
     return true;
   }
 
-  /// 探活 → 试鉴权 → 通了直接进；不通展开配对卡。
+  /// 连接：有配对码就兑换；没有就探活后试直连，401 再把配对码框标出来。
   Future<void> _connect() async {
     if (!_validateUrl()) return;
+    if (_code.text.trim().isNotEmpty) return _pairAndConnect();
+
     setState(() {
       _busy = true;
       _error = null;
-      _pairError = null;
+      _needsCode = false;
     });
 
     final baseUrl = _baseUrl;
@@ -82,9 +89,12 @@ class _AddDeviceScreenState extends ConsumerState<AddDeviceScreen> {
       if (!ok) {
         setState(() {
           _busy = false;
-          _needsPairing = true;
-          _pairError = pasted.isEmpty ? null : '粘贴的令牌无效 —— 用配对码重新换一条';
+          _needsCode = true;
+          _error = pasted.isEmpty
+              ? '这台电脑开了设备令牌 —— 在上面填 6 位配对码，再点「连 接」'
+              : '粘贴的令牌无效 —— 用配对码重新换一条';
         });
+        _codeFocus.requestFocus();
         return;
       }
       await _finishConnect(baseUrl, token: pasted.isEmpty ? null : pasted);
@@ -110,13 +120,13 @@ class _AddDeviceScreenState extends ConsumerState<AddDeviceScreen> {
     final code = _code.text.trim();
     final pasted = _token.text.trim();
     if (code.isEmpty && pasted.isEmpty) {
-      setState(() => _pairError = '配对码是 6 位数字 —— 在电脑「设置 → 手机配对」生成；也可以直接粘贴令牌');
+      setState(() => _error = '配对码是 6 位数字 —— 在电脑「设置 → 手机配对」生成；也可以直接粘贴令牌');
       return;
     }
     setState(() {
       _busy = true;
-      _pairError = null;
       _error = null;
+      _needsCode = false;
     });
     final baseUrl = _baseUrl;
     try {
@@ -142,13 +152,13 @@ class _AddDeviceScreenState extends ConsumerState<AddDeviceScreen> {
       if (!mounted) return;
       setState(() {
         _busy = false;
-        _pairError = e.message;
+        _error = e.message;
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _busy = false;
-        _pairError = describeError(e);
+        _error = describeError(e);
       });
     }
   }
@@ -221,10 +231,17 @@ class _AddDeviceScreenState extends ConsumerState<AddDeviceScreen> {
                   children: [
                     const RoundedPanel(
                       padding: EdgeInsets.fromLTRB(14, 13, 14, 13),
-                      child: Text(
-                        '在电脑上打开 Octopus，确认它正在托盘里跑着。\n'
-                        '地址就是这台电脑的 Tailscale 域名 —— 不经过任何云端。\n'
-                        '开了设备令牌的话，第一句话会换成一句「需要配对码」。',
+                      child: Text.rich(
+                        TextSpan(
+                          children: [
+                            TextSpan(text: '在电脑上打开 '),
+                            TextSpan(
+                              text: 'Octopus → 设置 → 手机配对',
+                              style: TextStyle(color: Colors.white),
+                            ),
+                            TextSpan(text: '，生成 6 位配对码\n（2 分钟有效、一次性；也可以直接粘贴设备令牌）'),
+                          ],
+                        ),
                         style: TextStyle(
                           fontFamily: Octo.mono,
                           fontSize: 10.5,
@@ -234,11 +251,9 @@ class _AddDeviceScreenState extends ConsumerState<AddDeviceScreen> {
                         ),
                       ),
                     ),
-                    const SizedBox(height: 12),
-                    const _ScanPlaceholder(),
-                    const SizedBox(height: 18),
-                    const SectionTitle('或者手动填'),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 16),
+                    const SectionTitle('手动填'),
+                    const SizedBox(height: 11),
                     TextField(
                       controller: _url,
                       keyboardType: TextInputType.url,
@@ -253,11 +268,39 @@ class _AddDeviceScreenState extends ConsumerState<AddDeviceScreen> {
                         hintText: 'https://shufang-pc.tailxxxx.ts.net',
                       ),
                     ),
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 11),
                     TextField(
                       controller: _name,
                       style: const TextStyle(fontSize: 13, color: Octo.ink),
                       decoration: const InputDecoration(hintText: '名字（可留空，默认取域名第一段）'),
+                    ),
+                    const SizedBox(height: 11),
+                    TextField(
+                      controller: _code,
+                      focusNode: _codeFocus,
+                      keyboardType: TextInputType.number,
+                      inputFormatters: [
+                        FilteringTextInputFormatter.digitsOnly,
+                        LengthLimitingTextInputFormatter(6),
+                      ],
+                      style: const TextStyle(
+                        fontFamily: Octo.mono,
+                        fontSize: 13,
+                        letterSpacing: 1.2,
+                        color: Octo.ink,
+                      ),
+                      decoration: InputDecoration(
+                        hintText: '配对码 · 6 位',
+                        enabledBorder: _needsCode
+                            ? OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(Octo.rM),
+                                borderSide: BorderSide(
+                                  color: Octo.teal.withValues(alpha: .55),
+                                  width: 1.2,
+                                ),
+                              )
+                            : null,
+                      ),
                     ),
                     if (kDebugMode) ...[
                       const SizedBox(height: 10),
@@ -276,36 +319,41 @@ class _AddDeviceScreenState extends ConsumerState<AddDeviceScreen> {
                         ],
                       ),
                     ],
-                    if (!_needsPairing) ...[
-                      const SizedBox(height: 10),
+                    if (_showToken) ...[
+                      const SizedBox(height: 11),
+                      TextField(
+                        controller: _token,
+                        autocorrect: false,
+                        enableSuggestions: false,
+                        style: const TextStyle(
+                          fontFamily: Octo.mono,
+                          fontSize: 10.5,
+                          color: Octo.ink,
+                        ),
+                        decoration: const InputDecoration(
+                          hintText: '设备令牌（粘贴后直接连接）',
+                        ),
+                      ),
+                    ] else ...[
+                      const SizedBox(height: 4),
                       Align(
                         alignment: Alignment.centerLeft,
                         child: TextButton(
-                          onPressed: () => setState(() => _needsPairing = true),
+                          onPressed: () => setState(() => _showToken = true),
                           style: TextButton.styleFrom(
                             foregroundColor: Octo.teal,
                             padding: EdgeInsets.zero,
                             minimumSize: const Size(0, 32),
                           ),
                           child: const Text(
-                            '我有配对码 ›',
+                            '直接粘贴令牌 ›',
                             style: TextStyle(fontFamily: Octo.mono, fontSize: 10.5),
                           ),
                         ),
                       ),
                     ],
-                    if (_needsPairing) ...[
-                      const SizedBox(height: 14),
-                      _PairingCard(
-                        code: _code,
-                        token: _token,
-                        busy: _busy,
-                        error: _pairError,
-                        onSubmit: _pairAndConnect,
-                      ),
-                    ],
                     if (_error != null) ...[
-                      const SizedBox(height: 14),
+                      const SizedBox(height: 10),
                       RoundedPanel(
                         borderColor: Octo.red.withValues(alpha: .3),
                         child: Text(
@@ -319,7 +367,7 @@ class _AddDeviceScreenState extends ConsumerState<AddDeviceScreen> {
                         ),
                       ),
                     ],
-                    const SizedBox(height: 18),
+                    const SizedBox(height: 16),
                     PrimaryButton(label: '连 接', busy: _busy, onPressed: _connect),
                     const SizedBox(height: 12),
                     const Text(
@@ -336,132 +384,6 @@ class _AddDeviceScreenState extends ConsumerState<AddDeviceScreen> {
                 ),
               ),
             ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// 配对卡：这台机器开着设备令牌时展开。
-class _PairingCard extends StatelessWidget {
-  const _PairingCard({
-    required this.code,
-    required this.token,
-    required this.busy,
-    required this.error,
-    required this.onSubmit,
-  });
-
-  final TextEditingController code;
-  final TextEditingController token;
-  final bool busy;
-  final String? error;
-  final VoidCallback onSubmit;
-
-  @override
-  Widget build(BuildContext context) {
-    return RoundedPanel(
-      borderColor: Octo.teal.withValues(alpha: .35),
-      padding: const EdgeInsets.fromLTRB(14, 13, 14, 14),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Row(
-            children: [
-              Icon(Icons.key_outlined, size: 15, color: Octo.teal),
-              SizedBox(width: 8),
-              Text(
-                '需要配对码',
-                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.white),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            '这台电脑开了设备令牌。在电脑上打开「设置 → 手机配对」，生成 6 位码（2 分钟内有效、只能用一次）。',
-            style: TextStyle(
-              fontFamily: Octo.mono,
-              fontSize: 10,
-              height: 1.75,
-              color: Octo.dim,
-            ),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: code,
-            keyboardType: TextInputType.number,
-            inputFormatters: [
-              FilteringTextInputFormatter.digitsOnly,
-              LengthLimitingTextInputFormatter(6),
-            ],
-            style: const TextStyle(
-              fontFamily: Octo.mono,
-              fontSize: 20,
-              letterSpacing: 6,
-              color: Colors.white,
-            ),
-            decoration: const InputDecoration(hintText: '6 位配对码'),
-          ),
-          const SizedBox(height: 10),
-          TextField(
-            controller: token,
-            autocorrect: false,
-            enableSuggestions: false,
-            style: const TextStyle(
-              fontFamily: Octo.mono,
-              fontSize: 10.5,
-              color: Octo.ink,
-            ),
-            decoration: const InputDecoration(
-              hintText: '或者直接粘贴设备令牌（可选）',
-            ),
-          ),
-          if (error != null) ...[
-            const SizedBox(height: 10),
-            Text(
-              error!,
-              style: const TextStyle(
-                fontFamily: Octo.mono,
-                fontSize: 10,
-                height: 1.7,
-                color: Octo.red,
-              ),
-            ),
-          ],
-          const SizedBox(height: 12),
-          PrimaryButton(label: '配对并连接', busy: busy, onPressed: onSubmit),
-        ],
-      ),
-    );
-  }
-}
-
-class _ScanPlaceholder extends StatelessWidget {
-  const _ScanPlaceholder();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 140,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(Octo.rL),
-        border: Border.all(color: Octo.teal.withValues(alpha: .3)),
-        gradient: RadialGradient(
-          colors: [Octo.teal.withValues(alpha: .08), Colors.transparent],
-          stops: const [0, .7],
-        ),
-      ),
-      child: const Center(
-        child: Text(
-          '配对码在电脑的「设置 → 手机配对」里\n扫码配对以后再做\n现在先填地址和 6 位码',
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            fontFamily: Octo.mono,
-            fontSize: 10,
-            height: 1.8,
-            letterSpacing: .4,
-            color: Octo.faint,
           ),
         ),
       ),

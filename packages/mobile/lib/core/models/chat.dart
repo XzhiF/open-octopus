@@ -52,6 +52,127 @@ class ChatSession {
       totalMessageCount: (json['totalMessageCount'] as num?)?.toInt() ?? 0,
     );
   }
+
+  /// 舱会话走 `GET /api/agent/sessions/:id`：行本身是 snake_case，
+  /// `messages` 是 `{items, total, has_more}`，一条 assistant 行里装着
+  /// `thinking` / `tool_calls` / 正文。这里摊平成 TUI 的一行一条。
+  factory ChatSession.fromAgentJson(Map<String, dynamic> json) {
+    final raw = json['messages'];
+    final rows = <ChatMessage>[];
+    var total = 0;
+    if (raw is Map) {
+      final items = raw['items'];
+      total = (raw['total'] as num?)?.toInt() ?? (items is List ? items.length : 0);
+      if (items is List) {
+        for (final item in items.whereType<Map>()) {
+          rows.addAll(_agentMessageRows(item.cast<String, dynamic>()));
+        }
+      }
+    }
+    final isActiveRaw = json['is_active'];
+    return ChatSession(
+      id: (json['id'] as String?) ?? '',
+      workspaceId:
+          (json['workspaceId'] as String?) ?? (json['workspace_id'] as String?) ?? '',
+      title: json['title'] as String?,
+      isActive: (json['isActive'] as bool?) ??
+          (isActiveRaw is bool ? isActiveRaw : isActiveRaw != 0),
+      provider: (json['provider'] as String?) ?? 'claude',
+      providerSessionId: (json['providerSessionId'] as String?) ??
+          (json['provider_session_id'] as String?),
+      createdAt: (json['createdAt'] as String?) ??
+          (json['created_at'] as String?) ??
+          '',
+      updatedAt: (json['updatedAt'] as String?) ??
+          (json['updated_at'] as String?) ??
+          (json['last_message_at'] as String?) ??
+          '',
+      messages: rows,
+      totalMessageCount: total > 0 ? total : rows.length,
+    );
+  }
+
+  /// 一条 agent 消息 → TUI 行：thinking 一行、每个 tool 一行、正文一行。
+  /// 用户 / 系统消息保持单行。
+  static List<ChatMessage> _agentMessageRows(Map<String, dynamic> m) {
+    final id = (m['id'] as String?) ?? '';
+    final sessionId =
+        (m['sessionId'] as String?) ?? (m['session_id'] as String?) ?? '';
+    final role = (m['role'] as String?) ?? 'assistant';
+    final createdAt =
+        (m['createdAt'] as String?) ?? (m['created_at'] as String?) ?? '';
+    final content = (m['content'] as String?) ?? '';
+
+    if (role == 'user' || role == 'system') {
+      if (content.trim().isEmpty) return const [];
+      return [
+        ChatMessage(
+          id: id,
+          sessionId: sessionId,
+          role: role,
+          type: 'text',
+          content: content,
+          createdAt: createdAt,
+          meta: {'displayType': role},
+        ),
+      ];
+    }
+
+    final rows = <ChatMessage>[];
+    final thinking = (m['thinking'] as String?)?.trimRight() ?? '';
+    if (thinking.trim().isNotEmpty) {
+      rows.add(ChatMessage(
+        id: '$id-thinking',
+        sessionId: sessionId,
+        role: 'assistant',
+        type: 'thinking',
+        content: '',
+        createdAt: createdAt,
+        meta: {'displayType': 'thinking', 'thinkingContent': thinking},
+      ));
+    }
+
+    final tools = m['tool_calls'];
+    if (tools is List) {
+      var index = 0;
+      for (final tool in tools.whereType<Map>()) {
+        final tc = tool.cast<String, dynamic>();
+        final status = (tc['status'] as String?) ?? 'result';
+        rows.add(ChatMessage(
+          id: '${tc['id'] ?? '$id-tool-$index'}',
+          sessionId: sessionId,
+          role: 'assistant',
+          type: 'tool_call',
+          content: '',
+          createdAt: createdAt,
+          meta: {
+            'displayType': 'tool_call',
+            'toolName': (tc['name'] as String?) ?? 'tool',
+            'toolInput': tc['input'],
+            'toolStatus': switch (status) {
+              'fail' => 'error',
+              'start' => 'running',
+              _ => 'done',
+            },
+          },
+        ));
+        index++;
+      }
+    }
+
+    if (content.trim().isNotEmpty) {
+      rows.add(ChatMessage(
+        id: id,
+        sessionId: sessionId,
+        role: 'assistant',
+        type: 'text',
+        content: content,
+        createdAt: createdAt,
+        meta: const {'displayType': 'text'},
+      ));
+    }
+    return rows;
+  }
 }
 
 /// 一条会话消息。`metadata` 在 wire 上是 JSON 字符串，这里解开成 Map 方便渲染。

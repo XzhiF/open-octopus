@@ -140,11 +140,12 @@ tailscale serve reset      # 撤销
 | 事项 | `GET/POST /api/cabins/:id/items`、`POST /:id/items/deliver` | ✅ |
 | 任务 | `GET /api/tasks?cabin_id=` → `{items[]}` | ✅ |
 | 任务详情 | `GET /api/tasks/:id`、`/executions`、`/artifacts` | ✅ |
-| 舱会话 | `GET/POST /api/workspaces/:id/chat/sessions` | ✅ |
-| 会话详情 | `GET /api/workspaces/:id/chat/sessions/:sid` | ✅ |
-| 发消息 | `POST /api/workspaces/:id/chat/sessions/:sid/messages`（响应体即 SSE） | ✅ |
+| 舱会话 | `GET /api/agent/sessions/:sid`（主会话在 `sessions` 表；列表排除舱主会话） | ✅ |
+| 舱会话发消息 | `POST /api/agent/sessions/:sid/chat`（响应体即 SSE：`text_delta.delta` / `tool_call.type` / `done`） | ✅ |
+| 新开舱会话 | `POST /api/agent/sessions`（带 `workspace_id`）+ `POST /api/cabins/:id/delegations/register` | ✅ |
+| 舱会话列表 | 主会话（`cabins.main_session_id`）+ `GET /api/cabins/:id/delegations` | ✅ |
 | 工作区事件 | `GET /api/workspaces/:id/events`（SSE） | ✅ |
-| 单独会话 | `GET/POST /api/chat/global/sessions`、`/:sid`、`/:sid/messages`（SSE） | ✅ |
+| 单独会话 | 仍走 `GET/POST /api/chat/global/sessions`、`/:sid/messages`（自由聊天域） | ✅ |
 | 在跑 agent | `GET /api/agent/sessions/running`（带任意 `Bearer`） | ✅ |
 | 设备令牌 | `device-auth` 中间件 + `devices` 表 | ✅ M3 |
 | 配对码 / 兑换 | `POST /api/pair/code`（仅回环）· `POST /api/pair/redeem`（闸外） | ✅ M3 |
@@ -556,3 +557,4 @@ androidx.security / tink 依赖，比 M2 的 183 MiB 涨了约 34 MiB）。首�
 | 2026-11-27 | M3 落地：设备令牌 + 6 位配对码 + 设置页「手机配对」；本机判定叠加反向代理信号 |
 | 2026-11-27 | M4 落地：SSH 强制命令（status/start）+ 登录计划任务 + 密钥槽配对下发；设备三档状态与一键启动 |
 | 2026-11-27 | M5 打磨：图标换汐音（与 PC exe 同源）+ 自适应图标；启动页（系统层 + Flutter 光环字标）；场景图转 WebP（5.6 MB → 307 KB）；触感反馈；release 签名与 `--split-per-abi`（36.4 MB / arm64） |
+| 2026-11-27 | 舱首页改主 chat（原型方案 A）：点进舱直接到 `cabins.main_session_id`，汐音 WebP 立在聊天面板后、底缘淡出；右上角「☰ 编队」= 待你定 / 会话 / 任务；删掉「汐音 · 待命 IDLE」动作标签；舱会话切 `/api/agent`（旧 `chat/sessions` 域在舱里没有行），TUI 增系统行；测试 73 passed |

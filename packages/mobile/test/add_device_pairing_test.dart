@@ -132,19 +132,19 @@ void main() {
     await server.close();
   });
 
-  testWidgets('没有令牌：探活 → 401 → 展开配对卡 → 6 位码换令牌 → 进设备页', (tester) async {
+  testWidgets('没填配对码：探活 401 → 提示补配对码 → 填码连接 → 进设备页', (tester) async {
     final harness = await _pumpApp(tester);
 
     await tester.enterText(find.byType(TextField).at(0), server.baseUrl);
     await tester.tap(find.text('连 接'));
     await tester.pump();
 
-    // 401 之后出现配对卡。
-    await _waitFor(tester, find.text('需要配对码'));
+    // 401 之后把配对码框标出来。
+    await _waitFor(tester, find.textContaining('这台电脑开了设备令牌'));
     expect(harness.container.read(appStateProvider).devices, isEmpty);
 
     await tester.enterText(find.byType(TextField).at(2), '246810');
-    await tester.tap(find.text('配对并连接'));
+    await tester.tap(find.text('连 接'));
     await tester.pump();
 
     await _waitFor(tester, find.text('设备页'));
@@ -159,16 +159,12 @@ void main() {
     expect(harness.tokens.tokenFor(state.devices.single.id), server.token);
   });
 
-  testWidgets('配对码不对：留在配对卡，把服务端的话原样显示', (tester) async {
+  testWidgets('配对码不对：把服务端的话原样显示', (tester) async {
     final harness = await _pumpApp(tester);
 
     await tester.enterText(find.byType(TextField).at(0), server.baseUrl);
-    await tester.tap(find.text('连 接'));
-    await tester.pump();
-    await _waitFor(tester, find.text('需要配对码'));
-
     await tester.enterText(find.byType(TextField).at(2), '111111');
-    await tester.tap(find.text('配对并连接'));
+    await tester.tap(find.text('连 接'));
     await tester.pump();
 
     await _waitFor(tester, find.text('配对码不对'));
@@ -176,17 +172,16 @@ void main() {
     expect(harness.container.read(appStateProvider).currentToken, isNull);
   });
 
-  testWidgets('已有令牌：粘贴后直接配对，后续请求都带 Bearer', (tester) async {
+  testWidgets('已有令牌：粘贴后直接连接，后续请求都带 Bearer', (tester) async {
     final harness = await _pumpApp(tester);
 
     await tester.enterText(find.byType(TextField).at(0), server.baseUrl);
-    await tester.tap(find.text('连 接'));
+    await tester.tap(find.textContaining('直接粘贴令牌'));
     await tester.pump();
-    await _waitFor(tester, find.text('需要配对码'));
 
-    // 配对卡第二个输入框是令牌。
+    // 展开后的第四个输入框是令牌。
     await tester.enterText(find.byType(TextField).at(3), server.token);
-    await tester.tap(find.text('配对并连接'));
+    await tester.tap(find.text('连 接'));
     await tester.pump();
 
     await _waitFor(tester, find.text('设备页'));
