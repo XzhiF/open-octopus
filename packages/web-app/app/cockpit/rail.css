@@ -139,6 +139,28 @@
   background: rgba(46, 230, 214, 0.12);
 }
 
+/* v23（2026-11-27 用户）：编队头「新会话」—— 与「全部 →」同形，天蓝描边；
+   发第一条消息才创建会话，不占汐音的回合。紧贴「全部」左边。 */
+.ck12-fr-new {
+  height: 20px;
+  padding: 0 5px;
+  clip-path: polygon(4px 0, 100% 0, calc(100% - 4px) 100%, 0 100%);
+  border: 1px solid rgba(185, 179, 217, 0.25);
+  color: var(--ck12-ink2);
+  font-size: 8.5px;
+  font-weight: 800;
+  letter-spacing: 0;
+  white-space: nowrap;
+  background: transparent;
+  cursor: pointer;
+  transition: 0.13s;
+}
+.ck12-fr-new:hover {
+  color: #fff;
+  border-color: var(--ck12-sky);
+  background: rgba(53, 199, 240, 0.12);
+}
+
 /* ── 摘要行 ── */
 .ck12-fr-sub {
   flex: none;
@@ -605,6 +627,7 @@
   .ck12-fr-mark,
   .ck12-rail-h-label span,
   .ck12-fr-all,
+  .ck12-fr-new,
   .ck12-fr-sub,
   .ck12-fr-sp { display: none; }
   .ck12-rail-h-label::before {
@@ -671,6 +694,7 @@
   .ck12-fr-mark,
   .ck12-rail-h-label span,
   .ck12-fr-all,
+  .ck12-fr-new,
   .ck12-fr-sub,
   .ck12-fr-sp { display: revert; }
   .ck12-rail-h-label::before { content: none; }

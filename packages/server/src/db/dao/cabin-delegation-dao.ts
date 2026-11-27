@@ -18,11 +18,11 @@ export class CabinDelegationDAO extends BaseDAO {
     this.stmt(`
       INSERT INTO cabin_delegations
         (id, cabin_id, title, intent_text, brief, autonomy, state,
-         doer_session_id, result_summary, created_at, updated_at, ended_at, archived_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+         origin, doer_session_id, result_summary, created_at, updated_at, ended_at, archived_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `).run(
       row.id, row.cabin_id, row.title, row.intent_text, row.brief, row.autonomy,
-      row.state, row.doer_session_id, row.result_summary,
+      row.state, row.origin, row.doer_session_id, row.result_summary,
       row.created_at, row.updated_at, row.ended_at, row.archived_at,
     )
   }

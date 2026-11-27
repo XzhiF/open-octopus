@@ -196,3 +196,15 @@ describe("deriveCabinView", () => {
     expect(v.attention.some(a => a.id === "delegation-ask-d1")).toBe(true)
   })
 })
+describe("deriveCabinView · 用户自开会话（origin=user）", () => {
+  it("不产待办：done 不发完成回执、waiting_input 也不出 ask", () => {
+    const v = deriveCabinView(base({
+      delegations: [
+        { id: "u1", title: "整理阈值", state: "done", origin: "user", handle: "D1" },
+        { id: "u2", title: "还在跑", state: "waiting_input", origin: "user", handle: "D2" },
+        { id: "d1", title: "汐音的", state: "done", handle: "D3" },
+      ],
+    }))
+    expect(v.attention.map((a) => a.id)).toEqual(["done-delegation-d1"])
+  })
+})

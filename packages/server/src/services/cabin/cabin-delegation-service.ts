@@ -12,10 +12,11 @@
 import { randomUUID } from "crypto"
 import type { CabinDAO } from "../../db/dao/cabin-dao"
 import type { CabinDelegationDAO } from "../../db/dao/cabin-delegation-dao"
-import type { CabinDelegationRow, CabinDelegationState } from "../../db/types"
+import type { CabinDelegationRow, CabinDelegationState, CabinDelegationOrigin } from "../../db/types"
 import type { CabinService } from "./cabin-service"
 import type { CabinCommService } from "./cabin-comm-service"
 import { getSessionService } from "../agent/session-service"
+import { isStreamActive } from "../agent/agent-service"
 import { briefLines, normalizeBrief, type CabinBriefInput, type NormalizedBrief } from "./cabin-brief"
 
 const now = () => new Date().toISOString()
@@ -41,6 +42,8 @@ export interface DelegateInput {
   autonomy?: "approve" | "checkpoint" | "hands-off"
   /** 只登记不唤醒（测试 / 导入路径）。 */
   noWake?: boolean
+  /** 缺省 xiyin；用户自开会话走 registerUserSession。 */
+  origin?: CabinDelegationOrigin
 }
 
 export class CabinDelegationService {
@@ -61,7 +64,21 @@ export class CabinDelegationService {
   }
 
   list(cabinId: string): CabinDelegationRow[] {
-    return this.deps.delegations.listByCabin(cabinId)
+    const rows = this.deps.delegations.listByCabin(cabinId)
+    // 人自开会话（2026-11-27 用户）：标题跟会话自动起名走；占位「新会话」不覆盖
+    // 登记时的标题。只影响读侧展示，不改账本。
+    if (!rows.some((row) => row.origin === "user" && row.doer_session_id)) return rows
+    try {
+      const stmt = this.deps.cabin.getDb().prepare("SELECT title FROM sessions WHERE id = ?")
+      return rows.map((row) => {
+        if (row.origin !== "user" || !row.doer_session_id) return row
+        const session = stmt.get(row.doer_session_id) as { title?: string | null } | undefined
+        const title = session?.title && session.title !== "新会话" ? session.title : null
+        return title && title !== row.title ? { ...row, title } : row
+      })
+    } catch {
+      return rows
+    }
   }
 
   get(id: string): CabinDelegationRow | undefined {
@@ -91,6 +108,7 @@ export class CabinDelegationService {
       brief: brief ? JSON.stringify(brief) : null,
       autonomy,
       state: "running",
+      origin: input.origin ?? "xiyin",
       doer_session_id: session.id,
       result_summary: null,
       created_at: ts,
@@ -110,6 +128,60 @@ export class CabinDelegationService {
     if (!input.noWake) {
       void this.deps.comm.wakeSessionPublic(session.id, cabin.org ?? "", this.wakeMessage(row, brief, intent))
     }
+    return row
+  }
+
+  /**
+   * 用户自开会话（2026-11-27 用户）：人在编队里点「新会话」建好 AgentSession
+   * 之后登记进来 —— 与汐音委派同一张表、同一套状态机，只差 origin 和几条分支：
+   *   · 没有任务书（brief=null）、不唤醒（第一条消息是人自己发的）；
+   *   · 回合结束落「待命」（done），不产「委派在问你」待办、不发完成回执；
+   *   · 汐音可以把活发进这条会话（cabin_send_to_session）。
+   * 同一会话幂等：重复登记返回原行。
+   */
+  registerUserSession(cabinId: string, input: {
+    sessionId: string
+    title?: string | null
+    intent?: string | null
+  }): CabinDelegationRow {
+    this.mustCabin(cabinId)
+    const existing = this.deps.delegations.findByDoerSession(input.sessionId)
+    if (existing) {
+      if (existing.cabin_id !== cabinId) throw new Error("会话已登记在另一个舱")
+      return existing
+    }
+    const title = (input.title ?? "").trim() || "会话"
+    const ts = now()
+    const row: CabinDelegationRow = {
+      id: randomUUID(),
+      cabin_id: cabinId,
+      title,
+      intent_text: (input.intent ?? "").trim() || title,
+      brief: null,
+      autonomy: "checkpoint",
+      // 首轮可能已经开始（客户端先建会话、发第一条消息，再登记）：
+      // 在跑 = 作战中，已经收轮 = 待命；不猜成永久 running。
+      state: isStreamActive(input.sessionId) ? "running" : "done",
+      origin: "user",
+      doer_session_id: input.sessionId,
+      result_summary: null,
+      created_at: ts,
+      updated_at: ts,
+      ended_at: null,
+      archived_at: null,
+    }
+    this.deps.delegations.insert(row)
+    try {
+      // 归属舱 + 占位标题换成可读标题；真人 / 自动起好的标题不覆盖。
+      this.deps.cabin.getDb().prepare(
+        `UPDATE sessions SET cabin_id = ?,
+           title = CASE WHEN title IS NULL OR title = '' OR title = '新会话' THEN ? ELSE title END,
+           updated_at = ?
+         WHERE id = ?`,
+      ).run(cabinId, title, ts, input.sessionId)
+    } catch { /* session columns best effort */ }
+    this.appendAudit(cabinId, row, "register", { origin: "user" })
+    try { this.deps.service.notifyViewChanged(cabinId) } catch { /* view hook optional */ }
     return row
   }
 
@@ -163,6 +235,8 @@ export class CabinDelegationService {
   markWaitingInput(id: string): void {
     const row = this.deps.delegations.getById(id)
     if (!row || row.archived_at) return
+    // 用户自开会话回合结束落「待命」（markIdle），不是「等你答」。
+    if (row.origin === "user") return
     if (row.state === "done" || row.state === "failed" || row.state === "cancelled") return
     this.deps.delegations.updateState(id, "waiting_input")
     try { this.deps.service.notifyViewChanged(row.cabin_id) } catch { /* view hook optional */ }
@@ -171,10 +245,21 @@ export class CabinDelegationService {
   markRunning(id: string): void {
     const row = this.deps.delegations.getById(id)
     if (!row || row.archived_at) return
-    if (row.state === "waiting_input") {
-      this.deps.delegations.updateState(id, "running")
-      try { this.deps.service.notifyViewChanged(row.cabin_id) } catch { /* view hook optional */ }
-    }
+    // 汐音委派从「等你答」续跑；用户自开会话从「待命」开始下一轮。
+    const canResume = row.state === "waiting_input"
+      || (row.origin === "user" && row.state === "done")
+    if (!canResume) return
+    this.deps.delegations.updateState(id, "running")
+    try { this.deps.service.notifyViewChanged(row.cabin_id) } catch { /* view hook optional */ }
+  }
+
+  /** 用户自开会话的回合收尾：回到「待命」（done）。没人等它答话，不产待办。 */
+  markIdle(id: string): void {
+    const row = this.deps.delegations.getById(id)
+    if (!row || row.archived_at || row.origin !== "user") return
+    if (row.state !== "running") return
+    this.deps.delegations.updateState(id, "done")
+    try { this.deps.service.notifyViewChanged(row.cabin_id) } catch { /* view hook optional */ }
   }
 
   /**
@@ -229,7 +314,9 @@ export class CabinDelegationService {
     for (const cabin of this.deps.cabin.list()) {
       for (const delegation of this.list(cabin.id)) {
         if (delegation.state !== "running") continue
-        this.markWaitingInput(delegation.id)
+        // 用户自开会话没有「等人答」—— 残留 running 回到「待命」。
+        if (delegation.origin === "user") this.markIdle(delegation.id)
+        else this.markWaitingInput(delegation.id)
         repaired += 1
       }
     }

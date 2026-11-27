@@ -37,7 +37,7 @@ import { taskDisplayStatus } from '@/components/cabin/modules/ui'
 import { jobStatusLabel } from '@/components/cabin/job-status'
 import { useCockpitState } from '../state/CockpitStateProvider'
 import { useCockpitThreads } from '../chat/use-cockpit-threads'
-import { openFleetChat } from '../chat/open-fleet-window'
+import { openFleetChat, openNewSessionWindow } from '../chat/open-fleet-window'
 import { attentionStageLabel } from '../fx/CockpitBrief'
 
 const RAIL_LAYER_PRIORITY = 70
@@ -66,7 +66,9 @@ function glyphOf(row: CockpitRow): string {
 }
 
 function rowRef(row: CockpitRow): CockpitRef | null {
-  if (row.kind === 'job') return { kind: 'job', cabinId: row.cabinId, id: row.job.id }
+  if (row.kind === 'job') {
+    return { kind: 'job', cabinId: row.cabinId, id: row.job.id }
+  }
   if (row.kind === 'task') return { kind: 'task', cabinId: row.cabinId, id: row.task.id }
   if (row.kind === 'delegation') return { kind: 'delegation', cabinId: row.cabinId, id: row.delegation.id }
   if (row.kind === 'attention') return { kind: 'attention', cabinId: row.cabinId, id: row.item.id }
@@ -94,7 +96,9 @@ function subOf(row: CockpitRow, status: FleetStatus): string {
     : null
   if (row.kind === 'delegation') {
     const delegation: CabinDelegationView = row.delegation
-    return [project, `委派 ${delegation.handle ?? ''}`.trim()].filter(Boolean).join(' · ')
+    // 同一本账，只差创建者：人自开的写「会话」，汐音派的写「委派」。
+    const label = delegation.origin === 'user' ? '会话' : '委派'
+    return [project, `${label} ${delegation.handle ?? ''}`.trim()].filter(Boolean).join(' · ')
   }
   if (row.kind === 'job' && row.attention) {
     return [project, attentionStageLabel(row.attention)].filter(Boolean).join(' · ')
@@ -222,9 +226,11 @@ export function CockpitFleetRail() {
   const queueCount = visible.filter((row) => fleetStatusOf(row) === 'queue').length
   const archivedCount = visible.filter((row) => fleetStatusOf(row) === 'archived').length
 
-  /** v22 #5：行体 / 💬 = 这条作战的独立 chat 窗；没有会话的行退回详情。 */
+  /** v22 #5：行体 / 💬 = 这条作战的独立 chat 窗；没有会话的行退回详情。
+   *  2026-11-27：人自开会话就是 delegation 行 —— 有 doer 会话，走同一扇窗入口。 */
   const openChat = (row: CockpitRow) => {
-    if (byKey.has(row.key)) { openFleetChat(wins, threadApi, row.key, chatWindow); return }
+    const thread = byKey.get(row.key)
+    if (thread) { openFleetChat(wins, threadApi, row.key, chatWindow, thread.sessionId); return }
     const ref = rowRef(row)
     if (ref) select(ref)
   }
@@ -233,6 +239,10 @@ export function CockpitFleetRail() {
     const ref = rowRef(row)
     if (ref) select(ref, onArchiveGate(row) ? 'archive' : defaultTabForRef(ref))
   }
+
+  /** v23（2026-11-27 用户）：编队「新会话」—— 空白草稿窗，发第一条消息才创建会话，
+   *  不占汐音的回合，也不会有上下文串味。 */
+  const openNewSession = () => { openNewSessionWindow(wins, chatWindow) }
 
   // ── 新行 pop：arrivals 命中的 attention + 首次出现的 key，900ms 后收 ──
   const seenKeysRef = useRef<Set<string> | null>(null)
@@ -355,6 +365,15 @@ export function CockpitFleetRail() {
         <span className="ck12-fr-sp" />
         <button
           type="button"
+          className="ck12-fr-new"
+          title="新建会话 · 发第一条消息才创建，不占汐音"
+          data-testid="cockpit-fleet-new"
+          onClick={openNewSession}
+        >
+          新会话
+        </button>
+        <button
+          type="button"
           className="ck12-fr-all"
           title={fleetOpen ? '收起编队列表' : '展开全部编队'}
           data-testid="cockpit-fleet-all"
@@ -422,15 +441,31 @@ export function CockpitFleetRail() {
           const rawStatus = rawStatusOf(row)
           const archGate = onArchiveGate(row)
           const pct = rawStatus === 'awaiting_archive' ? null : pctOf(row)
-          const startedAt = live ? startedAtOf(row) : null
+          // 人自开的会话生命周期很长（created_at 是会话始建时间）——本轮起跑时刻
+          // 用 running 那一次写入的 updated_at，不拿会话年龄冒充本轮耗时。
+          const startedAt = !live
+            ? null
+            : row.kind === 'delegation' && row.delegation.origin === 'user'
+              ? (() => {
+                const at = Date.parse(row.delegation.updated_at)
+                return Number.isNaN(at) ? null : at
+              })()
+              : startedAtOf(row)
           const backgroundWait = live && row.kind === 'job' && row.live_phase === 'background-wait'
-          const liveText = live ? (backgroundWait ? '作者在等后台' : '作者在跑') : null
+          const liveText = live
+            ? (backgroundWait
+              ? '作者在等后台'
+              : row.kind === 'delegation' && row.delegation.origin === 'user' ? '会话在跑' : '作者在跑')
+            : null
           const endedStage = stage === 'done' || stage === 'archived'
           const statusText = statusTextOf(row, stage)
           const accent = accentOfRow(row)
           const title = titleOf(row)
+          const delegationSessionId = row.kind === 'delegation' ? row.delegation.doer_session_id : null
           const talkable = byKey.has(row.key)
-          const chatOpen = wins.windows.some((win) => win.threadKey === row.key && !win.min)
+          const chatOpen = wins.windows.some((win) => !win.min && (
+            win.threadKey === row.key || (!!delegationSessionId && win.sessionId === delegationSessionId)
+          ))
           const unread = threadApi.unread[row.key] ?? 0
           const showActs = talkable || !!ref
           return (

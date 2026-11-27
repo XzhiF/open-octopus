@@ -129,8 +129,8 @@ export function CockpitStateProvider({ entryCabinId, children }: CockpitStatePro
   // ── selection / tab ────────────────────────────────────────────────
   const select = useCallback((ref: CockpitRef | null, nextTab?: CockpitTab, source: CockpitSelectSource = 'fleet') => {
     setSelection((current) => (sameCockpitRef(current, ref) ? current : ref))
-    // 2026-11-25：会话（delegation）没指定页签时落「对接」—— 它没有「运行」首签，
-    // 留在上一个任务的页签会出现「选中签不在页签栏里」的空白面。
+    // 2026-11-25：会话（delegation，含人自开会话）没指定页签时落「对接」——
+    // 它没有「运行」首签，留在上一个任务的页签会出现「选中签不在页签栏里」的空白面。
     if (nextTab) setTabState(nextTab)
     else if (ref?.kind === 'delegation') setTabState(defaultTabForRef(ref))
     // 收面回默认页签：?tab=relay 这类非默认签不跟到下一件作业 / URL 里。
@@ -198,21 +198,59 @@ export function CockpitStateProvider({ entryCabinId, children }: CockpitStatePro
   )
 
   // ── v20 弹出窗（design 29 §4）────────────────────────────────────────
-  const openWindow = useCallback((threadKey: string, rect: CockpitPopWin['rect']): boolean => {
-    const hit = windows.find((w) => w.threadKey === threadKey)
+  /** 聚焦一扇已有的窗：恢复最小化 + 广播置顶（z 由窗自己 bump）。 */
+  const focusWindow = useCallback((id: string) => {
+    setWindows((prev) => prev.map((w) => (w.id === id && w.min ? { ...w, min: false } : w)))
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('octopus:cockpit-win-focus', { detail: { id } }))
+    }
+  }, [])
+
+  const openWindow = useCallback((threadKey: string, rect: CockpitPopWin['rect'], sessionId?: string | null): boolean => {
+    // 同线程窗命中；「新会话」草稿窗绑定的正式会话（threadKey 仍为 null）按会话 id 命中。
+    const hit = windows.find((w) => w.threadKey === threadKey
+      || (!!sessionId && w.sessionId === sessionId))
     if (hit) {
       // 已存在：恢复 + 聚焦事件（z 由窗自己 bump），不新建。
-      if (hit.min) setWindows((prev) => prev.map((w) => (w.id === hit.id ? { ...w, min: false } : w)))
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('octopus:cockpit-win-focus', { detail: { id: hit.id } }))
-      }
+      focusWindow(hit.id)
       return true
     }
     if (windows.length >= COCKPIT_WIN_LIMIT) return false
     const id = `w${++winSeqRef.current}`
-    setWindows((prev) => (prev.length >= COCKPIT_WIN_LIMIT ? prev : [...prev, { id, threadKey, rect, min: false }]))
+    setWindows((prev) => (prev.length >= COCKPIT_WIN_LIMIT
+      ? prev
+      : [...prev, { id, threadKey, sessionId: null, title: '', rect, min: false }]))
     return true
-  }, [windows])
+  }, [windows, focusWindow])
+
+  /** v23：新会话草稿窗 —— 同时只留一扇没发消息的草稿（再点「新会话」= 聚焦它）。 */
+  const openDraftWindow = useCallback((rect: CockpitPopWin['rect']): boolean => {
+    const hit = windows.find((w) => w.threadKey === null && w.sessionId === null)
+    if (hit) {
+      focusWindow(hit.id)
+      return true
+    }
+    if (windows.length >= COCKPIT_WIN_LIMIT) return false
+    const id = `w${++winSeqRef.current}`
+    setWindows((prev) => (prev.length >= COCKPIT_WIN_LIMIT
+      ? prev
+      : [...prev, { id, threadKey: null, sessionId: null, title: '新会话', rect, min: false }]))
+    return true
+  }, [windows, focusWindow])
+
+  /** 草稿 → 正式会话：只改数据，不动窗口 id / DOM（ChatPane 原样留在原地）。
+   *  编队行由服务端委派账本提供（POST /cabins/:id/delegations/register）。 */
+  const bindSession = useCallback((winId: string, sessionId: string, title: string) => {
+    setWindows((prev) => prev.map((w) => (
+      w.id === winId
+        ? { ...w, sessionId, title: w.title && w.title !== '新会话' ? w.title : title }
+        : w
+    )))
+  }, [])
+
+  const renameWindow = useCallback((winId: string, title: string) => {
+    setWindows((prev) => prev.map((w) => (w.id === winId ? { ...w, title } : w)))
+  }, [])
 
   const closeWindow = useCallback((id: string) => {
     setWindows((prev) => prev.filter((w) => w.id !== id))
@@ -230,8 +268,20 @@ export function CockpitStateProvider({ entryCabinId, children }: CockpitStatePro
   }, [])
 
   const wins = useMemo<CockpitWindowsApi>(
-    () => ({ windows, openWindow, closeWindow, setWindowMin, patchWindowRect }),
-    [windows, openWindow, closeWindow, setWindowMin, patchWindowRect],
+    () => ({
+      windows,
+      openWindow,
+      openDraftWindow,
+      bindSession,
+      renameWindow,
+      closeWindow,
+      setWindowMin,
+      patchWindowRect,
+    }),
+    [
+      windows, openWindow, openDraftWindow, bindSession, renameWindow,
+      closeWindow, setWindowMin, patchWindowRect,
+    ],
   )
 
   // ── v20 模态面板 / 回传 flash ────────────────────────────────────────
@@ -448,7 +498,8 @@ export function CockpitStateProvider({ entryCabinId, children }: CockpitStatePro
       entryCabinId, selection, tab, detailSource, select, setTab, projectFilter, setProjectFilter,
       chat, reportChat, chatWindow,
       railOpen, setRailOpen,
-      threads, wins, panel, panelArg, openPanel, closePanel, flash, markArrival,
+      threads, wins,
+      panel, panelArg, openPanel, closePanel, flash, markArrival,
       inboxOpen, inboxSel, openInbox, closeInbox, selectInbox,
       activityOpen, activitySel, openActivity, closeActivity, selectActivity,
       pose, clip, reportPose, autoWarp,

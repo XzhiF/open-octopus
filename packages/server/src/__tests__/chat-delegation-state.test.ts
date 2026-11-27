@@ -104,6 +104,7 @@ function insertDelegation(delegationId: string, doerSessionId: string) {
     brief: null,
     autonomy: "checkpoint",
     state: "running",
+    origin: "xiyin",
     doer_session_id: doerSessionId,
     result_summary: null,
     created_at: now,

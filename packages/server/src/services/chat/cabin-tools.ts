@@ -79,6 +79,12 @@ export function buildCabinSummaryReminder(
       `${w.handle} ${w.title}  ${workStatusLabel(w.status, w.kind)}`,
     )
 
+    // 人自开的会话（2026-11-27 用户）：与汐音委派同一本账（origin=user），
+    // 单独列给汐音 —— 她可以用 cabin_send_to_session 把活发进这些会话。
+    const userSessions = works.filter((w) => (
+      w.kind === "delegation" && w.origin === "user" && w.status !== "archived"
+    ))
+
     // 决策：待人答 vs 已答待转达（后者是汐音这回合必须处理的事）。
     const pendingDecisions = decisions?.pendingRelays(cabinId) ?? []
     const recentRelayed = (decisions?.listDecisions(cabinId) ?? [])
@@ -90,6 +96,12 @@ export function buildCabinSummaryReminder(
     const lines = [
       `[编队] ${cabin.name} · ${cabin.status} · 运行 ${view.health.running} · 待你 ${view.attention.length}`,
       ...(fleetLines.length ? fleetLines : ["（本舱还没有工作实体）"]),
+      ...(userSessions.length
+        ? [
+          "用户自开的会话（把活发进去用 cabin_send_to_session）：",
+          ...userSessions.slice(0, 6).map((w) => `${w.id} ${w.title}`),
+        ]
+        : []),
       ...(attentionLines.length ? ["需要你/我在处理：", ...attentionLines] : []),
       ...(pendingAsks.length
         ? ["待你拍板：", ...pendingAsks.slice(0, 6).map((a) => `${a.handle ?? ""}${a.title} · ask=${a.askId}`)]
@@ -455,6 +467,48 @@ export function createCabinToolServer(cabinId: string) {
       },
     ),
     tool(
+      "cabin_send_to_session",
+      "把一件活发进舱内已有的、用户自己开的会话（会话里多一轮，用户能在会话里看到）。target = 这条会话的委派 id 或 session_id（摘要里的「用户自开的会话」段）。只支持 origin=user 的会话；汐音自己的委派不用这个 —— 直接回它。",
+      {
+        target: z.string().min(1).describe("用户自开会话的委派 id 或会话 id"),
+        message: z.string().min(1).describe("要发进这条会话的内容（一件活 / 一个请求）"),
+      },
+      async (input) => {
+        const { service, comm } = must()
+        const works = service.listWorkView(cabinId)
+        const work = works.find((w) => (
+          w.kind === "delegation" && (w.id === input.target || w.session_id === input.target)
+        ))
+        if (!work || work.origin !== "user" || !work.session_id) {
+          return { content: [{ type: "text" as const, text: JSON.stringify({
+            status: "failed",
+            error: "找不到可发消息的会话（只支持用户自开会话；用摘要里的委派 id / session_id）",
+          }) }] }
+        }
+        if (work.status === "archived") {
+          return { content: [{ type: "text" as const, text: JSON.stringify({
+            status: "failed", error: "会话已归档，不能再派活",
+          }) }] }
+        }
+        const org = service.getView(cabinId).cabin.org ?? ""
+        // 审计留痕 + 真发进会话：同一本账，事件挂在委派 id 上（作战详情「对接」可见）。
+        try {
+          service.appendEvent(work.id, cabinId, "note", "orchestrator", {
+            summary: `[汐音 → 会话] ${input.message}`,
+          })
+        } catch { /* 审计尽力而为 */ }
+        await comm.wakeSessionPublic(
+          work.session_id,
+          org,
+          `[汐音 · 派活] ${input.message}\n\n这是舱调度者转达的任务；做完在会话里给结论。`,
+        )
+        return { content: [{ type: "text" as const, text: JSON.stringify({
+          status: "sent", delegation_id: work.id, session_id: work.session_id,
+          title: work.title, handle: work.handle,
+        }) }] }
+      },
+    ),
+    tool(
       "cabin_resume_job",
       "恢复作业：task 草稿 → 入列并触发、ready → 触发、运行中暂停 → 恢复；其余只留痕。gate 缺项会原样报错，不会假装已启动。",
       { job_id: z.string().min(1) },
@@ -496,7 +550,7 @@ export function createCabinToolServer(cabinId: string) {
     name: "octopus-cabin",
     version: "1.1.0",
     instructions:
-      "舱主的调度工具集（自己动手用通用的 Read/Edit/Bash，不在这里）。派发=建真实任务（执行在 doer/worktree）；轻活=独立委派（无 phase/验收、有归档闸）；决策用 cabin_relay_decision 代述，逐字不改。监督读派生视图；一次只问人一个结构化问题。完成回流先审一道：需要人回复就 AskUserQuestion，不需要就一句提示 + cabin_ack_attention 收项（不回复执行者）。会话跑完只是「待命」，归档由你管：用户说归档（或你判断该收口）时，可先通读会话做反思、用 octo-wiki 技能落沉淀，再调 cabin_delegation_archive；不沉淀也能直接归档。直接改了任务 home 或范围变更后，用 cabin_note_job 留痕，不要让它只存在于主对话。事项投递的正文若被截断或需要逐字原文，用 cabin_list_items / cabin_get_item 回读，不要凭标题猜需求。事项关项 / 重开用 cabin_set_item_status：用户明确说「关掉 / 完成 / 搁置 / 重开」时才改，投递后只是处理完、用户还没表态就先汇报，等人确认。",
+      "舱主的调度工具集（自己动手用通用的 Read/Edit/Bash，不在这里）。派发=建真实任务（执行在 doer/worktree）；轻活=独立委派（无 phase/验收、有归档闸）；用户自己开的会话（origin=user，与你的委派同一本账、同一套状态机）要派活时，用 cabin_send_to_session 发进那条已有会话（会话里多一轮、用户可见），不要为它另开委派。决策用 cabin_relay_decision 代述，逐字不改。监督读派生视图；一次只问人一个结构化问题。完成回流先审一道：需要人回复就 AskUserQuestion，不需要就一句提示 + cabin_ack_attention 收项（不回复执行者）。会话跑完只是「待命」，归档由你管：用户说归档（或你判断该收口）时，可先通读会话做反思、用 octo-wiki 技能落沉淀，再调 cabin_delegation_archive；不沉淀也能直接归档。直接改了任务 home 或范围变更后，用 cabin_note_job 留痕，不要让它只存在于主对话。事项投递的正文若被截断或需要逐字原文，用 cabin_list_items / cabin_get_item 回读，不要凭标题猜需求。事项关项 / 重开用 cabin_set_item_status：用户明确说「关掉 / 完成 / 搁置 / 重开」时才改，投递后只是处理完、用户还没表态就先汇报，等人确认。",
     tools,
     alwaysLoad: true,
   })

@@ -78,6 +78,9 @@ export interface DeriveDelegationInput {
   summary?: string | null
   /** 归档时间（2026-11-25 用户）：有值 = 已归档，不再产任何 attention。 */
   archived_at?: string | null
+  /** 会话创建者（2026-11-27 用户）：user = 人自开的会话 —— 回合结束只是「待命」，
+   *  不产「委派在问你」/「已完成」回执。 */
+  origin?: "xiyin" | "user"
   /** 派生句柄：`D1`。由调用方按创建顺序分配。 */
   handle?: string
   color?: number
@@ -264,6 +267,9 @@ export function deriveCabinView(input: DeriveCabinInput): DerivedCabinView {
   // 2026-11-25 用户：已归档的委派整条闭嘴 —— 归档是终态，不再回流任何待办。
   for (const d of delegations) {
     if (d.archived_at) continue
+    // 2026-11-27 用户：自开会话不产待办 —— 人刚在会话里说完话，没人「在问你」；
+    // 待命也不发「已完成」回执（那是「替我跑一趟」的语义）。
+    if (d.origin === "user") continue
     const subject = {
       subject: { kind: "delegation" as const, id: d.id },
       ...(d.handle ? { handle: d.handle } : {}),

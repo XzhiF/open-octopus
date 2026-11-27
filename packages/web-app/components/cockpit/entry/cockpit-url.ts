@@ -54,7 +54,7 @@ export function parseCockpitUrl(
   const task = cleanId(params.get('task'))
   if (task) return { ref: { kind: 'task', cabinId: ownerCabinId, id: task }, tab }
 
-  // 会话（delegation）详情：?delegation=<id>（2026-11-25）。
+  // 会话（delegation）详情：?delegation=<id>（2026-11-25；人自开会话同一条路径）。
   const delegation = cleanId(params.get('delegation'))
   if (delegation) return { ref: { kind: 'delegation', cabinId: ownerCabinId, id: delegation }, tab }
 

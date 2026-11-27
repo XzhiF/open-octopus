@@ -121,7 +121,8 @@ function threadOfRow(row: CockpitRow): CockpitThread | null {
       title: row.delegation.title,
       short: shortOf(row.delegation.handle ?? row.delegation.title),
       state: threadStateOf(row),
-      identity: '执行者 · task-doer',
+      // 人自开的会话：窗里就是本人直接对话；汐音委派才是「执行者」。
+      identity: row.delegation.origin === 'user' ? '本人 · 直接对话' : '执行者 · task-doer',
       ref: { kind: 'delegation', cabinId: row.cabinId, id: row.delegation.id },
       accent: accentOfRow(row),
     }
@@ -196,7 +197,7 @@ export function isThreadVisible(
   key: string,
   view: {
     chatWindow: { open: boolean; mini: boolean; docked: boolean }
-    windows: readonly { threadKey: string; min: boolean }[]
+    windows: readonly { threadKey: string | null; min: boolean }[]
   },
 ): boolean {
   if (key === MAIN_THREAD_KEY && view.chatWindow.open && !view.chatWindow.mini && !view.chatWindow.docked) {

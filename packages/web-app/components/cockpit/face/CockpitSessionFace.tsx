@@ -2,9 +2,10 @@
 
 // 会话详情面（2026-11-25 用户；原型 docs/cabin-design/cockpit-v22.html 的 chat 会话面）。
 //
-// 会话 = cabin_delegations 的 doer 会话（舱内三样之一：任务 / 会话 / 待你决定）。
+// 会话 = cabin_delegations（汐音委派与人自开同一本账，origin 区分创建者）。
 // 它没有任务口径的变更 / 验收 / 归档 / 项目 —— 基础页签固定六项：
-//   · 对接   —— 委派任务书（意图 / brief / 托管）+ 结论（执行者 → 汐音 → 你）；
+//   · 对接   —— 任务书（意图 / brief / 托管）+ 结论（执行者 → 汐音 → 你）；
+//               人自开的会话没有任务书，只有第一条原话；
 //   · 文件   —— 本舱 cwd 只读目录树（会话没有专属 worktree，文件就是舱里的文件）；
 //   · 运行   —— 会话状态 + 回合读数（调试轮次：模型 / 状态 / 时长 / token）；
 //   · 调试   —— per-turn SDK inspector（与作业面同一份）；
@@ -110,8 +111,8 @@ function useSessionTurns(sessionId: string | null): { turns: TurnDebugSummary[];
 
 export interface CockpitSessionFaceProps {
   cabinId: string
-  /** 编队行里的委派实体；null = 还没接上（先画载入头）。 */
-  delegation: CabinDelegationView | null
+  /** 编队行里的会话实体；null = 还没接上（先画载入头）。 */
+  delegation?: CabinDelegationView | null
   cabinName?: string | null
   tab: CockpitTab
   onTabChange(tab: CockpitTab): void
@@ -122,7 +123,7 @@ export interface CockpitSessionFaceProps {
 
 export function CockpitSessionFace({
   cabinId,
-  delegation,
+  delegation = null,
   cabinName,
   tab,
   onTabChange,
@@ -147,6 +148,9 @@ export function CockpitSessionFace({
   }
 
   const brief = briefOf(delegation.brief)
+  const title = delegation.title
+  const createdAt = delegation.created_at
+  const endedAt = delegation.ended_at
   const status = headStatusOf(delegation)
   const statusText = delegationStatusLabel(delegation)
   const sessionShort = shortId(sessionId)
@@ -157,8 +161,9 @@ export function CockpitSessionFace({
       {activeTab === 'relay' && (
         <div data-testid="cockpit-session-relay" className="ck12-tab">
           <div className="ck12-pnote">
-            会话对接 = 派给它的任务书 + 它交回的结论；执行者的过程回报先到汐音，
-            这里只留关键三跳。
+            {delegation.origin === 'user'
+              ? '这条会话是你自己开的 —— 与汐音委派同一本账；第一条原话在这里留档，过程在独立 chat 窗里。'
+              : '会话对接 = 派给它的任务书 + 它交回的结论；执行者的过程回报先到汐音，这里只留关键三跳。'}
           </div>
 
           <div className="ck12-kv">
@@ -266,7 +271,7 @@ export function CockpitSessionFace({
             </div>
             <div className="ck12-kvi">
               <div className="k">用时</div>
-              <div className="v"><CockpitElapsed start={delegation.created_at} end={delegation.ended_at} /></div>
+              <div className="v"><CockpitElapsed start={createdAt} end={endedAt} /></div>
             </div>
           </div>
 
@@ -333,12 +338,12 @@ export function CockpitSessionFace({
   return (
     <>
       <CockpitJobHeader
-        title={delegation.title}
+        title={title}
         status={status}
         onClose={onClose}
         subtitle={subtitle}
-        startedAt={delegation.created_at}
-        endedAt={delegation.ended_at}
+        startedAt={createdAt}
+        endedAt={endedAt}
         onOpenChat={onOpenChat ?? null}
       />
       <div className="ck12-face-body" data-testid="cockpit-face-session">

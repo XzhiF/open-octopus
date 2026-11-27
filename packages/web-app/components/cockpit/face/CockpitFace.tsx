@@ -118,10 +118,17 @@ export function CockpitFace({ entryCabinId }: CockpitFaceProps) {
     if (chatRow.kind === 'delegation') return chatRow.delegation.doer_session_id ? chatRow.key : null
     return null
   }, [chatRow])
+  const chatSessionId = useMemo(() => {
+    if (!chatRow) return null
+    if (chatRow.kind === 'job') return chatRow.job.session_id
+    if (chatRow.kind === 'task') return chatRow.task.doer_session_id ?? null
+    if (chatRow.kind === 'delegation') return chatRow.delegation.doer_session_id
+    return null
+  }, [chatRow])
   const openChat = useCallback(() => {
     if (!chatThreadKey) return
-    if (openFleetChat(wins, threadApi, chatThreadKey, chatWindow)) select(null)
-  }, [chatThreadKey, wins, threadApi, chatWindow, select])
+    if (openFleetChat(wins, threadApi, chatThreadKey, chatWindow, chatSessionId)) select(null)
+  }, [chatThreadKey, chatSessionId, wins, threadApi, chatWindow, select])
 
   // ── 窗口化（原型 .pwin / .pgrip / bindPanelWin）─────────────────────────
   const faceRef = useRef<HTMLDivElement | null>(null)

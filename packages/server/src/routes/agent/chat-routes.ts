@@ -587,19 +587,36 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     }
     // Cabin P3（C3）：舱主会话挂调度工具集（只调度不执行）。
     // design 25 §4.2：委派 doer 只挂「交结论」这一个工具，不能派任务 / 建任务。
-    // 2026-11-25 用户：这个 id 还要驱动委派状态机（回合开始=作战中，回合结束=等你答），
+    // 2026-11-27 用户：会话只有一本账（cabin_delegations）——
+    //   · 舱主会话 → 汐音调度工具集；
+    //   · 汐音委派的 doer（origin=xiyin）→ 只挂「交结论」；
+    //   · 人自开的会话（origin=user）→ 普通聊天，不挂舱工具（不能变成第二个调度者）。
+    // 这个 id 还要驱动委派状态机（回合开始=作战中，回合结束=待命/等你答），
     // 必须让下面的 streamSSE 闭包也看得到。
     let doerDelegationId: string | null = null
+    let doerDelegationOrigin: "xiyin" | "user" | null = null
     if (!thread && session.cabin_id && cabinProvider) {
       try {
         const row = sessionDao.getDb().prepare(
-          "SELECT id FROM cabin_delegations WHERE doer_session_id = ? LIMIT 1",
-        ).get(id) as { id?: string } | undefined
+          "SELECT id, origin FROM cabin_delegations WHERE doer_session_id = ? LIMIT 1",
+        ).get(id) as { id?: string; origin?: string } | undefined
         doerDelegationId = row?.id ?? null
+        doerDelegationOrigin = row ? (row.origin === "user" ? "user" : "xiyin") : null
       } catch { /* old DB without cabin_delegations — feature off */ }
-      toolServers[doerDelegationId ? 'octopus-cabin-doer' : 'octopus-cabin'] = doerDelegationId
-        ? createCabinDelegationToolServer(doerDelegationId)
-        : createCabinToolServer(session.cabin_id)
+      if (doerDelegationId) {
+        if (doerDelegationOrigin !== "user") {
+          toolServers['octopus-cabin-doer'] = createCabinDelegationToolServer(doerDelegationId)
+        }
+      } else {
+        let isCabinMain = false
+        try {
+          const cabinRow = sessionDao.getDb().prepare(
+            "SELECT main_session_id FROM cabins WHERE id = ?",
+          ).get(session.cabin_id) as { main_session_id?: string | null } | undefined
+          isCabinMain = cabinRow?.main_session_id === id
+        } catch { /* cabins 表缺失 —— 不挂调度工具 */ }
+        if (isCabinMain) toolServers['octopus-cabin'] = createCabinToolServer(session.cabin_id)
+      }
     }
     const mcpServers = Object.keys(toolServers).length > 0 ? toolServers : undefined
 
@@ -660,7 +677,8 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
         : undefined
 
       try {
-        // 2026-11-25 用户：委派 doer 的回合开始 → 作战中（人刚答完，doer 接着干）。
+        // 2026-11-25 用户：委派 doer 的回合开始 → 作战中（人刚答完，doer 接着干）；
+        // 2026-11-27 用户：人自开会话从「待命」起下一轮同口径。
         if (doerDelegationId) {
           try { cabinProvider?.delegations?.markRunning(doerDelegationId) } catch { /* best effort */ }
         }
@@ -785,8 +803,24 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
         // 2026-11-25 用户：doer 这一轮结束了还没交结论（cabin_delegation_done 会把
         // 状态置 done）→ 回到「等你答」。否则 state 永远停在 running，编队一直显示
         // 作战中、秒表空转 —— 会话明明已经回复了人，却看起来还在干。
+        // 2026-11-27 用户：人自开的会话同理回「待命」（markIdle）—— 没人等它答话。
         if (doerDelegationId) {
-          try { cabinProvider?.delegations?.markWaitingInput(doerDelegationId) } catch { /* best effort */ }
+          try {
+            if (doerDelegationOrigin === "user") cabinProvider?.delegations?.markIdle(doerDelegationId)
+            else cabinProvider?.delegations?.markWaitingInput(doerDelegationId)
+          } catch { /* best effort */ }
+        } else if (!thread && session.cabin_id) {
+          // 2026-11-27 用户：人自开会话的委派行可能在本轮开始后才登记（先建会话、
+          // 发首条消息，再登记）—— 收轮时补查一次，别让它停在「作战中」。
+          try {
+            const row = sessionDao.getDb().prepare(
+              "SELECT id, origin FROM cabin_delegations WHERE doer_session_id = ? LIMIT 1",
+            ).get(id) as { id?: string; origin?: string } | undefined
+            if (row?.id) {
+              if (row.origin === "user") cabinProvider?.delegations?.markIdle(row.id)
+              else cabinProvider?.delegations?.markWaitingInput(row.id)
+            }
+          } catch { /* best effort */ }
         }
         // 回合收尾：不让 background_runs 留下永久 running 的行。
         try { getBackgroundRuns().closeRunning(id) } catch { /* 观测面失败不影响收轮 */ }

@@ -34,6 +34,7 @@ export function candidatesOf(rows: readonly CockpitRow[]): CockpitCandidate[] {
  * `mergeAttention` 会把 job_id 命中的 attention 合并进 job 行（不再单独成行），
  * 所以 `?attn=<id>` 命中 job 行上的 attention 也算有效 —— 否则深链会被误判失效。
  * 编队只含入口舱（2026-11-15），cabinId 不匹配即无效。
+ * 会话只有一种（cabin_delegations）：汐音委派与人自开都走 `?delegation=`。
  */
 export function refInRows(ref: CockpitRef, rows: readonly CockpitRow[]): boolean {
   // 项目 ref 不在编队行里：有效性由项目数据判定（CockpitProjectFace），

@@ -164,9 +164,21 @@ export function sortRows(rows: readonly CockpitRow[]): CockpitRow[] {
     (createdAtOf(a) ?? Number.POSITIVE_INFINITY) - (createdAtOf(b) ?? Number.POSITIVE_INFINITY) ||
     stable(a, b))
 
-  buckets.queue.sort((a, b) =>
-    (createdAtOf(a) ?? Number.POSITIVE_INFINITY) - (createdAtOf(b) ?? Number.POSITIVE_INFINITY) ||
-    stable(a, b))
+  // 待命组：人自开的会话（delegation origin=user）置顶、新→旧 —— 会话是人的
+  // 常驻工作面，不能被 6 行折叠挤到「更多」后面；其余仍按 FIFO（旧→新）。
+  const pinnedQueue = (row: CockpitRow) => (
+    row.kind === 'delegation' && row.delegation.origin === 'user' ? 0 : 1
+  )
+  buckets.queue.sort((a, b) => {
+    const rank = pinnedQueue(a) - pinnedQueue(b)
+    if (rank !== 0) return rank
+    if (pinnedQueue(a) === 0) {
+      return (createdAtOf(b) ?? Number.NEGATIVE_INFINITY) - (createdAtOf(a) ?? Number.NEGATIVE_INFINITY)
+        || stable(a, b)
+    }
+    return (createdAtOf(a) ?? Number.POSITIVE_INFINITY) - (createdAtOf(b) ?? Number.POSITIVE_INFINITY)
+      || stable(a, b)
+  })
 
   buckets.done = buckets.done
     .sort((a, b) =>
@@ -415,15 +427,25 @@ export function fleetStatusOf(row: CockpitRow): FleetStatus {
  */
 export function sortFleet(rows: readonly CockpitRow[]): CockpitRow[] {
   const order = new Map(rows.map((row, index) => [row, index] as const))
+  // 待命档里人自开的会话置顶、新→旧（常驻工作面，不能被折叠挤掉）。
+  const pinnedQueue = (row: CockpitRow) => (
+    row.kind === 'delegation' && row.delegation.origin === 'user' ? 0 : 1
+  )
   return rows
     .filter((row) => row.kind !== 'attention')
     .map((row) => ({ row, status: fleetStatusOf(row) }))
     .sort((a, b) => {
       const rank = FLEET_STATUS_RANK[a.status] - FLEET_STATUS_RANK[b.status]
       if (rank !== 0) return rank
+      if (a.status === 'queue') {
+        const pin = pinnedQueue(a.row) - pinnedQueue(b.row)
+        if (pin !== 0) return pin
+      }
       const ac = createdAtOf(a.row) ?? Number.POSITIVE_INFINITY
       const bc = createdAtOf(b.row) ?? Number.POSITIVE_INFINITY
-      const time = a.status === 'archived' ? bc - ac : ac - bc
+      const newestFirst = a.status === 'archived'
+        || (a.status === 'queue' && pinnedQueue(a.row) === 0)
+      const time = newestFirst ? bc - ac : ac - bc
       return time || (order.get(a.row) ?? 0) - (order.get(b.row) ?? 0)
     })
     .map((entry) => entry.row)

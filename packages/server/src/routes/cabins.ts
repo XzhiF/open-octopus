@@ -1140,6 +1140,42 @@ export function createCabinRoutes(
     }
   })
 
+  // 用户自开会话登记（2026-11-27 用户）：会话先由前端 /agent/sessions 建好，
+  // 这里登记成委派（origin=user）—— 与汐音委派同一本账、同一套状态机。
+  const userSessionBodySchema = z.object({
+    session_id: z.string().min(1),
+    title: z.string().optional(),
+    intent: z.string().optional(),
+  })
+
+  router.post("/:id/delegations/register", async (c) => {
+    if (!delegations) return c.json({ error: "delegation service not wired" }, 503)
+    const body = await safeJson(c)
+    if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)
+    try {
+      const input = userSessionBodySchema.parse(body)
+      const cabinId = c.req.param("id")
+      const row = delegations.registerUserSession(cabinId, {
+        sessionId: input.session_id,
+        title: input.title,
+        intent: input.intent,
+      })
+      const h = service.listWorkView(cabinId)
+        .find((w) => w.kind === "delegation" && w.id === row.id)
+      return c.json({
+        delegation: {
+          ...row,
+          brief: row.brief ? JSON.parse(row.brief) as unknown : null,
+          handle: h?.handle ?? null,
+          color: h?.color ?? null,
+        },
+      }, 201)
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status as 400)
+    }
+  })
+
   router.post("/:id/delegations/:did/cancel", (c) => {
     if (!delegations) return c.json({ error: "delegation service not wired" }, 503)
     const row = delegations.get(c.req.param("did"))

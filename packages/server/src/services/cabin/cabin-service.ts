@@ -898,6 +898,7 @@ export class CabinService {
         const h = delegationHandles.get(d.id)
         return {
           id: d.id, title: d.title, state: d.state,
+          ...(d.origin === "user" ? { origin: "user" as const } : {}),
           ...(d.result_summary ? { summary: d.result_summary } : {}),
           ...(d.archived_at ? { archived_at: d.archived_at } : {}),
           ...(h ? { handle: h.handle, color: h.color } : {}),
@@ -1453,9 +1454,11 @@ export class CabinService {
         status = row?.status ?? "unknown"
         project_keys = this.anchorsOfCwd(row?.cwd ?? null, projects)
       }
-      const transport = j.kind === "task" ? "task-thread" : j.kind === "workflow" ? "workflow-engine" : "sdk-agent"
+      const transport = j.kind === "task"
+        ? "task-thread"
+        : j.kind === "workflow" ? "workflow-engine" : "sdk-agent"
       const agent_running = !!j.session_id && isStreaming(j.session_id)
-      return { ...j, status, transport, project_keys, agent_running }
+      return { ...j, title: j.title, status, transport, project_keys, agent_running }
     })
   }
 
@@ -1492,6 +1495,7 @@ export class CabinService {
           title: d.title,
           // 归档是独立一档（2026-11-25 用户）：state=done 只是「待命」。
           status: d.archived_at ? "archived" : d.state,
+          origin: d.origin,
           session_id: d.doer_session_id, job_id: d.id,
         } satisfies CabinWorkRow
       }),

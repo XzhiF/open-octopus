@@ -272,3 +272,60 @@ describe("deriveCabinView：委派进入同一套 attention", () => {
     })
   })
 })
+
+// 2026-11-27 用户：用户在编队里自己开的会话 —— 与汐音委派同一张表、同一套状态机，
+// 只差 origin 和两条分支：回合结束落「待命」（不产等你答 / 完成回执），不预唤醒。
+describe("用户自开会话（origin=user）：同一种会话，只差谁开的", () => {
+  const insertSession = (id: string, title = "新会话") => {
+    db.prepare(`
+      INSERT INTO sessions (id, org, title, session_type, is_active, is_deleted, created_at, updated_at)
+      VALUES (?, 'org', ?, 'main', 1, 0, ?, ?)
+    `).run(id, title, NOW, NOW)
+  }
+
+  it("登记：origin=user、无任务书、落舱归属、同会话幂等", () => {
+    insertSession("s-user")
+    const row = delegations.registerUserSession(CABIN, {
+      sessionId: "s-user", title: "整理限流阈值", intent: "帮我整理限流阈值",
+    })
+    expect(row.origin).toBe("user")
+    expect(row.brief).toBeNull()
+    // 没有在跑的回合 → 待命（首轮若已开始才写 running）。
+    expect(row.state).toBe("done")
+    expect(row.intent_text).toBe("帮我整理限流阈值")
+
+    const session = db.prepare("SELECT cabin_id, title FROM sessions WHERE id = 's-user'")
+      .get() as { cabin_id: string; title: string }
+    expect(session.cabin_id).toBe(CABIN)
+    expect(session.title).toBe("整理限流阈值")
+
+    // 同一会话重复登记 = 同一行，不重复落账。
+    const again = delegations.registerUserSession(CABIN, { sessionId: "s-user", title: "再来一次" })
+    expect(again.id).toBe(row.id)
+    expect(delegations.list(CABIN).filter((d) => d.origin === "user")).toHaveLength(1)
+  })
+
+  it("回合开始/结束：running ↔ done（待命）；不落 waiting_input", () => {
+    insertSession("s-user2")
+    const row = delegations.registerUserSession(CABIN, { sessionId: "s-user2", title: "t" })
+    delegations.markIdle(row.id)
+    expect(delegations.get(row.id)?.state).toBe("done")
+    delegations.markRunning(row.id)
+    expect(delegations.get(row.id)?.state).toBe("running")
+    delegations.markIdle(row.id)
+    expect(delegations.get(row.id)?.state).toBe("done")
+    // 用户会话没有「等你答」这一档。
+    delegations.markRunning(row.id)
+    delegations.markWaitingInput(row.id)
+    expect(delegations.get(row.id)?.state).toBe("running")
+  })
+
+  it("开机对账：用户会话残留 running → 待命（不是等你答）", () => {
+    insertSession("s-user3")
+    const row = delegations.registerUserSession(CABIN, { sessionId: "s-user3", title: "t" })
+    delegations.markRunning(row.id)
+    expect(delegations.get(row.id)?.state).toBe("running")
+    delegations.reconcileRunning()
+    expect(delegations.get(row.id)?.state).toBe("done")
+  })
+})

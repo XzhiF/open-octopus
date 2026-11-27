@@ -12,13 +12,13 @@ import type { ContextUsageData, ChatSendMeta, ChatSeedMeta } from '@/lib/agent/t
 import type { ComposerContext, ComposerEffort } from '@/lib/agent/composer-settings'
 import type { MoodKey } from '@/components/cabin/cockpit'
 
-/** 面上要显示哪一条：job / task / attention / project 四型。
+/** 面上要显示哪一条：job / task / delegation / attention / project。
  *  全域只含入口舱（2026-11-15），cabinId 恒 = 入口舱；保留字段是为了 ref 形状稳定。
  *  project 的 id = 项目 key（org:<org>/<name> | local:<path>），舱籍面用 __roster__。 */
 export type CockpitRef =
   | { kind: 'job'; cabinId: string; id: string }
   | { kind: 'task'; cabinId: string; id: string }
-  /** 会话（cabin_delegations 的 doer 会话）：详情面 = 对接/文件/运行/调试/消耗/子代理。 */
+  /** 会话（cabin_delegations）：汐音委派与人自开同一本账；详情面 = 对接/文件/运行/调试/消耗/子代理。 */
   | { kind: 'delegation'; cabinId: string; id: string }
   | { kind: 'attention'; cabinId: string; id: string }
   | { kind: 'project'; cabinId: string; id: string }
@@ -48,7 +48,7 @@ export const COCKPIT_SESSION_TABS: readonly CockpitTab[] = ['relay', 'files', 'r
 /** 详情默认页签：URL 里省略它，保持链接干净。 */
 export const COCKPIT_DEFAULT_TAB: CockpitTab = 'run'
 
-/** 按 ref 取默认页签：会话落「对接」（它那六项的首签），其余落「运行」。 */
+/** 按 ref 取默认页签：会话（delegation）落「对接」（六项的首签），其余落「运行」。 */
 export function defaultTabForRef(ref: CockpitRef | null | undefined): CockpitTab {
   return ref?.kind === 'delegation' ? 'relay' : COCKPIT_DEFAULT_TAB
 }
@@ -170,10 +170,18 @@ export interface CockpitLayerApi {
 /** 模态面板六 kind（编队/详情沿用左栏与作业面，不另起模态）。 */
 export type CockpitPanelKind = 'ops' | 'ledger' | 'ws' | 'poses' | 'debug' | 'log'
 
-/** 用户自开的作战弹出窗（design 29 §4）：上限 5，最小化进 WINDOWS 条。 */
+/** 用户自开的作战弹出窗（design 29 §4）：上限 5，最小化进 WINDOWS 条。
+ *  v23（2026-11-27 用户）：「新会话」窗 —— 编队里人工开一条会话（登记为
+ *  cabin_delegations origin=user，与汐音委派同一本账），发第一条消息才真正创建。
+ *  这种窗绑定会话时没有编队线程 key，所以 threadKey 为 null，靠 sessionId 承载（草稿阶段也为 null）。 */
 export interface CockpitPopWin {
   id: string
-  threadKey: string
+  /** 编队线程 key；新会话窗（草稿 / 自建会话）为 null —— 见 sessionId。 */
+  threadKey: string | null
+  /** 新会话窗绑定的会话 id；草稿阶段 null（发第一条消息后填入）。 */
+  sessionId: string | null
+  /** 窗头标题（草稿 = 新会话；正式会话跟着 server 自动标题走）。 */
+  title: string
   rect: CockpitRect
   min: boolean
 }
@@ -203,8 +211,14 @@ export interface CockpitThreadsApi {
 
 export interface CockpitWindowsApi {
   windows: CockpitPopWin[]
-  /** 已存在同线程窗 → 聚焦不新建；超上限返回 false（调用方 toast）。 */
-  openWindow(threadKey: string, rect: CockpitRect): boolean
+  /** 已存在同线程窗 → 聚焦不新建（带 sessionId 时同会话窗也算命中）；超上限返回 false（调用方 toast）。 */
+  openWindow(threadKey: string, rect: CockpitRect, sessionId?: string | null): boolean
+  /** 新会话窗（草稿）：已有一扇没发消息的草稿窗 → 聚焦它；超上限返回 false。 */
+  openDraftWindow(rect: CockpitRect): boolean
+  /** 草稿 → 正式会话：窗口原地绑定会话（不重开、不换 DOM 节点）。 */
+  bindSession(winId: string, sessionId: string, title: string): void
+  /** 会话自动起标题后同步窗头。 */
+  renameWindow(winId: string, title: string): void
   closeWindow(id: string): void
   setWindowMin(id: string, min: boolean): void
   patchWindowRect(id: string, rect: CockpitRect): void

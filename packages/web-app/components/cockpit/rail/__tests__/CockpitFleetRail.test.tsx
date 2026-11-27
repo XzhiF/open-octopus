@@ -480,3 +480,70 @@ describe('CockpitFleetRail · v21 单列编队', () => {
     expect(screen.getByTestId('selection')).toHaveTextContent('job:c1:j1')
   })
 })
+
+// v23（2026-11-27 用户）：人在编队里自己开的会话 = cabin_delegations（origin=user）——
+// 与汐音委派同一本账；编队行 ❯、点行 / 💬 开独立 chat 窗、▦ 落会话详情「对接」。
+describe('CockpitFleetRail · v23 人自开会话（origin=user 委派）', () => {
+  function userDelegationRow(
+    id: string,
+    sessionId: string,
+    over: Partial<Extract<CockpitRow, { kind: 'delegation' }>['delegation']> = {},
+  ): CockpitRow {
+    return {
+      key: `delegation:${id}`,
+      kind: 'delegation',
+      cabinId: 'c1',
+      cabinName: '舱一',
+      pct: null,
+      delegation: {
+        id,
+        cabin_id: 'c1',
+        title: '整理限流阈值',
+        intent_text: '帮我整理限流阈值',
+        brief: null,
+        autonomy: 'checkpoint',
+        state: 'done',
+        origin: 'user',
+        doer_session_id: sessionId,
+        result_summary: null,
+        created_at: '2026-11-27T09:00:00.000Z',
+        updated_at: '2026-11-27T09:30:00.000Z',
+        ended_at: null,
+        archived_at: null,
+        handle: 'D1',
+        color: 2,
+        ...over,
+      },
+    }
+  }
+
+  it('「新会话」开一扇草稿窗；再点 = 聚焦，不重复开', () => {
+    renderRail()
+    fireEvent.click(screen.getByTestId('cockpit-fleet-new'))
+    expect(screen.getByTestId('selection')).toHaveAttribute('data-wins', '1')
+    fireEvent.click(screen.getByTestId('cockpit-fleet-new'))
+    expect(screen.getByTestId('selection')).toHaveAttribute('data-wins', '1')
+  })
+
+  it('会话行：❯ 字形 + 「会话 D1」副行；点行/💬 开会话窗，▦ 落会话详情「对接」', () => {
+    threadState.keys.add('delegation:d-user')
+    renderRail({ rows: sortRows([userDelegationRow('d-user', 's-1')]) })
+    const node = row('delegation:d-user')
+    expect(within(node).getByText('整理限流阈值')).toBeInTheDocument()
+    expect(node.querySelector('.ck12-flhg')?.textContent).toBe('❯')
+    expect(within(node).getByText(/会话 D1/)).toBeInTheDocument()
+    // 回合结束 = 待命（与汐音委派同一个状态词）。
+    expect(within(node).getByText('待命')).toBeInTheDocument()
+
+    // 行点击 = 开它自己的独立 chat 窗（data-wins 1），不选面。
+    fireEvent.click(node)
+    expect(screen.getByTestId('selection')).toHaveTextContent('none')
+    expect(screen.getByTestId('selection')).toHaveAttribute('data-wins', '1')
+
+    // ▦ = 会话详情（delegation ref，默认「对接」），行标 is-on。
+    fireEvent.click(screen.getByTestId('cockpit-rail-detail-delegation:d-user'))
+    expect(screen.getByTestId('selection')).toHaveTextContent('delegation:c1:d-user')
+    expect(screen.getByTestId('selection')).toHaveAttribute('data-tab', 'relay')
+    expect(row('delegation:d-user').className).toMatch(/is-on/)
+  })
+})

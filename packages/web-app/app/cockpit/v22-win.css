@@ -254,6 +254,52 @@
   background: rgba(255, 59, 92, 0.24);
 }
 
+/* ── v23（2026-11-27 用户）· 「新会话」草稿窗 ───────────────────────────
+   hero = classic 新建会话：输入居中，下面一行 工作区 / 模型 / 分身。
+   这三件套由真实组件渲染（CwdPicker / ComposerModelPopover /
+   ComposerIdentityPicker），这里只统一行高与排布，不动组件内部样式。 */
+/* hero 没有转录区：输入行不画 dock 底带，输入框自己居中成一块工作台。 */
+.ck12-cwin-body [data-tui-dock][data-tui-hero] {
+  border-top: 0;
+  background: transparent;
+}
+.ck12-cwin-body [data-tui-dock][data-tui-hero] [data-tui-composer] {
+  max-width: 620px;
+  margin-left: auto;
+  margin-right: auto;
+}
+.ck12-nw-opts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+/* 三枚触发键统一 27px 行高（CwdPicker / 身份 chip 本来就是 27，模型键是 22）。 */
+.ck12-nw-opts > button { height: 27px; }
+
+/* 草稿窗输入行：❯ / ⏎ 钉在第一行（2026-11-27 用户原型定稿 —— 输入多行时
+   图标不跟着往下掉）。行盒与实际文本一致：AutoResizeTextarea 把行高固定
+   24px（inline style），这里用同一个 24px + 8px 上内边距逐行对齐。 */
+.ck12-cwin[data-draft='true'] .ck12-cwin-body [data-tui-dock] textarea {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+.ck12-cwin[data-draft='true'] .ck12-cwin-body [data-tui-dock] [data-tui-prompt] {
+  align-self: flex-start;
+  padding-top: 8px;
+  font-size: 13px;
+  line-height: 24px;
+}
+.ck12-cwin[data-draft='true'] .ck12-cwin-body [data-tui-dock] [data-tui-send-wrap] {
+  align-self: flex-start;
+  padding-top: 3px;
+}
+.ck12-cwin[data-draft='true'] .ck12-cwin-body [data-tui-dock] [data-tui-attach-inline] {
+  align-self: flex-start;
+  padding-top: 4px;
+}
+
 /* 「待你定」dock / 提问卡：与主通讯台同一套方角终端语言。 */
 .ck12-cwin-body [data-testid='author-ask-inbox'] {
   margin: 0;

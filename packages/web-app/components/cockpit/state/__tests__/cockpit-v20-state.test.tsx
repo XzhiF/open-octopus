@@ -71,6 +71,31 @@ describe('v20 弹出窗', () => {
   })
 })
 
+describe('v23 新会话窗', () => {
+  it('草稿窗同时只留一扇；bindSession 原地绑成正式会话（不新建窗口）', () => {
+    const { result } = renderHook(() => useCockpitState(), { wrapper })
+    act(() => { expect(result.current.wins.openDraftWindow(rect)).toBe(true) })
+    act(() => { expect(result.current.wins.openDraftWindow(rect)).toBe(true) })
+    expect(result.current.wins.windows).toHaveLength(1)
+    const win = result.current.wins.windows[0]
+    expect(win.threadKey).toBeNull()
+    expect(win.sessionId).toBeNull()
+    expect(win.title).toBe('新会话')
+
+    act(() => result.current.wins.bindSession(win.id, 's-1', '新会话 A'))
+    expect(result.current.wins.windows).toHaveLength(1)
+    expect(result.current.wins.windows[0].sessionId).toBe('s-1')
+    expect(result.current.wins.windows[0].title).toBe('新会话 A')
+
+    // 同一会话再开 = 聚焦（最小化会被恢复），不会出第二扇 —— 草稿窗
+    // 转正后 threadKey 仍为 null，编队行按 sessionId 命中。
+    act(() => result.current.wins.setWindowMin(win.id, true))
+    act(() => { expect(result.current.wins.openWindow('delegation:d-1', rect, 's-1')).toBe(true) })
+    expect(result.current.wins.windows).toHaveLength(1)
+    expect(result.current.wins.windows[0].min).toBe(false)
+  })
+})
+
 describe('v20 停靠 / 面板 / flash', () => {
   it('openWithFocus 清 docked + mini；面板带入参；flash nonce 递增', () => {
     const { result } = renderHook(() => useCockpitState(), { wrapper })

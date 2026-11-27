@@ -195,3 +195,53 @@ describe('CockpitSessionFace — 会话六页签', () => {
     expect(screen.getByTestId('cockpit-job-close')).toBeInTheDocument()
   })
 })
+
+// v23（2026-11-27 用户）：人自开的会话与汐音委派同一本账（origin=user）——
+// 同一张六页签面；「对接」只留第一条原话（没有任务书），提示这不是汐音派的。
+describe('CockpitSessionFace — 人自开会话（origin=user）', () => {
+  it('六页签同形、默认落「对接」；只有原话、没有任务书', async () => {
+    render(
+      <CockpitSessionFace
+        cabinId="c1"
+        delegation={delegation({
+          origin: 'user',
+          title: '整理限流阈值',
+          intent_text: '帮我整理一下限流阈值',
+          brief: null,
+          autonomy: 'checkpoint',
+        })}
+        cabinName="账务核心"
+        tab="relay"
+        onTabChange={() => {}}
+        onClose={() => {}}
+      />,
+    )
+    for (const label of ['对接', '文件', '运行', '调试', '消耗', '子代理']) {
+      expect(screen.getByRole('tab', { name: new RegExp(`^${label}`) })).toBeInTheDocument()
+    }
+    expect(screen.queryByTestId('cockpit-tab-accept')).toBeNull()
+    expect(screen.getByTestId('cockpit-tab-relay')).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByTestId('cockpit-job-header').textContent).toContain('整理限流阈值')
+
+    const relay = await screen.findByTestId('cockpit-session-relay')
+    expect(relay.textContent).toContain('你自己开的')
+    expect(screen.getByTestId('cockpit-session-intent').textContent).toContain('限流阈值')
+    expect(screen.queryByTestId('cockpit-session-brief')).toBeNull()
+  })
+
+  it('「去会话对话」：走 onOpenChat（回到它自己的独立 chat 窗）', async () => {
+    const onOpenChat = vi.fn()
+    render(
+      <CockpitSessionFace
+        cabinId="c1"
+        delegation={delegation({ origin: 'user', brief: null })}
+        tab="relay"
+        onTabChange={() => {}}
+        onClose={() => {}}
+        onOpenChat={onOpenChat}
+      />,
+    )
+    fireEvent.click(await screen.findByTestId('cockpit-session-chat'))
+    expect(onOpenChat).toHaveBeenCalledTimes(1)
+  })
+})

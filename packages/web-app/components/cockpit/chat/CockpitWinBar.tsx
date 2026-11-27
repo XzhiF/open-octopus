@@ -6,6 +6,7 @@
 
 import { useCockpitState } from '../state/CockpitStateProvider'
 import { THREAD_EMO } from '../fleet/threads-model'
+import { accentOfAnchor } from '../fleet/project-accent'
 import { useCockpitThreads } from './use-cockpit-threads'
 import { openFleetChat } from './open-fleet-window'
 
@@ -31,9 +32,31 @@ export function CockpitWinBar() {
         {mainUnread > 0 && <i className="ck12-wbchip-unread">{mainUnread > 9 ? '9+' : mainUnread}</i>}
       </button>
       {wins.windows.map((win) => {
-        const thread = byKey.get(win.threadKey)
+        // v23：新会话窗（草稿 / 自建会话）没有编队线程，chip 自己取标题与项目色。
+        if (!win.threadKey) {
+          const draft = !win.sessionId
+          const accent = win.sessionId ? accentOfAnchor(`session:${win.sessionId}`) : 'var(--ck12-sky)'
+          return (
+            <button
+              key={win.id}
+              type="button"
+              className={`ck12-wbchip is-wacc${win.min ? ' is-min' : ''}`}
+              style={{ ['--waccent' as string]: accent }}
+              data-testid={`cockpit-winbar-chip-${win.id}`}
+              title={draft
+                ? '新会话 · 发第一条消息才创建'
+                : (win.min ? `恢复 ${win.title}` : `聚焦 ${win.title}`)}
+              onClick={() => wins.setWindowMin(win.id, false)}
+            >
+              <span aria-hidden="true">{draft ? '✚' : '💬'}</span>
+              <span className="ck12-wbchip-name">{draft ? '新会话' : win.title}</span>
+            </button>
+          )
+        }
+        const threadKey = win.threadKey
+        const thread = byKey.get(threadKey)
         if (!thread) return null
-        const unread = api.unread[win.threadKey] ?? 0
+        const unread = api.unread[threadKey] ?? 0
         return (
           <button
             key={win.id}
@@ -42,7 +65,7 @@ export function CockpitWinBar() {
             style={{ ['--waccent' as string]: thread.accent }}
             data-testid={`cockpit-winbar-chip-${win.id}`}
             title={win.min ? `恢复 ${thread.title}` : `聚焦 ${thread.title}`}
-            onClick={() => openFleetChat(wins, api, win.threadKey, chatWindow)}
+            onClick={() => openFleetChat(wins, api, threadKey, chatWindow)}
           >
             <span aria-hidden="true">{THREAD_EMO[thread.state]}</span>
             <span className="ck12-wbchip-name">{thread.short}</span>

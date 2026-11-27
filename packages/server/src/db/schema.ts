@@ -41,6 +41,7 @@ export function applySchema(db: Database.Database): void {
     ["executions", "cabin_id"],
     ["cabins", "deleted_at"],
     ["cabin_delegations", "archived_at"],
+    ["devices", "ssh_key_slot"],
   ] as const) {
     try { db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} TEXT`) } catch { /* table absent or column exists */ }
   }
@@ -62,6 +63,29 @@ export function applySchema(db: Database.Database): void {
 
   const sql = fs.readFileSync(path.join(_dirname, "schema.sql"), "utf-8")
   db.exec(sql)
+
+  // 2026-11-27 用户：会话只有一种 —— 用户在编队里自己开的会话并入
+  // cabin_delegations（origin=user），与汐音委派同一本账。
+  //   · 老库补 origin 列（新库由 schema.sql 直接建新形状）；
+  //   · 上一版短暂用过的 cabin_jobs.kind='chat' 行一次性迁成委派再删掉，
+  //     不留下无主的作业行。
+  try {
+    const cols = db.prepare("PRAGMA table_info(cabin_delegations)").all() as Array<{ name: string }>
+    if (cols.length > 0 && !cols.some((c) => c.name === "origin")) {
+      db.exec("ALTER TABLE cabin_delegations ADD COLUMN origin TEXT NOT NULL DEFAULT 'xiyin'")
+    }
+    db.exec(`
+      INSERT INTO cabin_delegations
+        (id, cabin_id, title, intent_text, brief, autonomy, state,
+         origin, doer_session_id, result_summary, created_at, updated_at, ended_at, archived_at)
+      SELECT 'u-' || lower(hex(randomblob(16))), cabin_id, title,
+             COALESCE(NULLIF(prompt, ''), title), NULL, 'checkpoint', 'done',
+             'user', session_id, NULL, created_at, created_at, NULL, NULL
+        FROM cabin_jobs
+       WHERE kind = 'chat' AND session_id IS NOT NULL;
+      DELETE FROM cabin_jobs WHERE kind = 'chat';
+    `)
+  } catch { /* 迁移失败不阻断启动；写入时会暴露真实错误 */ }
 
   // Test fixture compatibility only. The production schema is org-free; a large
   // legacy test corpus still seeds raw rows with an `org` column. Keep the column

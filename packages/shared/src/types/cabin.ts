@@ -7,6 +7,8 @@ import { z } from "zod"
 export const CabinStatusSchema = z.enum(["draft", "initializing", "active", "dormant", "archived"])
 export type CabinStatus = z.infer<typeof CabinStatusSchema>
 
+/** 作业种类。任务 / 工作流 / 子代理三种自有实体。
+ *  会话不在这里 —— 用户在舱里自己开的会话与汐音的委派同一本账（cabin_delegations）。 */
 export const CabinJobKindSchema = z.enum(["task", "workflow", "subagent"])
 export type CabinJobKind = z.infer<typeof CabinJobKindSchema>
 
@@ -77,9 +79,16 @@ export const CabinDelegationStateSchema = z.enum([
 ])
 export type CabinDelegationState = z.infer<typeof CabinDelegationStateSchema>
 
+/** 会话创建者（2026-11-27 用户）：同一种会话，只差谁开的。
+ *  xiyin = 汐音委派（等你答 / 交结论 / 完成回执）；user = 人在编队里自己开的会话
+ *  （回合结束落「待命」，不产待办、不发回执）。 */
+export const CabinDelegationOriginSchema = z.enum(["xiyin", "user"])
+export type CabinDelegationOrigin = z.infer<typeof CabinDelegationOriginSchema>
+
 export const CabinDelegationSchema = z.object({
   id: z.string(),
   cabin_id: z.string(),
+  origin: CabinDelegationOriginSchema.default("xiyin"),
   title: z.string(),
   intent_text: z.string(),
   brief: z.string().nullable(),
@@ -105,6 +114,8 @@ export interface CabinWorkRow {
   kind: CabinWorkKind
   /** `#1` / `D1` —— 给人指代用，由列表顺序派生，不落库。 */
   handle: string
+  /** 仅 delegation 有：谁开的会话（xiyin 委派 / user 自开）。 */
+  origin?: CabinDelegationOrigin
   /** 0..5，由 id hash 派生（与 pop 色板同族）。 */
   color: number
   title: string
