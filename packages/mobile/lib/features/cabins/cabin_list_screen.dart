@@ -87,6 +87,7 @@ class CabinListScreen extends ConsumerWidget {
                         ErrorState(
                           error: error,
                           onRetry: () => ref.invalidate(cabinsProvider),
+                          onRepair: () => context.push('/settings'),
                         ),
                       ],
                     ),
@@ -131,6 +132,7 @@ class CabinListScreen extends ConsumerWidget {
   static String _statusLabel(DeviceStatus s) => switch (s) {
         DeviceStatus.running => '运行中',
         DeviceStatus.notReady => '在线 · 未就绪',
+        DeviceStatus.onlineStopped => '在线 · 未启动',
         DeviceStatus.offline => '离线',
         DeviceStatus.unknown => '检测中',
       };
@@ -138,6 +140,7 @@ class CabinListScreen extends ConsumerWidget {
   static String _statusNum(DeviceStatus s) => switch (s) {
         DeviceStatus.running => 'LINK OK',
         DeviceStatus.notReady => 'LINK WARN',
+        DeviceStatus.onlineStopped => 'LINK IDLE',
         DeviceStatus.offline => 'LINK LOST',
         DeviceStatus.unknown => 'LINK …',
       };

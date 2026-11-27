@@ -7,7 +7,7 @@ import '../../core/models/chat.dart';
 import '../../core/models/quote.dart';
 import '../../core/providers.dart';
 import '../../widgets/composer.dart';
-import '../../widgets/crew_video.dart';
+import '../../widgets/crew_animation.dart';
 import '../../widgets/octo_bar.dart';
 import '../../widgets/panel.dart';
 import '../../widgets/quote_bar.dart';
@@ -210,7 +210,7 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
             child: EmptyState(
               title: '在这儿说点什么',
               detail: '机器上的文件、舱里的状态都能问\n说清楚要干什么，它自己找路',
-              artwork: CrewFigure(height: 230, videoEnabled: videoEnabled),
+              artwork: videoEnabled ? const CrewFigure(height: 230) : null,
             ),
           ),
         TuiTranscript(

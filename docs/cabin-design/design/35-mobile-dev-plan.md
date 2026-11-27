@@ -49,8 +49,8 @@
 packages/mobile/
 ├── pubspec.yaml
 ├── assets/
-│   ├── scenes/            ← scene-cruise.png / scene-deepspace.png（同步脚本拷贝）
-│   ├── clips/             ← 07-idle.webm / 05-concerned.webm / 09-smile.webm（先 3 支）
+│   ├── scenes/            ← scene-cruise.webp / scene-deepspace.webp（同步脚本拷贝）
+│   ├── clips/             ← 07-idle.webp / 05-concerned.webp / 09-smile.webp（先 3 支，WebP 动画）
 │   ├── crew/              ← xiyin-idle.png（头像 / 视频兜底帧）
 │   └── icon/              ← icon.png（来自 packages/desktop/build/icon.png）
 ├── lib/
@@ -69,7 +69,7 @@ packages/mobile/
 │   │   ├── tasks/         ← 任务只读
 │   │   └── settings/
 │   └── widgets/           ← RoundedPanel / StatusPill / SceneBackground /
-│                            Starfield / CrewVideo / TuiTranscript / Composer
+│                            Starfield / CrewFigure / TuiTranscript / Composer
 ├── scripts/sync-assets.mjs  ← 从 docs/cabin-design 拷素材（避免双份入库）
 ├── test/ · integration_test/
 ```
@@ -113,6 +113,19 @@ tailscale serve reset      # 撤销
   二维码可选（`mobile_scanner`）。v1 允许「手动粘贴 URL + 令牌」兜底。
 - 手机侧令牌进 `flutter_secure_storage`，不写日志。
 
+**落地补充（2026-11-27）**
+
+- **本机判定 = socket 回环 ∧ 无 XFF/Forwarded ∧ Host 不是 `*.ts.net`。**
+  `tailscale serve` 也是从 `127.0.0.1` 连进来的 —— 光看回环会把整个 tailnet 当本机。
+  两个代理信号任一命中即按远程处理；`x-octopus-peer` 由 http 桥注入并覆盖客户端同名头。
+- 鉴权闸的例外固定为四条：`/api/actuator/health`、`/api/pair/redeem`、
+  `/api/pair/code`（路由自己只许回环）、`/api/chat-media/*`（`<img>` 带不了 Authorization）。
+- 配对码 6 位、TTL 2 分钟、单次有效、错 5 次直接作废；只留内存，进程重启即失效。
+- 设备管理（列表 / 改名 / 吊销）**只许回环**：一部手机被偷，不能拿它自己的令牌再签发令牌。
+- **WebSocket 升级同样要令牌**：工作区文档（Yjs）也是可写面，HTTP 中间件管不到 upgrade 请求；
+  非回环必须带 `?token=<device-token>`（浏览器 WS 带不了 Authorization 头），否则握手拒绝。
+- 令牌形态 64 hex（32 字节）；DB 存 sha256 + 前 8 位展示前缀；`last_seen` 写库 60s 节流。
+
 ---
 
 ## 4. 接口清单
@@ -133,9 +146,11 @@ tailscale serve reset      # 撤销
 | 工作区事件 | `GET /api/workspaces/:id/events`（SSE） | ✅ |
 | 单独会话 | `GET/POST /api/chat/global/sessions`、`/:sid`、`/:sid/messages`（SSE） | ✅ |
 | 在跑 agent | `GET /api/agent/sessions/running`（带任意 `Bearer`） | ✅ |
-| 设备令牌 | `device-auth` 中间件 + `devices` 表 | ❌ M3 |
-| 配对兑换 | `POST /api/pair/redeem`（+ 回环生成码） | ❌ M3 |
-| 远程拉起 | sshd + `octopus-ctl status/start` | ❌ M4 |
+| 设备令牌 | `device-auth` 中间件 + `devices` 表 | ✅ M3 |
+| 配对码 / 兑换 | `POST /api/pair/code`（仅回环）· `POST /api/pair/redeem`（闸外） | ✅ M3 |
+| 设备管理 | `GET /api/devices` · `PATCH/DELETE /api/devices/:id`（仅回环） | ✅ M3 |
+| 远程拉起 | `GET /api/remote/status`（仅回环）· redeem 带 `wants_remote` 返回 SSH 私钥 | ✅ M4 |
+| 拉起执行 | `octopus-ctl status/start`（sshd 强制命令）+ 登录计划任务 | ✅ M4 |
 
 > 注意：会话消息 POST 的 SSE 是**响应体内联流**，不是独立订阅；页面再开
 > `workspaces/:id/events` 接收任务 / 状态类事件。切后台断流后，回前台先重拉一次会话快照。
@@ -147,7 +162,7 @@ tailscale serve reset      # 撤销
 ### M0 · 骨架与视觉底（2–3 天）
 
 - `flutter create --platforms=android,ios`，落 §2 目录；Riverpod + go_router。
-- 主题 token、`RoundedPanel` / `StatusPill` / `SceneBackground` / `Starfield` / `CrewVideo`。
+- 主题 token、`RoundedPanel` / `StatusPill` / `SceneBackground` / `Starfield` / `CrewFigure`。
 - 设备列表用本地假数据 + 真实 `/api/actuator/health`（填一个 `tailscale serve` 地址即可探活）。
 - 舱 / 会话页先用静态假数据铺满 8 屏结构。
 
@@ -155,6 +170,10 @@ tailscale serve reset      # 撤销
 
 **M0 必做的技术验证（spike）**：`video_player` 在目标 Android 机上能否播 **VP9 alpha WebM** 且透明。
 不行就降级：静态 `crew/*.png` + 径向遮罩（原型上一版已验证可看），视频留到后续换 Rive / 序列帧。
+
+> **2026-11-27 真机结论**：不行。Flutter 的 Android `video_player` 走 SurfaceTexture，整帧不透明 ——
+> VP9 alpha 的 webm 播出来是一块黑底（真机实测）。改为把同一份画稿转成**带透明通道的 animated WebP**
+> （480×720 / 12fps / 60 帧循环），由 `Image` 解码，alpha 正常；见 §11 的 M5 记录。
 
 ### M1 · 真实数据：舱与会话（4–6 天）
 
@@ -186,6 +205,8 @@ tailscale serve reset      # 撤销
 
 ### M4 · 远程拉起（3–5 天 · 可选）
 
+> 2026-11-27 已落地，记录见 §11；PC 侧安装器需要在本机以管理员跑一次。
+
 - PC：`octopus-ctl status/start`（幂等：先探 47820）+「登录时运行」计划任务 +
   `authorized_keys` 的 `command=` 强制命令（只允许 status/start）。
 - App：设备状态三档（离线 / 在线未启动 / 运行中）；`starting` 给足 90 秒并轮询，不误判失败。
@@ -196,10 +217,22 @@ tailscale serve reset      # 撤销
 
 ### M5 · 打磨与打包（2–3 天）
 
-- 图标：`flutter_launcher_icons` 用 `packages/desktop/build/icon.png`；Android 自适应背景 `#0d0a1e`；
-  iOS 发布需要 1024 母图（同一张画稿导出）。
-- 启动页、空态 / 错误态、触感反馈、字体与间距核对；场景图转 WebP（2×3.3MB → 目标 <1MB）。
-- Android 签名密钥、`flutter build apk --release --split-per-abi`、安装说明。
+- 图标：**已做（2026-11-27）** —— `packages/mobile/scripts/make-launcher-icons.py` 从
+  `packages/desktop/build/icon.png` 直接生成（没用 `flutter_launcher_icons`）：Android 五档
+  `ic_launcher.png` + 自适应图标（108dp，底色取立绘四角 `#0C0B0F`，立绘缩到 86% 居中）+
+  iOS `AppIcon.appiconset` 全尺寸。iOS 的 1024 目前由 512 放大，二期有母图再替换。
+- 启动页：**已做（2026-11-27）** —— 原生层（API 31+ 用系统启动页：底色 `#08060F` + 自适应图标；
+  31 以下是深底 + 96dp 圆角图标）+ Flutter 的 `SplashGate`（青色光环呼吸 + `OCTOPUS` 字标 +
+  「汐音 · 作战舱」副标题，约 1.2 秒后淡出；只冷启动出现一次）。
+- 场景图：**已转 WebP（2026-11-27）** —— 1440 宽 / q82，5.6 MB → 307 KB
+  （`docs/cabin-design/assets/scene-*.webp`，由同名 PNG 转出，同步脚本只拷 WebP）。
+- 空态 / 错误态、触感反馈：**已做（2026-11-27）** —— `lib/core/haptics.dart`（`tap` 轻击 /
+  `ok` 成功一拍），落在连接、启动、发送、配对成功；空态与错误态沿用既有
+  `LoadingState` / `ErrorState` 与三档离线提示，没有新增组件。字体与间距随 §8 真机回归一起过。
+- 签名与分包：**已做（2026-11-27）** —— release 密钥在仓库外
+  `~\.octopus\mobile-signing\octopus-release.jks`（`android/key.properties` 读取，二者都不入 git）；
+  `flutter build apk --release --split-per-abi` → armeabi-v7a **34.5 MB** / arm64-v8a **36.4 MB** /
+  x86_64 **37.7 MB**（debug 三 ABI 合包 229 MB）。换签名后首次安装需先卸载旧包并重新配对。
 - 真机回归清单（§8）。
 
 **总计**：约 12–20 个工作日（M4 可后置）。
@@ -214,7 +247,7 @@ tailscale serve reset      # 撤销
 | TUI 转录 | 按行类型渲染（用户 / 助手头 / 思考 / 工具 / 正文），不引 Markdown 全量渲染器 |
 | 场景层 | `Image.asset` + 24s 缩放动画；`prefers-reduced-motion` 等效开关关掉 |
 | 星流 | `CustomPainter` 移植 v22 `#warp`：70 星、30fps（`Ticker` 限频）、切后台停 |
-| 立绘 | 一屏最多 1 支；`AppLifecycleState.paused` 暂停；失败回落到静态 PNG + 遮罩 |
+| 立绘 | 一屏最多 1 支，只有动画形态（无静态图）；默认开，设置里关掉就不画；点一下换支 |
 | 引用条 | 纯前端状态：`{question, source, sessionId}`；不新增服务端字段 |
 | 设备模型 | `{id, name, baseUrl, token, lastSeen, status}`；本地存储，不跨设备同步 |
 | 错误归一 | 401 → 重新配对；503 → 在线未就绪；超时 → 离线；显示可操作的重试 |
@@ -277,8 +310,8 @@ tailscale serve reset      # 撤销
 
 | 风险 | 影响 | 对策 |
 |---|---|---|
-| Android 对 VP9 alpha 支持不一致 | 立绘透明失效 / 黑底 | M0 spike；失败回落静态 PNG + 遮罩；后续 Rive / 序列帧 |
-| iOS 不认 WebM | 二期才遇到 | 预留静态帧兜底；真要视频转 HEVC-alpha |
+| Android 对 VP9 alpha 支持不一致 | 立绘透明失效 / 黑底 | **已结论（2026-11-27）**：video_player 丢 alpha → 换 animated WebP（见 M0 spike 注） |
+| iOS 不认 WebP 动画 | 二期才遇到 | 转 HEVC-alpha 或不放立绘（静态兜底图已删，不恢复） |
 | SSE 在后台被系统掐断 | 消息断流 | 回前台拉快照 + `last-event-id` 重连；推送不在 v1 |
 | 国产 ROM 杀后台 / 断 Tailscale | 收不到状态 | v1 以「打开 App 时刷新」为准，不做常驻 |
 | PC 睡眠 / 关机 | 全不可用 | 产品前提写清楚；M4 只解决「进程没跑」，不解决睡眠 |
@@ -293,7 +326,7 @@ tailscale serve reset      # 撤销
 - [ ] `scripts/sync-assets.mjs` + 根 `package.json` 的 `mobile:assets`
 - [ ] 主题 token / `RoundedPanel` / `StatusPill`
 - [ ] `SceneBackground` + `Starfield`（30fps / 后台暂停）
-- [ ] `CrewVideo` + 静态兜底 + VP9 alpha spike 结论
+- [x] `CrewFigure` + 静态兜底 + alpha 结论（WebP 动画，2026-11-27）
 - [ ] 设备列表（本地存储 + health 探活）
 - [ ] 8 屏静态结构（假数据）与路由
 - [ ] Android 真机跑通，记录帧率 / 内存基线
@@ -319,8 +352,8 @@ tailscale serve reset      # 撤销
 
 1. 待你定点开 = 回舱主会话；**问题引用条留给 M2**（M1 不假装已经能引用）。
 2. 扫码配对留给 M3；M1 手填 Tailscale 域名（模拟器填 `http://10.0.2.2:3001`）。
-3. 立绘默认**静帧 + 径向遮罩**；VP9 alpha 视频由「设置 → 立绘用视频（实验）」打开 ——
-   等真机 spike 结论再决定默认值。
+3. 立绘**只有动画一种形态**（2026-11-27 改）：默认开 WebP 动画；「设置 → 立绘动画」关掉就整块
+   不画 —— 原来的静态图是深底半身像，贴在场景上就是一块黑方块，已整体删除。
 
 **验证**：见 §11.1。
 
@@ -349,6 +382,54 @@ tailscale serve reset      # 撤销
 
 **验证**：见 §11.1 的「M2 复查」。
 
+### 2026-11-27 · M3 落地（server + web 设置 + `packages/mobile`）
+
+| 项 | 状态 |
+|---|---|
+| `devices` 表（token_hash / token_prefix / revoked_at）+ DeviceDAO | ✅ |
+| DeviceAuthService：6 位码 TTL 2 分钟 · 单次 · 错 5 次作废；32 字节令牌只存 sha256；last_seen 60s 节流 | ✅ |
+| device-auth 中间件：回环直连放行；XFF / 转发头 / `*.ts.net` Host 一律要 Bearer；health / redeem / pair code / chat-media 例外 | ✅ |
+| Yjs WebSocket 升级守卫：非回环必须带 `?token=`（浏览器 WS 带不了 Authorization 头） | ✅ |
+| `POST /api/pair/code`（仅回环）· `POST /api/pair/redeem`（闸外）· `GET/PATCH/DELETE /api/devices*`（仅回环） | ✅ |
+| PC 设置窗口新增「手机配对」：配对码 + 倒计时 + 已配对设备（前缀 / 平台 / 上次活跃）+ 改名 / 吊销 | ✅ |
+| 手机端：令牌进 `flutter_secure_storage`；`apiProvider` 注入 Bearer；添加设备遇 401 展开配对卡（6 位码 / 粘贴令牌）；设置里重新配对 / 清除；401 错误卡给「去配对」 | ✅ |
+| 测试：server 17 · web 4 · mobile 52（新增 10） | ✅ |
+
+**与计划的偏差（有意）**
+
+1. 二维码扫码不做（计划里本来就是可选）：6 位码 + 手动粘贴令牌已经覆盖 v1 的真实路径。
+2. 配对码只留内存：2 分钟 TTL 下持久化没有意义，进程重启即作废反而更干净。
+3. 手机端只能兑换，不能管理设备 —— 列 / 改名 / 吊销一律 403（哪怕持有有效令牌）。
+4. `/api/chat-media/*` 继续在闸外：`<img>` 带不了 Authorization，沿用 2026-11-26 的只读口径。
+5. 本机判定不只看回环：`tailscale serve` 从 127.0.0.1 进来，必须叠加转发头 / ts.net Host 两个信号。
+
+**验证**：见 §11.1 的「M3 复查」。
+
+### 2026-11-27 · M4 落地（远程拉起）
+
+| 项 | 状态 |
+|---|---|
+| PC `scripts/remote/octopus-ctl.ps1`：status / start 两个动词、纯 JSON、幂等（运行中/正在起不再拉第二份）、探活绕开系统代理、UTF-8 输出 | ✅ |
+| PC `scripts/remote/install-remote.ps1`：管理员一次性——落脚本到 `C:\ProgramData\octopus\`、生成 8 把受限 SSH 密钥槽、写 `administrators_authorized_keys`（`restrict,command=`）、注册登录计划任务（`Octopus.exe --tray`）、写 `remote.json`、自测；**默认不改 sshd 配置、不重启 sshd**（`-DisablePasswordAuth` 才收紧） | ✅ 脚本就绪（本机尚未执行） |
+| Server：`remote-control` 服务（读 `remote.json` / 密钥槽发放即删）+ `devices.ssh_key_slot` 列 + `GET /api/remote/status`（仅回环）+ redeem 带 `wants_remote` 返回 SSH 载荷 | ✅ |
+| Web 设置页：「远程拉起」状态卡（已就绪 / 未安装 / 槽位余量）+ 设备行「远程 slot-XX」；未安装时点**启用远程拉起**（UAC）→ 轮询到已就绪 | ✅ |
+| 打包：安装器与 `octopus-ctl.ps1` 随桌面端走（`resources/remote`），sidecar 用 `OCTOPUS_REMOTE_DIR` 找；开发模式回落到仓库 `scripts/remote` | ✅ |
+| App：`dartssh2` + 私钥进安全存储；三档状态（离线 / 在线·未启动 / 运行中）+ 启动按钮 + 启动中 + 90 秒轮询 + 失败原样提示 | ✅ |
+| 测试：server 13 · web 7 · mobile 64（新增 12） | ✅ |
+
+**与计划的偏差（有意）**
+
+1. 密钥用「槽位池」：安装器在 PC 上生成，配对时随 redeem 一次性下发，发完立刻从 PC 删掉。
+   手机不自生成密钥 —— 换来的是装完之后零 UAC。
+2. 只认 `status` / `start`；计划里的 `stop` 不做（v1 不提供「远程关掉 Octopus」）。
+3. 触发通道选 App 内 SSH（`dartssh2`），没有常驻哨兵。
+4. 只有 HTTP 探活失败时才多走一次 SSH —— 在跑的机器每次刷新仍然只花一次 health。
+5. 脚本目前只有 PowerShell 分支；`status/start` + JSON 这份接口本身是按跨平台写的。
+6. 多 PC 不做「每台手动配」：桌面端设置页一个按钮发起 UAC 安装（安装器随桌面端打包）；
+   机器没有 OpenSSH Server 时安装器自动启用 Windows 可选功能。
+
+**验证**：见 §11.1 的「M4 复查」。
+
 ### 11.1 构建与联调记录
 
 **工具链（2026-11-26 装在这台机器上）**
@@ -357,7 +438,8 @@ tailscale serve reset      # 撤销
 - Android SDK → `%LOCALAPPDATA%\Android\Sdk`：platforms 35/36 · build-tools 35/36 · platform-tools · cmdline-tools
 - JDK 21（`ms-21.0.7`）；Gradle 9.5.0（wrapper 缓存已预置）
 - 镜像：`FLUTTER_STORAGE_BASE_URL` / `PUB_HOSTED_URL` → flutter-io.cn；
-  Gradle 依赖走本机代理（`~/.gradle/gradle.properties` → 127.0.0.1:15732）
+  Gradle 依赖走阿里云镜像（`~/.gradle/init.gradle` 把 google / mavenCentral 映到
+  `maven.aliyun.com`，只影响本机、不进仓库）
 
 **静态检查**：`flutter analyze` —— **0 error / 0 warning**；27 条 info，全部是 Flutter 3.50 的
 `package:flutter/material.dart` deprecated 提示（官方迁 `material_ui`，暂不换）与风格建议。
@@ -371,9 +453,10 @@ tailscale serve reset      # 撤销
 - SSE：`/api/workspaces/:id/events` 连接成功、30s heartbeat 被正确解析成事件
 
 **APK**：`C:\xzf\ai\open-octopus\packages\mobile\build\app\outputs\flutter-apk\app-debug.apk`
-—— debug · 192,167,146 字节（≈183 MiB，含 arm / arm64 / x64 三个 ABI）· 2026-11-26 19:51 构建完成，
-内核按 M2 代码编译。首次构建 1672s，时间几乎都花在 NDK 28.2 / CMake 3.22.1 的一次性下载上；
-M5 再出 `--release --split-per-abi` 的小包。
+—— debug · 227,832,466 字节（≈217 MiB，含 arm / arm64 / x64 三个 ABI）· 2026-11-27 10:05
+构建完成，内核按 M3 代码编译（含 `flutter_secure_storage` 原生插件；新增
+androidx.security / tink 依赖，比 M2 的 183 MiB 涨了约 34 MiB）。首次构建 755s
+（大半花在新依赖下载），增量重建 51s；M5 再出 `--release --split-per-abi` 的小包。
 
 **M2 复查（2026-11-26 晚）**
 
@@ -392,6 +475,76 @@ M5 再出 `--release --split-per-abi` 的小包。
 - 本机没有 Android 模拟器、也没有连接真机，**未做真机走查**；M2 的界面验收止于 widget
   整链测试，Tailscale 闭环 + 真实「回复后状态更新」要装 APK 后在手机上做（§7.1）。
 
+**M3 复查（2026-11-27）**
+
+- 服务端：`vitest run src/__tests__/device-auth.test.ts` —— **17 passed**
+  （peer 判定 4 · 中间件 4 · 配对码 / 兑换 5 · 设备管理 2 · WS 升级守卫 2）。
+- Web：`vitest run components/settings/__tests__/device-pairing-panel.test.tsx app/settings`
+  —— **5 passed**（配对码展示 / 403 提示 / 吊销 / 设置壳）。
+- 手机端：`flutter analyze` **0 error / 0 warning**（34 条 info，仍以 material 迁移提示为主）；
+  `flutter test` **52 passed** —— M2 的 42 条零回归，新增配对解析 7 条 + 添加设备整链 3 条
+  （回环真 HTTP 服务：探活 → 401 → 配对卡 → 兑换 → 进设备页；错码原样提示；粘贴令牌直接通过）。
+- 真机冒烟（临时 DB · `127.0.0.1:3211` · 服务只绑回环，跑完即删）：13 项全通 ——
+  本机 200 / XFF 与 ts.net Host 各 401 / 远程生成码 403 / 兑换得 64 hex 令牌 /
+  带令牌 200 / 错令牌 401 / 设备列表不含 token_hash / 远程持令牌管设备 403 /
+  吊销 204 → 同令牌立刻 401 / 健康探活始终 200；另验中文名 UTF-8、码只能用一次、
+  舱事件 SSE 在闸内（401）、chat-media 在闸外。
+- WebSocket 升级守卫（临时 DB · `127.0.0.1:3212`）：本机 `open(101)`；XFF / ts.net Host
+  无令牌各 401；错令牌 401；有效令牌 + ts.net Host → `open(101)`。
+- 仍未做真机走查（本机没模拟器 / 真机）：配对页面与令牌持久化的手感要在手机上验；
+  Android 侧已重新构建 APK 验证 `flutter_secure_storage` 接入
+  （`…\app-debug.apk` · 217 MiB · 2026-11-27 10:05，见上方 APK 行）。
+
+**M4 复查（2026-11-27）**
+
+- `octopus-ctl.ps1` 直接跑（真实桌面版在 47820）：`status` → `state=running`，带 sidecar pid /
+  uptime / mode，`task.registered=false`（安装器还没跑）；强制命令路径（读
+  `SSH_ORIGINAL_COMMAND`）→ 白名单生效，`rm -rf /` 返回 `bad_command`，中文提示按 UTF-8 正常输出。
+- Server：`vitest run src/__tests__/remote-control.test.ts` —— **13 passed**
+  （配置缺失 / 槽位计数 / 发放即删 / 坏私钥拒发 / 目录读不到 / redeem 三条路径 / 仅回环 /
+  一键启用 202 · 409 · 已装 200 · 安装器目录发现）；M3 的 17 条零回归（合计 30）。
+- Web：`vitest run components/settings/__tests__/device-pairing-panel.test.tsx` —— **7 passed**
+  （新增「已就绪 + 槽位余量 + 远程标记」「未安装给安装命令」「一键启用 → 轮询到已就绪」）；
+  eslint 干净。
+- 本机冒烟（临时 DB · 127.0.0.1:3311）：`GET /api/remote/status` → `installed:false`；
+  `POST /api/pair/code` → 200；服务器构建通过。
+- 手机端：`flutter analyze` **0 error / 0 warning**（32 条 info，仍以 material 迁移提示为主）；
+  `flutter test` **64 passed** —— M3 的 52 条零回归，新增 12 条：远程控制 JSON / 三档状态合成 /
+  启动轮询 / 电脑拒绝（task_missing）/ SSH 失败 / 配对返回 ssh 载荷 / 配对没装远程 /
+  设备列表「在线·未启动 → 点启动 → 运行中」整链。
+- **本机已在 2026-11-27 实际安装**（桌面端「启用远程拉起」的同一条路径）：
+  8 把密钥槽、计划任务 `Octopus`（Ready · `Octopus.exe --tray`）、`administrators_authorized_keys`
+  8 行 `restrict,command=`、`remote.json` 落盘；`sshd_config` 未改动（LastWriteTime 仍是 2023）；
+  安装器自测通过（`ssh 127.0.0.1 status` → 正常 JSON）。真机 SSH 闭环
+  （退出 Octopus → 手机看到「在线·未启动」→ 点启动 90 秒内进入舱）还要等手机端换 M4 APK 后再走一遍。
+- 本机两个环境坑（都已在代码里兜住）：
+  1. **UAC 被关掉（`EnableLUA=0`）**：`Start-Process -Verb RunAs` 不弹窗且直接失败 →
+     一键启用先探测权限，已是管理员就**直接执行**安装器；
+  2. **detached + `stdio: 'ignore'` 的隐藏 PowerShell 子进程在本机根本不执行**（三个变体实测）→
+     改成非 detached 的忽略输出子进程。
+- 安装器自带自测（用 slot-01 从本机走 `ssh 127.0.0.1 status`）；装完当场就能看到强制命令是否生效。
+
+### 2026-11-27 · M5 打磨（`packages/mobile`）
+
+- **图标**：与 PC exe 同源（`packages/desktop/build/icon.png`）→ Android 五档 + 自适应图标
+  （深底 `#0C0B0F` + 立绘 86% 居中）+ iOS 全尺寸，脚本 `scripts/make-launcher-icons.py`；
+  真机桌面（realme 启动器）实测为汐音。
+- **启动页**：API 31+ 系统启动页（底色 `#08060F` + 自适应图标；31 以下深底 + 96dp 圆角图标）+
+  Flutter `SplashGate`（光环呼吸 + `OCTOPUS` + 「汐音 · 作战舱」，约 1.2s 淡出，只冷启动一次）。
+  真机踩坑：debug 下 `Text` 缺 `Material` 祖先会被画出黄色双下划线，已用 `Material` 包住。
+- **场景图**：WebP 1440 宽 / q82，5.6 MB → 307 KB（`docs/cabin-design/assets/scene-*.webp`）。
+- **立绘动画**：VP9 alpha WebM 在 Android `video_player` 上丢透明通道（真机黑底）→ 转 animated WebP
+  （480×720 / 12fps / 60 帧，3 支 10.2 MB），`Image` 解码 alpha 正常；点立绘换支用 `gaplessPlayback`，
+  不再闪静态图；动作标签跟随当前支。`video_player` 依赖已移除。
+- **立绘默认开、静态图删除**（同日）：`octopus.crewVideo.v2` 默认 true；关掉时 `CrewFigure` /
+  `CrewStage` 直接不画（没有静态兜底）；深底头像只留给顶栏 `CrewAvatar` 裁脸。
+- **触感**：`lib/core/haptics.dart`（`tap` / `ok`）落在连接、启动、发送、配对成功。
+- **签名与分包**：仓库外 keystore `~\.octopus\mobile-signing\octopus-release.jks`
+  （`android/key.properties` 读取，均不入 git）；`--split-per-abi` → armeabi-v7a 34.5 MB /
+  arm64-v8a 36.4 MB / x86_64 37.7 MB。
+- **测试**：`flutter test` **68 passed**（新增启动页 2 条 + 立绘 WebP/隐藏 2 条）；
+  `flutter analyze` 0 error / 0 warning。
+
 ---
 
 ## 12. 变更记录
@@ -400,3 +553,6 @@ M5 再出 `--release --split-per-abi` 的小包。
 |---|---|
 | 2026-11-26 | 首版：基于 V1 定版原型拆 M0–M5；Flutter / `packages/mobile`；鉴权与远程拉起后置 |
 | 2026-11-26 | M1 / M2 落地记录：真实舱与会话、待你定引用条、舱事件刷新与离线态 |
+| 2026-11-27 | M3 落地：设备令牌 + 6 位配对码 + 设置页「手机配对」；本机判定叠加反向代理信号 |
+| 2026-11-27 | M4 落地：SSH 强制命令（status/start）+ 登录计划任务 + 密钥槽配对下发；设备三档状态与一键启动 |
+| 2026-11-27 | M5 打磨：图标换汐音（与 PC exe 同源）+ 自适应图标；启动页（系统层 + Flutter 光环字标）；场景图转 WebP（5.6 MB → 307 KB）；触感反馈；release 签名与 `--split-per-abi`（36.4 MB / arm64） |

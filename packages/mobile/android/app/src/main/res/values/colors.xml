@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 与 Flutter 的 Octo.screen 同一个底色：原生启动页 → 第一帧之间不闪白。 -->
+    <color name="octo_screen">#08060F</color>
+</resources>

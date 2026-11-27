@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../app/theme.dart';
+import '../core/haptics.dart';
 
 /// 圆角玻璃面板（原型 `.pnl`）。
 class RoundedPanel extends StatelessWidget {
@@ -202,7 +203,12 @@ class PrimaryButton extends StatelessWidget {
         color: Colors.transparent,
         child: InkWell(
           borderRadius: BorderRadius.circular(Octo.rL),
-          onTap: enabled ? onPressed : null,
+          onTap: enabled
+              ? () {
+                  Haptics.tap();
+                  onPressed!();
+                }
+              : null,
           child: Container(
             height: height,
             alignment: Alignment.center,

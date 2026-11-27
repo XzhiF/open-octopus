@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Android 12+ 的系统启动页：底色 + 应用图标（自适应图标，系统自己套圆形/圆角方遮罩）。
+      光环、字标、副标题由 Flutter 的 SplashGate 接着画（见 lib/widgets/splash.dart）。
+    -->
+    <style name="LaunchTheme" parent="@android:style/Theme.Black.NoTitleBar">
+        <item name="android:windowBackground">@color/octo_screen</item>
+        <item name="android:windowSplashScreenBackground">@color/octo_screen</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">@color/octo_screen</item>
+    </style>
+    <style name="NormalTheme" parent="@android:style/Theme.Black.NoTitleBar">
+        <item name="android:windowBackground">@color/octo_screen</item>
+    </style>
+</resources>

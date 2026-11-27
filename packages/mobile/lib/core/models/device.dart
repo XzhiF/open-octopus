@@ -7,6 +7,9 @@ enum DeviceStatus {
   /// /api/actuator/health → 503（服务在，但还没就绪）
   notReady,
 
+  /// M4：SSH 通、Octopus 没启动 —— 机器在线，可以一键拉起。
+  onlineStopped,
+
   /// 连不上（进程没跑 / 不在同一 tailnet / 电脑睡了）
   offline,
 
@@ -22,6 +25,9 @@ class Device {
     this.platform,
     this.lastSeenAt,
     this.note,
+    this.sshUser,
+    this.sshPort,
+    this.sshSlot,
   });
 
   final String id;
@@ -38,12 +44,23 @@ class Device {
 
   final String? note;
 
+  /// M4 远程拉起：sshd 用户名 / 端口 / 配对时下发的密钥槽。
+  /// 私钥不在这里 —— 它只在系统安全存储里（见 RemoteKeyStore）。
+  final String? sshUser;
+  final int? sshPort;
+  final String? sshSlot;
+
+  bool get hasRemote => sshUser != null && sshUser!.isNotEmpty;
+
   Device copyWith({
     String? name,
     String? baseUrl,
     String? platform,
     String? lastSeenAt,
     String? note,
+    String? sshUser,
+    int? sshPort,
+    String? sshSlot,
   }) {
     return Device(
       id: id,
@@ -52,6 +69,9 @@ class Device {
       platform: platform ?? this.platform,
       lastSeenAt: lastSeenAt ?? this.lastSeenAt,
       note: note ?? this.note,
+      sshUser: sshUser ?? this.sshUser,
+      sshPort: sshPort ?? this.sshPort,
+      sshSlot: sshSlot ?? this.sshSlot,
     );
   }
 
@@ -62,6 +82,9 @@ class Device {
         if (platform != null) 'platform': platform,
         if (lastSeenAt != null) 'lastSeenAt': lastSeenAt,
         if (note != null) 'note': note,
+        if (sshUser != null) 'sshUser': sshUser,
+        if (sshPort != null) 'sshPort': sshPort,
+        if (sshSlot != null) 'sshSlot': sshSlot,
       };
 
   factory Device.fromJson(Map<String, dynamic> json) {
@@ -74,6 +97,9 @@ class Device {
       platform: json['platform'] as String?,
       lastSeenAt: json['lastSeenAt'] as String?,
       note: json['note'] as String?,
+      sshUser: json['sshUser'] as String?,
+      sshPort: (json['sshPort'] as num?)?.toInt(),
+      sshSlot: json['sshSlot'] as String?,
     );
   }
 }

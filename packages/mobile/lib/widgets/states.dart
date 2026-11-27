@@ -42,16 +42,27 @@ class LoadingState extends StatelessWidget {
 }
 
 class ErrorState extends StatelessWidget {
-  const ErrorState({super.key, required this.error, this.onRetry, this.compact = false});
+  const ErrorState({
+    super.key,
+    required this.error,
+    this.onRetry,
+    this.onRepair,
+    this.compact = false,
+  });
 
   final Object error;
   final VoidCallback? onRetry;
+
+  /// 401/403：令牌失效时的出口（去设置里重新配对）。
+  final VoidCallback? onRepair;
+
   final bool compact;
 
   @override
   Widget build(BuildContext context) {
     final message = describeError(error);
     final api = error is ApiException ? error as ApiException : null;
+    final unauthorized = api?.kind == 'unauthorized';
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: 16, vertical: compact ? 12 : 24),
       child: RoundedPanel(
@@ -65,7 +76,9 @@ class ErrorState extends StatelessWidget {
                 const Icon(Icons.error_outline, size: 15, color: Octo.red),
                 const SizedBox(width: 8),
                 Text(
-                  api?.isNetwork == true ? '连不上' : '出错了',
+                  unauthorized
+                      ? '需要配对'
+                      : (api?.isNetwork == true ? '连不上' : '出错了'),
                   style: const TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w600,
@@ -84,21 +97,40 @@ class ErrorState extends StatelessWidget {
                 color: Octo.dim,
               ),
             ),
-            if (onRetry != null) ...[
+            if (onRetry != null || (unauthorized && onRepair != null)) ...[
               const SizedBox(height: 12),
               Align(
                 alignment: Alignment.centerRight,
-                child: TextButton(
-                  onPressed: onRetry,
-                  style: TextButton.styleFrom(
-                    foregroundColor: Octo.teal,
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(999),
-                      side: BorderSide(color: Octo.teal.withValues(alpha: .4)),
-                    ),
-                  ),
-                  child: const Text('重试', style: TextStyle(fontSize: 11.5)),
+                child: Wrap(
+                  spacing: 8,
+                  children: [
+                    if (unauthorized && onRepair != null)
+                      TextButton(
+                        onPressed: onRepair,
+                        style: TextButton.styleFrom(
+                          foregroundColor: Octo.teal,
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(999),
+                            side: BorderSide(color: Octo.teal.withValues(alpha: .4)),
+                          ),
+                        ),
+                        child: const Text('去配对', style: TextStyle(fontSize: 11.5)),
+                      ),
+                    if (onRetry != null)
+                      TextButton(
+                        onPressed: onRetry,
+                        style: TextButton.styleFrom(
+                          foregroundColor: Octo.teal,
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(999),
+                            side: BorderSide(color: Octo.teal.withValues(alpha: .4)),
+                          ),
+                        ),
+                        child: const Text('重试', style: TextStyle(fontSize: 11.5)),
+                      ),
+                  ],
                 ),
               ),
             ],

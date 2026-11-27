@@ -13,13 +13,13 @@ class SceneBackground extends StatefulWidget {
     this.child,
   });
 
-  /// `assets/scenes/scene-cruise.png`
+  /// `assets/scenes/scene-cruise.webp`
   final String asset;
   final int starCount;
   final Widget? child;
 
-  static const cruise = 'assets/scenes/scene-cruise.png';
-  static const deepspace = 'assets/scenes/scene-deepspace.png';
+  static const cruise = 'assets/scenes/scene-cruise.webp';
+  static const deepspace = 'assets/scenes/scene-deepspace.webp';
 
   @override
   State<SceneBackground> createState() => _SceneBackgroundState();

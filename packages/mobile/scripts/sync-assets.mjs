@@ -15,11 +15,14 @@ const design = path.join(repoRoot, 'docs/cabin-design')
 
 /** [源文件, 目标（相对 packages/mobile/assets）] */
 const COPIES = [
-  ['assets/scene-cruise.png', 'scenes/scene-cruise.png'],
-  ['assets/scene-deepspace.png', 'scenes/scene-deepspace.png'],
-  ['assets/v22/07-idle.webm', 'clips/07-idle.webm'],
-  ['assets/v22/05-concerned.webm', 'clips/05-concerned.webm'],
-  ['assets/v22/09-smile.webm', 'clips/09-smile.webm'],
+  // 场景图用 WebP（1440 宽，q82）：5.6 MB → 307 KB，手机上肉眼无差。
+  ['assets/scene-cruise.webp', 'scenes/scene-cruise.webp'],
+  ['assets/scene-deepspace.webp', 'scenes/scene-deepspace.webp'],
+  // 立绘用带 alpha 的 animated WebP（VP9 的 webm 在 Flutter/Android 上会失去透明通道）。
+  ['assets/v22/07-idle.webp', 'clips/07-idle.webp'],
+  ['assets/v22/05-concerned.webp', 'clips/05-concerned.webp'],
+  ['assets/v22/09-smile.webp', 'clips/09-smile.webp'],
+  // 这张是深底半身像，只给顶栏 CrewAvatar 裁头像用；立绘只有动画一种形态，没有静态兜底。
   ['crew/xiyin-idle.png', 'crew/xiyin-idle.png'],
 ]
 

@@ -372,6 +372,9 @@ class _LinkBanner extends StatelessWidget {
       case DeviceStatus.offline:
         color = Octo.red;
         text = '离线：电脑没开 / 不在同一 Tailscale 网络';
+      case DeviceStatus.onlineStopped:
+        color = Octo.teal;
+        text = '电脑在线，但 Octopus 没启动 —— 回设备列表点「启动」';
       case DeviceStatus.notReady:
         color = Octo.amber;
         text = '在线 · 未就绪：服务起来了，还在准备';
@@ -392,7 +395,11 @@ class _LinkBanner extends StatelessWidget {
         child: Row(
           children: [
             Icon(
-              status == DeviceStatus.offline ? Icons.cloud_off : Icons.hourglass_empty,
+              status == DeviceStatus.offline
+                  ? Icons.cloud_off
+                  : status == DeviceStatus.onlineStopped
+                      ? Icons.power_settings_new
+                      : Icons.hourglass_empty,
               size: 14,
               color: color,
             ),

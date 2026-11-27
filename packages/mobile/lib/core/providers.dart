@@ -8,27 +8,65 @@ import 'models/chat.dart';
 import 'models/device.dart';
 import 'models/sse.dart';
 import 'models/task.dart';
+import 'remote.dart';
+import 'remote_key_store.dart';
 import 'storage.dart';
+import 'token_store.dart';
 
 /// 由 main() 在 bootstrap 时覆盖为真实实例。
 final storeProvider = Provider<Store>((ref) {
   throw UnimplementedError('storeProvider 必须在 bootstrap 覆盖');
 });
 
+/// 设备令牌存储：main() 覆盖为 SecureTokenStore；单测默认进程内记忆。
+final tokenStoreProvider = Provider<TokenStore>((ref) => InMemoryTokenStore());
+
+/// 远程拉起密钥存储（M4）：main() 覆盖为 SecureRemoteKeyStore。
+final remoteKeyStoreProvider = Provider<RemoteKeyStore>((ref) => InMemoryRemoteKeyStore());
+
+/// SSH 执行面（M4）：单测覆盖成假实现，不连真实网络。
+final remoteShellProvider = Provider<RemoteShell>((ref) => const SshRemoteShell());
+
+/// HTTP 探活面：抽出来是为了让「启动后轮询」在测试里可替换。
+final httpProbeProvider = Provider<Future<DeviceStatus> Function(String)>((ref) => probeDevice);
+
+/// 拉起节奏：90 秒上限 / 2 秒一轮（测试覆写成毫秒级）。
+final launchTimingProvider = Provider<({Duration timeout, Duration interval})>(
+  (ref) => (timeout: const Duration(seconds: 90), interval: const Duration(seconds: 2)),
+);
+
 class AppState {
   const AppState({
     this.devices = const [],
+    this.tokens = const {},
+    this.sshKeys = const {},
     this.currentDeviceId,
     this.reduceMotion = false,
-    this.crewVideo = false,
+    this.crewVideo = true,
   });
 
   final List<Device> devices;
+
+  /// 已配对设备的令牌（内存副本；落盘在系统安全存储里）。
+  final Map<String, String> tokens;
+
+  /// 远程拉起的 SSH 私钥（内存副本；落盘在系统安全存储里）。
+  final Map<String, String> sshKeys;
+
   final String? currentDeviceId;
   final bool reduceMotion;
 
-  /// 立绘走视频（VP9 alpha）。默认关，真机 spike 通过后再默认开。
+  /// 立绘动画（带透明通道的 WebP）。默认开；关掉就整支不画 —— 没有静态兜底图。
   final bool crewVideo;
+
+  String? tokenFor(String? deviceId) =>
+      deviceId == null ? null : tokens[deviceId];
+
+  String? sshKeyFor(String? deviceId) =>
+      deviceId == null ? null : sshKeys[deviceId];
+
+  /// 当前设备的令牌；null = 这台机器没开设备令牌（回环直连）或还没配对。
+  String? get currentToken => tokenFor(currentDeviceId);
 
   Device? get currentDevice {
     final id = currentDeviceId;
@@ -41,6 +79,8 @@ class AppState {
 
   AppState copyWith({
     List<Device>? devices,
+    Map<String, String>? tokens,
+    Map<String, String>? sshKeys,
     String? currentDeviceId,
     bool clearCurrent = false,
     bool? reduceMotion,
@@ -48,6 +88,8 @@ class AppState {
   }) {
     return AppState(
       devices: devices ?? this.devices,
+      tokens: tokens ?? this.tokens,
+      sshKeys: sshKeys ?? this.sshKeys,
       currentDeviceId: clearCurrent ? null : (currentDeviceId ?? this.currentDeviceId),
       reduceMotion: reduceMotion ?? this.reduceMotion,
       crewVideo: crewVideo ?? this.crewVideo,
@@ -59,12 +101,24 @@ class AppStateNotifier extends Notifier<AppState> {
   @override
   AppState build() {
     final store = ref.read(storeProvider);
+    final tokenStore = ref.read(tokenStoreProvider);
+    final remoteKeys = ref.read(remoteKeyStoreProvider);
     final devices = store.loadDevices();
+    final tokens = <String, String>{};
+    final sshKeys = <String, String>{};
+    for (final device in devices) {
+      final token = tokenStore.tokenFor(device.id);
+      if (token != null && token.isNotEmpty) tokens[device.id] = token;
+      final key = remoteKeys.keyFor(device.id);
+      if (key != null && key.isNotEmpty) sshKeys[device.id] = key;
+    }
     final savedId = store.loadCurrentDeviceId();
     final currentId =
         savedId != null && devices.any((d) => d.id == savedId) ? savedId : null;
     return AppState(
       devices: devices,
+      tokens: tokens,
+      sshKeys: sshKeys,
       currentDeviceId: currentId,
       reduceMotion: store.loadReduceMotion(),
       crewVideo: store.loadCrewVideo(),
@@ -74,15 +128,68 @@ class AppStateNotifier extends Notifier<AppState> {
   Future<void> addDevice(Device device) async {
     final next = [...state.devices.where((d) => d.id != device.id), device];
     await ref.read(storeProvider).saveDevices(next);
-    state = state.copyWith(devices: next);
+    final storedKey = ref.read(remoteKeyStoreProvider).keyFor(device.id);
+    state = state.copyWith(
+      devices: next,
+      sshKeys: storedKey == null || storedKey.isEmpty
+          ? null
+          : {...state.sshKeys, device.id: storedKey},
+    );
   }
 
   Future<void> removeDevice(String id) async {
     final next = state.devices.where((d) => d.id != id).toList(growable: false);
     await ref.read(storeProvider).saveDevices(next);
+    await ref.read(tokenStoreProvider).remove(id);
+    await ref.read(remoteKeyStoreProvider).remove(id);
+    final tokens = {...state.tokens}..remove(id);
+    final sshKeys = {...state.sshKeys}..remove(id);
     final clearing = state.currentDeviceId == id;
     if (clearing) await ref.read(storeProvider).saveCurrentDeviceId(null);
-    state = state.copyWith(devices: next, clearCurrent: clearing);
+    state = state.copyWith(
+      devices: next,
+      tokens: tokens,
+      sshKeys: sshKeys,
+      clearCurrent: clearing,
+    );
+  }
+
+  /// 配对兑换回来 / 手动粘贴的令牌：写安全存储 + 更新内存副本。
+  Future<void> saveToken(String deviceId, String token) async {
+    await ref.read(tokenStoreProvider).save(deviceId, token);
+    state = state.copyWith(tokens: {...state.tokens, deviceId: token});
+  }
+
+  /// 配对时换到的「远程拉起」：SSH 用户 / 端口 / 槽位写进设备，
+  /// 私钥进安全存储（重新配对时整把替换）。
+  Future<void> saveRemote(
+    String deviceId, {
+    required String user,
+    required int port,
+    String? slot,
+    String? privateKey,
+  }) async {
+    final next = state.devices
+        .map((d) => d.id == deviceId
+            ? d.copyWith(sshUser: user, sshPort: port, sshSlot: slot)
+            : d)
+        .toList(growable: false);
+    await ref.read(storeProvider).saveDevices(next);
+    if (privateKey == null || privateKey.isEmpty) {
+      state = state.copyWith(devices: next);
+      return;
+    }
+    await ref.read(remoteKeyStoreProvider).save(deviceId, privateKey);
+    state = state.copyWith(
+      devices: next,
+      sshKeys: {...state.sshKeys, deviceId: privateKey},
+    );
+  }
+
+  Future<void> clearToken(String deviceId) async {
+    await ref.read(tokenStoreProvider).remove(deviceId);
+    final tokens = {...state.tokens}..remove(deviceId);
+    state = state.copyWith(tokens: tokens);
   }
 
   Future<void> renameDevice(String id, String name) async {
@@ -133,24 +240,40 @@ final crewVideoProvider = Provider<bool>(
   (ref) => ref.watch(appStateProvider).crewVideo,
 );
 
-/// 跟随当前设备的 baseUrl 重建；换机器时旧 dio 被关闭。
-/// 只盯 baseUrl —— 改名 / 记录 lastSeen 不该把正在飞的请求干掉。
+/// 跟随当前设备的 baseUrl / 令牌重建；换机器或重新配对时旧 dio 被关闭。
+/// 只盯 baseUrl + token —— 改名 / 记录 lastSeen 不该把正在飞的请求干掉。
 final apiProvider = Provider<OctopusApi?>((ref) {
   final baseUrl = ref.watch(appStateProvider.select((s) => s.currentDevice?.baseUrl));
+  final token = ref.watch(appStateProvider.select((s) => s.currentToken));
   if (baseUrl == null) return null;
-  final api = OctopusApi(baseUrl);
+  final api = OctopusApi(baseUrl, token: token);
   ref.onDispose(api.close);
   return api;
 });
 
 // ── 设备探活 ────────────────────────────────────────────────────────────
 
+/// 三档状态：HTTP 通 → 运行中 / 未就绪；HTTP 不通但有远程密钥 → 再问一次 SSH，
+/// 能问出 stopped 就是「在线 · 未启动」，SSH 也不通才是真离线。
 final deviceStatusProvider = FutureProvider.autoDispose.family<DeviceStatus, String>(
   (ref, deviceId) async {
-    // 只盯 baseUrl：markSeen 会改 lastSeenAt，若盯整个 Device 会自激重探。
-    final baseUrl = ref.watch(appStateProvider.select((s) => _baseUrlOf(s.devices, deviceId)));
-    if (baseUrl == null) return DeviceStatus.unknown;
-    final status = await probeDevice(baseUrl);
+    // 只盯 baseUrl + 远程配置：markSeen 改 lastSeenAt，若盯整个 Device 会自激重探。
+    final info = ref.watch(appStateProvider.select((s) {
+      final d = _deviceOf(s.devices, deviceId);
+      if (d == null) return null;
+      return (d.baseUrl, d.sshUser, d.sshPort);
+    }));
+    if (info == null) return DeviceStatus.unknown;
+    final key = ref.watch(appStateProvider.select((s) => s.sshKeys[deviceId]));
+
+    final status = await probeDeviceStatus(
+      baseUrl: info.$1,
+      sshUser: info.$2,
+      sshPort: info.$3,
+      privateKey: key,
+      shell: ref.read(remoteShellProvider),
+      httpProbe: ref.read(httpProbeProvider),
+    );
     if (status == DeviceStatus.running) {
       // 记录一次「上次在线」，列表里离线时也有话说。
       await ref.read(appStateProvider.notifier).markSeen(deviceId);
@@ -159,12 +282,124 @@ final deviceStatusProvider = FutureProvider.autoDispose.family<DeviceStatus, Str
   },
 );
 
-String? _baseUrlOf(List<Device> devices, String id) {
+Device? _deviceOf(List<Device> devices, String id) {
   for (final d in devices) {
-    if (d.id == id) return d.baseUrl;
+    if (d.id == id) return d;
   }
   return null;
 }
+
+// ── 远程拉起（M4）────────────────────────────────────────────────────────
+
+enum LaunchPhase { starting, failed }
+
+class LaunchState {
+  const LaunchState({required this.phase, this.message, this.startedAt});
+
+  final LaunchPhase phase;
+  final String? message;
+  final DateTime? startedAt;
+
+  bool get starting => phase == LaunchPhase.starting;
+}
+
+/// 每台设备一条：点「启动」→ SSH 敲 start → 2 秒一轮探活，90 秒封顶。
+/// 失败不吞：message 原样给人看（计划任务不存在 / SSH 不通 / timeout）。
+class DeviceLaunchController extends Notifier<Map<String, LaunchState>> {
+  @override
+  Map<String, LaunchState> build() => const {};
+
+  LaunchState? stateOf(String deviceId) => state[deviceId];
+
+  bool isStarting(String deviceId) => state[deviceId]?.phase == LaunchPhase.starting;
+
+  Future<void> start(String deviceId) async {
+    if (isStarting(deviceId)) return;
+
+    final app = ref.read(appStateProvider);
+    final device = _deviceOf(app.devices, deviceId);
+    if (device == null) return;
+    if (!device.hasRemote) {
+      _set(deviceId, const LaunchState(
+        phase: LaunchPhase.failed,
+        message: '这台设备没有远程拉起密钥 —— 在电脑上重新配对一次',
+      ));
+      return;
+    }
+    final key = app.sshKeyFor(deviceId);
+    if (key == null || key.isEmpty) {
+      _set(deviceId, const LaunchState(
+        phase: LaunchPhase.failed,
+        message: '远程密钥读不到 —— 在电脑上重新配对一次',
+      ));
+      return;
+    }
+    final host = Uri.tryParse(device.baseUrl)?.host ?? '';
+    if (host.isEmpty) return;
+
+    _set(deviceId, LaunchState(phase: LaunchPhase.starting, startedAt: DateTime.now()));
+
+    try {
+      final result = await ref.read(remoteShellProvider).run(
+            host: host,
+            port: device.sshPort ?? 22,
+            user: device.sshUser!,
+            privateKey: key,
+            verb: RemoteVerb.start,
+          );
+      final payload = RemoteStatusPayload.parse(result.stdout);
+      if (payload.ok == false) {
+        _set(deviceId, LaunchState(
+          phase: LaunchPhase.failed,
+          message: payload.message ?? '电脑拒绝启动（${payload.error ?? '未知原因'}）',
+        ));
+        return;
+      }
+    } on RemoteException catch (err) {
+      _set(deviceId, LaunchState(phase: LaunchPhase.failed, message: err.message));
+      return;
+    } catch (err) {
+      _set(deviceId, LaunchState(
+        phase: LaunchPhase.failed,
+        message: '启动命令没发出去：$err',
+      ));
+      return;
+    }
+
+    final timing = ref.read(launchTimingProvider);
+    final probe = ref.read(httpProbeProvider);
+    final deadline = DateTime.now().add(timing.timeout);
+    while (DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(timing.interval);
+      final status = await probe(device.baseUrl);
+      if (status == DeviceStatus.running) {
+        await ref.read(appStateProvider.notifier).markSeen(deviceId);
+        state = {...state}..remove(deviceId);
+        ref.invalidate(deviceStatusProvider(deviceId));
+        return;
+      }
+    }
+    _set(deviceId, LaunchState(
+      phase: LaunchPhase.failed,
+      message: '等了 ${timing.timeout.inSeconds} 秒还没起来 —— 去电脑上看看 Octopus 有没有报错',
+    ));
+    ref.invalidate(deviceStatusProvider(deviceId));
+  }
+
+  void clear(String deviceId) {
+    if (!state.containsKey(deviceId)) return;
+    state = {...state}..remove(deviceId);
+  }
+
+  void _set(String deviceId, LaunchState value) {
+    state = {...state, deviceId: value};
+  }
+}
+
+final deviceLaunchProvider =
+    NotifierProvider<DeviceLaunchController, Map<String, LaunchState>>(
+  DeviceLaunchController.new,
+);
 
 // ── 舱 ──────────────────────────────────────────────────────────────────
 

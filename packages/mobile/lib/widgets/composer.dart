@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../app/theme.dart';
+import '../core/haptics.dart';
 
 /// 输入区（原型 `.composer`）：快捷词药丸 + 圆角输入框 + 圆形发送键。
 class Composer extends StatefulWidget {
@@ -51,6 +52,7 @@ class _ComposerState extends State<Composer> {
   Future<void> _submit() async {
     final text = _controller.text.trim();
     if (text.isEmpty || widget.sending || !widget.enabled) return;
+    Haptics.tap();
     _controller.clear();
     setState(() => _hasText = false);
     _focus.requestFocus();

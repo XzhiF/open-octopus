@@ -4,9 +4,10 @@ import 'package:go_router/go_router.dart';
 
 import '../../app/theme.dart';
 import '../../core/format.dart';
+import '../../core/haptics.dart';
 import '../../core/models/device.dart';
 import '../../core/providers.dart';
-import '../../widgets/crew_video.dart';
+import '../../widgets/crew_animation.dart';
 import '../../widgets/octo_bar.dart';
 import '../../widgets/panel.dart';
 import '../../widgets/scene_background.dart';
@@ -56,7 +57,10 @@ class DevicesScreen extends ConsumerWidget {
               ),
               Expanded(
                 child: devices.isEmpty
-                    ? _EmptyDevices(onAdd: () => context.push('/add-device'))
+                    ? _EmptyDevices(
+                        onAdd: () => context.push('/add-device'),
+                        animated: ref.watch(crewVideoProvider),
+                      )
                     : RefreshIndicator(
                         color: Octo.teal,
                         backgroundColor: Octo.indigo2,
@@ -84,7 +88,7 @@ class DevicesScreen extends ConsumerWidget {
                             const SizedBox(height: 18),
                             CrewStage(
                               height: 250,
-                              videoEnabled: ref.watch(crewVideoProvider),
+                              animated: ref.watch(crewVideoProvider),
                               label: '待命 IDLE',
                             ),
                           ],
@@ -111,9 +115,10 @@ class DevicesScreen extends ConsumerWidget {
 }
 
 class _EmptyDevices extends StatelessWidget {
-  const _EmptyDevices({required this.onAdd});
+  const _EmptyDevices({required this.onAdd, this.animated = true});
 
   final VoidCallback onAdd;
+  final bool animated;
 
   @override
   Widget build(BuildContext context) {
@@ -122,7 +127,8 @@ class _EmptyDevices extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
       children: [
         const SizedBox(height: 30),
-        const CrewPose(height: 240, alignment: Alignment.center),
+        // 与舱内同一个动画立绘；「立绘动画」关掉时这里同样不画。
+        CrewFigure(height: 240, alignment: Alignment.center, cycleOnTap: false, animated: animated),
         const SizedBox(height: 4),
         const Text(
           '先把家里那台机器加进来',
@@ -155,38 +161,65 @@ class _DeviceTile extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final statusAsync = ref.watch(deviceStatusProvider(device.id));
+    final launch = ref.watch(deviceLaunchProvider.select((m) => m[device.id]));
     final status = statusAsync.value ?? DeviceStatus.unknown;
+
+    final launching = launch?.starting == true;
+    final launchFailed = launch?.phase == LaunchPhase.failed;
+    final onlineStopped = status == DeviceStatus.onlineStopped;
+    final canStart = onlineStopped || launchFailed;
 
     final color = switch (status) {
       DeviceStatus.running => Octo.green,
       DeviceStatus.notReady => Octo.amber,
+      DeviceStatus.onlineStopped => Octo.teal,
       DeviceStatus.offline => Octo.off,
       DeviceStatus.unknown => Octo.off,
     };
-    final pillLabel = switch (status) {
-      DeviceStatus.running => '运行中',
-      DeviceStatus.notReady => '在线·未就绪',
-      DeviceStatus.offline => '离线',
-      DeviceStatus.unknown => '检测中',
-    };
+    final pillLabel = launching
+        ? '启动中'
+        : switch (status) {
+            DeviceStatus.running => '运行中',
+            DeviceStatus.notReady => '在线·未就绪',
+            DeviceStatus.onlineStopped => '在线·未启动',
+            DeviceStatus.offline => '离线',
+            DeviceStatus.unknown => '检测中',
+          };
 
     final platform = (device.platform ?? _guessPlatform(device.baseUrl)).toUpperCase();
     final lastSeen = device.lastSeenAt;
-    final sub = lastSeen == null
+    final baseSub = lastSeen == null
         ? '$platform · ${shortenPath(device.baseUrl, max: 34)}'
         : '$platform · 上次 ${formatAgo(lastSeen)}';
+    final sub = launching
+        ? '正在拉起 Octopus… 最多等 90 秒'
+        : launchFailed
+            ? (launch?.message ?? '启动失败')
+            : onlineStopped
+                ? '电脑在线，Octopus 没启动 —— 点「启动」把它叫起来'
+                : baseSub;
+
+    void start() => ref.read(deviceLaunchProvider.notifier).start(device.id);
 
     return Opacity(
-      opacity: status == DeviceStatus.offline ? .82 : 1,
+      opacity: status == DeviceStatus.offline && !launchFailed ? .82 : 1,
       child: RoundedPanel(
         padding: const EdgeInsets.fromLTRB(15, 14, 15, 14),
-        borderColor: status == DeviceStatus.running
-            ? Octo.green.withValues(alpha: .24)
-            : status == DeviceStatus.notReady
-                ? Octo.amber.withValues(alpha: .26)
-                : Octo.hairline,
+        borderColor: launching || onlineStopped
+            ? Octo.teal.withValues(alpha: .28)
+            : launchFailed
+                ? Octo.red.withValues(alpha: .32)
+                : status == DeviceStatus.running
+                    ? Octo.green.withValues(alpha: .24)
+                    : status == DeviceStatus.notReady
+                        ? Octo.amber.withValues(alpha: .26)
+                        : Octo.hairline,
         gradient: Octo.cardGradient,
         onTap: () async {
+          if (onlineStopped && !launching) {
+            start();
+            return;
+          }
           await ref.read(appStateProvider.notifier).selectDevice(device.id);
           if (context.mounted) context.go('/device');
         },
@@ -220,23 +253,35 @@ class _DeviceTile extends ConsumerWidget {
                   const SizedBox(height: 5),
                   Text(
                     sub,
-                    maxLines: 1,
+                    maxLines: launchFailed ? 2 : 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontFamily: Octo.mono,
                       fontSize: 10.5,
                       height: 1.5,
                       letterSpacing: .3,
-                      color: Octo.dim,
+                      color: launchFailed ? Octo.red : Octo.dim,
                     ),
                   ),
                 ],
               ),
             ),
             const SizedBox(width: 8),
-            StatusPill(label: pillLabel, color: color),
+            StatusPill(label: pillLabel, color: launching ? Octo.teal : color),
             const SizedBox(width: 6),
-            const Icon(Icons.chevron_right, size: 18, color: Octo.metal2),
+            if (launching)
+              const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Octo.teal,
+                ),
+              )
+            else if (canStart)
+              _StartButton(label: launchFailed ? '重试' : '启动', onTap: start)
+            else
+              const Icon(Icons.chevron_right, size: 18, color: Octo.metal2),
           ],
         ),
       ),
@@ -247,5 +292,48 @@ class _DeviceTile extends ConsumerWidget {
     final host = Uri.tryParse(baseUrl)?.host ?? '';
     if (host.contains('mac') || host.contains('macbook')) return 'macos';
     return 'windows';
+  }
+}
+
+/// 设备行右侧的小药丸按钮：「启动 / 重试」。
+class _StartButton extends StatelessWidget {
+  const _StartButton({required this.label, required this.onTap});
+
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: () {
+        Haptics.tap();
+        onTap();
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: Octo.teal.withValues(alpha: .5)),
+          color: Octo.teal.withValues(alpha: .12),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.play_arrow, size: 13, color: Octo.teal),
+            const SizedBox(width: 3),
+            Text(
+              label,
+              style: const TextStyle(
+                fontFamily: Octo.mono,
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+                letterSpacing: .5,
+                color: Octo.teal,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

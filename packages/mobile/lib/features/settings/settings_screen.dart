@@ -4,7 +4,9 @@ import 'package:go_router/go_router.dart';
 
 import '../../app/theme.dart';
 import '../../core/format.dart';
+import '../../core/http.dart';
 import '../../core/models/device.dart';
+import '../../core/pairing.dart';
 import '../../core/providers.dart';
 import '../../widgets/octo_bar.dart';
 import '../../widgets/panel.dart';
@@ -46,11 +48,14 @@ class SettingsScreen extends ConsumerWidget {
                         _DeviceRow(
                           device: device,
                           current: device.id == state.currentDeviceId,
+                          paired: state.tokenFor(device.id) != null,
                           onTap: () async {
                             await ref.read(appStateProvider.notifier).selectDevice(device.id);
                             if (context.mounted) context.go('/device');
                           },
                           onRename: () => _rename(context, ref, device),
+                          onPair: () => _pair(context, ref, device),
+                          onClearToken: () => _clearToken(context, ref, device),
                           onDelete: () => _delete(context, ref, device),
                         ),
                         const SizedBox(height: 8),
@@ -71,8 +76,8 @@ class SettingsScreen extends ConsumerWidget {
                     ),
                     const SizedBox(height: 8),
                     _SwitchRow(
-                      title: '立绘用视频（实验）',
-                      subtitle: '全舱模式那 13 支 VP9 透明立绘；能不能真透明取决于机型的解码器',
+                      title: '立绘动画',
+                      subtitle: '汐音的三支循环动作（透明 WebP 动画）；点立绘换下一支。关掉就不显示立绘',
                       value: state.crewVideo,
                       onChanged: (v) => ref.read(appStateProvider.notifier).setCrewVideo(v),
                     ),
@@ -84,13 +89,16 @@ class SettingsScreen extends ConsumerWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           const Text(
-                            'Octopus · 手机端 M1',
+                            'Octopus · 手机端 M4',
                             style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.white),
                           ),
                           const SizedBox(height: 8),
                           Text(
                             '连的是你自己的 Tailscale 网络，不经过任何云端。\n'
-                            '手机端只做两件事：进某个舱，或者开一个不归属任何舱的单独会话。\n'
+                            '开了设备令牌的机器，第一次连接要用电脑「设置 → 手机配对」里的 6 位码换一条令牌；\n'
+                            '配对同时会换一把受限 SSH 密钥 —— Octopus 没启动时，设备列表可以一键把它拉起来'
+                            '（电脑得先跑过 scripts/remote/install-remote.ps1）。\n'
+                            '令牌和私钥都只存在这台手机的系统安全存储里。\n'
                             '状态由 agent 改 —— 界面上没有「改状态」的按钮。',
                             style: TextStyle(
                               fontFamily: Octo.mono,
@@ -140,6 +148,123 @@ class SettingsScreen extends ConsumerWidget {
     controller.dispose();
   }
 
+  /// 配对：输入 6 位码（走兑换）或直接粘贴令牌（试一次 /api/cabins 再存）。
+  Future<void> _pair(BuildContext context, WidgetRef ref, Device device) async {
+    final controller = TextEditingController();
+    final input = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: Octo.indigo2,
+        title: Text('配对「${device.name}」',
+            style: const TextStyle(fontSize: 15, color: Colors.white)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              '在电脑「设置 → 手机配对」生成 6 位码（2 分钟内有效）。\n也可以直接粘贴设备令牌。',
+              style: TextStyle(fontSize: 12, height: 1.6, color: Octo.ink2),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: controller,
+              autofocus: true,
+              autocorrect: false,
+              enableSuggestions: false,
+              style: const TextStyle(fontFamily: Octo.mono, fontSize: 13, color: Octo.ink),
+              decoration: const InputDecoration(hintText: '6 位配对码 / 设备令牌'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: const Text('配对', style: TextStyle(color: Octo.teal)),
+          ),
+        ],
+      ),
+    );
+    final value = (input ?? '').trim();
+    controller.dispose();
+    if (value.isEmpty) return;
+
+    try {
+      if (RegExp(r'^\d{6}$').hasMatch(value)) {
+        final result = await redeemPairCode(
+          device.baseUrl,
+          value,
+          name: device.name,
+          platform: platformName(),
+        );
+        await ref.read(appStateProvider.notifier).saveToken(device.id, result.token);
+        if (result.hasRemote && result.sshUser != null) {
+          await ref.read(appStateProvider.notifier).saveRemote(
+                device.id,
+                user: result.sshUser!,
+                port: result.sshPort ?? 22,
+                slot: result.sshSlot,
+                privateKey: result.sshKey,
+              );
+        }
+        final hint = result.hasRemote ? null : result.remoteHint;
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                hint == null ? '「${device.name}」已配对' : '「${device.name}」已配对\n$hint',
+              ),
+              duration: Duration(seconds: hint == null ? 4 : 7),
+            ),
+          );
+        }
+      } else {
+        final ok = await probeAuthorized(device.baseUrl, token: value);
+        if (!ok) {
+          throw ApiException('这条令牌无效 —— 在电脑上重新生成配对码', kind: 'unauthorized');
+        }
+        await ref.read(appStateProvider.notifier).saveToken(device.id, value);
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('「${device.name}」已配对')),
+          );
+        }
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(describeError(e))),
+        );
+      }
+    }
+  }
+
+  Future<void> _clearToken(BuildContext context, WidgetRef ref, Device device) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: Octo.indigo2,
+        title: Text('清除「${device.name}」的令牌？',
+            style: const TextStyle(fontSize: 15, color: Colors.white)),
+        content: const Text(
+          '清除后这台设备按「未配对」处理。如果电脑开了设备令牌，下一次请求会 401，'
+          '需要重新配对。',
+          style: TextStyle(fontSize: 12.5, color: Octo.ink2, height: 1.6),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('清除', style: TextStyle(color: Octo.red)),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) {
+      await ref.read(appStateProvider.notifier).clearToken(device.id);
+    }
+  }
+
   Future<void> _delete(BuildContext context, WidgetRef ref, Device device) async {
     final ok = await showDialog<bool>(
       context: context,
@@ -170,15 +295,21 @@ class _DeviceRow extends StatelessWidget {
   const _DeviceRow({
     required this.device,
     required this.current,
+    required this.paired,
     required this.onTap,
     required this.onRename,
+    required this.onPair,
+    required this.onClearToken,
     required this.onDelete,
   });
 
   final Device device;
   final bool current;
+  final bool paired;
   final VoidCallback onTap;
   final VoidCallback onRename;
+  final VoidCallback onPair;
+  final VoidCallback onClearToken;
   final VoidCallback onDelete;
 
   @override
@@ -212,6 +343,14 @@ class _DeviceRow extends StatelessWidget {
                           const SizedBox(width: 8),
                           const StatusPill(label: '当前', color: Octo.teal),
                         ],
+                        if (paired) ...[
+                          const SizedBox(width: 8),
+                          const StatusPill(label: '已配对', color: Octo.teal),
+                        ],
+                        if (device.hasRemote) ...[
+                          const SizedBox(width: 8),
+                          const StatusPill(label: '远程', color: Octo.teal),
+                        ],
                       ],
                     ),
                     const SizedBox(height: 4),
@@ -244,11 +383,23 @@ class _DeviceRow extends StatelessWidget {
             icon: const Icon(Icons.more_vert, size: 17, color: Octo.metal2),
             onSelected: (value) {
               if (value == 'rename') onRename();
+              if (value == 'pair') onPair();
+              if (value == 'clear') onClearToken();
               if (value == 'delete') onDelete();
             },
-            itemBuilder: (ctx) => const [
-              PopupMenuItem(value: 'rename', child: Text('重命名', style: TextStyle(fontSize: 13))),
-              PopupMenuItem(value: 'delete', child: Text('删除', style: TextStyle(fontSize: 13, color: Octo.red))),
+            itemBuilder: (ctx) => [
+              const PopupMenuItem(value: 'rename', child: Text('重命名', style: TextStyle(fontSize: 13))),
+              PopupMenuItem(
+                value: 'pair',
+                child: Text(paired ? '换一条令牌' : '配对 / 粘贴令牌',
+                    style: const TextStyle(fontSize: 13)),
+              ),
+              if (paired)
+                const PopupMenuItem(
+                  value: 'clear',
+                  child: Text('清除令牌', style: TextStyle(fontSize: 13)),
+                ),
+              const PopupMenuItem(value: 'delete', child: Text('删除', style: TextStyle(fontSize: 13, color: Octo.red))),
             ],
           ),
         ],

@@ -13,7 +13,7 @@ class Store {
   static const _kDevices = 'octopus.devices.v1';
   static const _kCurrent = 'octopus.currentDevice.v1';
   static const _kReduceMotion = 'octopus.reduceMotion.v1';
-  static const _kCrewVideo = 'octopus.crewVideo.v1';
+  static const _kCrewVideo = 'octopus.crewVideo.v2';
   static const _kLastSeenPrefix = 'octopus.lastSeen.';
 
   List<Device> loadDevices() {
@@ -49,8 +49,9 @@ class Store {
 
   Future<void> saveReduceMotion(bool value) => prefs.setBool(_kReduceMotion, value);
 
-  /// 立绘走视频（VP9 alpha WebM）。默认关：真机解码支不支持 alpha 要 M0 spike 验过。
-  bool loadCrewVideo() => prefs.getBool(_kCrewVideo) ?? false;
+  /// 立绘动画（带透明通道的 WebP）：默认开。没有可靠的静帧 —— 关掉就不画立绘。
+  /// 键升到 v2：旧版默认是关，机器上存下的 false 多半是默认值而非选择，升级后统一按开。
+  bool loadCrewVideo() => prefs.getBool(_kCrewVideo) ?? true;
 
   Future<void> saveCrewVideo(bool value) => prefs.setBool(_kCrewVideo, value);
 
