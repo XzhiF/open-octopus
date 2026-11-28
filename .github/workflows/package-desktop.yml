@@ -1,0 +1,60 @@
+name: Package Desktop
+
+# 桌面端出包：macOS arm64（未签名 .app）+ Windows x64（win-unpacked）。
+# 手动跑：Actions → Package Desktop → Run workflow；打 v* tag 也会自动出包。
+# 产物在同一次运行的 Artifacts 里，14 天后过期。
+#
+# 说明：
+# - 与 `pnpm desktop:pack` 完全同一条链（build-main → prepare-resources → electron-builder --dir），
+#   sidecar 的 Node runtime、better-sqlite3 原生模块、web dist、core-pack 都由脚本就地生成。
+# - macOS 产物未签名（electron-builder.yml: mac.identity = null），首次打开要右键 → 打开。
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+concurrency:
+  group: package-desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            artifact: octopus-desktop-macos-arm64
+          - os: windows-latest
+            artifact: octopus-desktop-windows-x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10 # 与 ci.yml 同口径：lockfile 的 overrides 是 pnpm 10 格式
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm desktop:pack
+
+      - name: Zip macOS app
+        if: runner.os == 'macOS'
+        run: ditto -c -k --sequesterRsrc --keepParent packages/desktop/release/mac-arm64/Octopus.app Octopus-desktop-macos-arm64.zip
+
+      - name: Zip Windows app
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path packages/desktop/release/win-unpacked/* -DestinationPath Octopus-desktop-windows-x64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: Octopus-desktop-*.zip
+          if-no-files-found: error
+          retention-days: 14

@@ -11,8 +11,6 @@ to you only when a decision is actually yours.
 It is not about authoring workflows. It is about finishing a piece of work reliably and leaving a
 trace behind. Workflows run quietly underneath.
 
-<img src="docs/imgs/cabin.webp" alt="Cabin: fleet, main chat, needs-your-attention" />
-
 ## Three things
 
 | | |
@@ -174,6 +172,11 @@ pnpm dev --isolated # worktree isolation (own ports + database)
 pnpm dev --port 3101,3100   # explicit web / server ports
 pnpm port           # show port allocation
 ```
+
+No local toolchain? Build on GitHub instead: Actions → **Package Desktop** / **Package Android APK**
+→ Run workflow (pushing a `v*` tag does it too). Artifacts land under the run: desktop for macOS arm64
+(unsigned) and Windows x64, plus split APKs for three Android ABIs (debug-signed by default; configure
+the signing secrets to get release-signed builds).
 
 ## Project layout
 
