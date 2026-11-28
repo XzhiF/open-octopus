@@ -174,9 +174,9 @@ pnpm port           # show port allocation
 ```
 
 No local toolchain? Build on GitHub instead: Actions → **Package Desktop** / **Package Android APK**
-→ Run workflow (pushing a `v*` tag does it too). Artifacts land under the run: desktop for macOS arm64
-(unsigned) and Windows x64, plus split APKs for three Android ABIs (debug-signed by default; configure
-the signing secrets to get release-signed builds).
+→ Run workflow (pushing a `v*` tag does it too). Artifacts land under the run: desktop for Windows x64
+(macOS arm64 is built locally with `pnpm desktop:pack`), plus split APKs for three Android ABIs
+(debug-signed by default; configure the signing secrets to get release-signed builds).
 
 ## Project layout
 

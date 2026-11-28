@@ -164,8 +164,9 @@ pnpm port           # 查看当前端口分配
 ```
 
 不想本地配工具链也可以在 GitHub 上出包：Actions → **Package Desktop** / **Package Android APK**
-→ Run workflow（打 `v*` tag 也会自动跑）。产物在同一次运行的 Artifacts 里：桌面端 macOS arm64
-（未签名）与 Windows x64，安卓三个 ABI 的 split APK（默认 debug 签名，配好签名 secrets 即走 release）。
+→ Run workflow（打 `v*` tag 也会自动跑）。产物在同一次运行的 Artifacts 里：桌面端 Windows x64
+（macOS arm64 包在本机 `pnpm desktop:pack`），安卓三个 ABI 的 split APK（默认 debug 签名，
+配好签名 secrets 即走 release）。
 
 ## 项目结构
 
