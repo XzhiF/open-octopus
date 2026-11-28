@@ -957,11 +957,15 @@ export interface CabinDelegationView {
   brief: unknown
   autonomy: "approve" | "checkpoint" | "hands-off"
   state: "queued" | "running" | "waiting_input" | "done" | "failed" | "cancelled"
+  /** 2026-11-27 用户：会话创建者 —— xiyin 委派 / user 人自开；缺省按汐音派处理。 */
+  origin?: "xiyin" | "user"
   doer_session_id: string | null
   result_summary: string | null
   created_at: string
   updated_at: string
   ended_at: string | null
+  /** 归档时间（2026-11-25）：null = 未归档。state=done 只代表「活跃」。 */
+  archived_at?: string | null
   handle: string | null
   color: number | null
 }
@@ -989,6 +993,24 @@ export async function createCabinDelegation(
   },
 ): Promise<CabinDelegationView> {
   const res = await fetch(url(`/${cabinId}/delegations`), {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(input),
+  })
+  const body = await handleResponse<{ delegation: CabinDelegationView }>(res)
+  return body.delegation
+}
+
+/**
+ * 人自开会话登记（2026-11-27 用户）：编队「新会话」建好 AgentSession 之后调用，
+ * 落一条 origin=user 的委派 —— 与汐音委派同一本账、同一套状态机。
+ * 同一会话幂等（重复登记返回原行）。
+ */
+export async function registerCabinUserSession(
+  cabinId: string,
+  input: { session_id: string; title?: string; intent?: string },
+): Promise<CabinDelegationView> {
+  const res = await fetch(url(`/${cabinId}/delegations/register`), {
     method: "POST",
     headers: JSON_HEADERS,
     body: JSON.stringify(input),

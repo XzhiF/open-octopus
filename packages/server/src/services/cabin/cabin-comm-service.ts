@@ -113,6 +113,9 @@ export class CabinCommService {
       sessionId = session.id
     }
 
+    // 2026-11-27 用户：会话只有一本账 —— 用户自开会话是 cabin_delegations
+    // （origin=user），不再登记成 cabin_jobs.kind=chat。
+
     const row: CabinJobRow = {
       id: randomUUID(), cabin_id: cabinId, kind: input.kind,
       ref_id: refId, session_id: sessionId,

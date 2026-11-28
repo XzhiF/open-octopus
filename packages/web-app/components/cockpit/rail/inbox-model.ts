@@ -48,6 +48,10 @@ function refOf(row: CockpitRow, item: CabinAttentionItem): CockpitRef {
   if (row.kind === 'attention') return { kind: 'attention', cabinId: row.cabinId, id: row.item.id }
   if (row.kind === 'job') return { kind: 'job', cabinId: row.cabinId, id: row.job.id }
   if (row.kind === 'task') return { kind: 'task', cabinId: row.cabinId, id: row.task.id }
+  // design 25：委派待办 → 会话详情面（2026-11-25 起有六页签）。
+  if (item.subject?.kind === 'delegation') {
+    return { kind: 'delegation', cabinId: row.cabinId, id: item.subject.id }
+  }
   if (item.job_id) return { kind: 'job', cabinId: row.cabinId, id: item.job_id }
   return { kind: 'attention', cabinId: row.cabinId, id: item.id }
 }

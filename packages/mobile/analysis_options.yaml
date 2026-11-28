@@ -1,0 +1,19 @@
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  language:
+    strict-casts: false
+    strict-raw-types: false
+  exclude:
+    - build/**
+    - .dart_tool/**
+    - android/**
+    - ios/**
+
+linter:
+  rules:
+    # 界面上大量 const-able 的小组件是刻意的可读性，不强制 const
+    prefer_const_constructors: false
+    prefer_const_literals_to_create_immutables: false
+    # async 后用 context 必须带 mounted 检查（这条要开）
+    use_build_context_synchronously: true

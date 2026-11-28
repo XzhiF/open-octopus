@@ -23,6 +23,8 @@ import { CockpitJobHeader, CockpitJobTabs } from './CockpitJobHeader'
 import { CockpitJobFiles } from './CockpitJobFiles'
 import { CockpitJobDebug } from './CockpitJobDebug'
 import { CockpitJobProject } from './CockpitJobProject'
+import { CockpitJobUsage } from './CockpitJobUsage'
+import { CockpitJobAgents, useSessionActivity } from './CockpitJobAgents'
 import { projectNameFromKey } from '../projects/project-model'
 
 export interface CockpitTaskFaceProps {
@@ -83,6 +85,9 @@ export function CockpitTaskFace({
 
   const currency = useBillingCurrency()
   const view: TaskView | null = detail ?? row?.task ?? null
+  // 任务作业的会话 = doer 会话（消耗 / 子代理共用；没有就空态）。
+  const doerSessionId = view?.doer_session_id ?? row?.task.doer_session_id ?? null
+  const agentsActivity = useSessionActivity(doerSessionId)
   // 项目锚点与副行「项目」段：classic 同源（task.project_ids）。
   const taskProjects = view?.project_ids ?? []
   const headerProjectName = projectName
@@ -215,6 +220,18 @@ export function CockpitTaskFace({
           />
         </div>
       )}
+
+      {/* 2026-11-25 用户：消耗 / 子代理（任务补这两签，与作业面同源）。 */}
+      {tab === 'usage' && (
+        <div data-testid="cockpit-face-task-usage">
+          <CockpitJobUsage taskId={taskId} sessionId={doerSessionId} what="任务" />
+        </div>
+      )}
+      {tab === 'agents' && (
+        <div data-testid="cockpit-face-task-agents">
+          <CockpitJobAgents sessionId={doerSessionId} activity={agentsActivity} what="任务" />
+        </div>
+      )}
     </>
   )
 
@@ -241,7 +258,11 @@ export function CockpitTaskFace({
         {view ? (
           <>
             {/* 原型 .dtabs 在滚动正文里（.pb）—— 页签跟内容一起滚走。 */}
-            <CockpitJobTabs tab={tab} onTabChange={onTabChange} />
+            <CockpitJobTabs
+              tab={tab}
+              onTabChange={onTabChange}
+              badges={agentsActivity.total > 0 ? { agents: agentsActivity.total } : undefined}
+            />
             {panes}
           </>
         ) : (

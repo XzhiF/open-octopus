@@ -26,6 +26,7 @@ interface DoneCard {
 
 function refOfItem(item: CabinAttentionItem, cabinId: string): CockpitRef {
   if (item.subject?.kind === 'task') return { kind: 'task', cabinId, id: item.subject.id }
+  if (item.subject?.kind === 'delegation') return { kind: 'delegation', cabinId, id: item.subject.id }
   if (item.job_id) return { kind: 'job', cabinId, id: item.job_id }
   if (item.task_id) return { kind: 'task', cabinId, id: item.task_id }
   return { kind: 'attention', cabinId, id: item.id }

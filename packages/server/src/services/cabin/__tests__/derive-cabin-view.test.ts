@@ -161,6 +161,17 @@ describe("deriveCabinView", () => {
     expect(acked.attention).toEqual([])
   })
 
+  it("已归档委派：不再产任何 attention（完成回流 / 在问 / 失败都闭嘴）", () => {
+    const v = deriveCabinView(base({
+      delegations: [
+        { id: "d1", title: "完成已归档", state: "done", summary: "结论", archived_at: "2026-11-25T02:00:00.000Z" },
+        { id: "d2", title: "在问已归档", state: "waiting_input", archived_at: "2026-11-25T02:00:00.000Z" },
+        { id: "d3", title: "失败已归档", state: "failed", archived_at: "2026-11-25T02:00:00.000Z" },
+      ],
+    }))
+    expect(v.attention.filter(a => a.id.includes("delegation"))).toEqual([])
+  })
+
   // ── 委派提问去重（v22 #9）────────────────────────────────────────
   it("委派在问：消息派生的 ask 已带 subject → 不再重复产 delegation-ask-* 行", () => {
     const v = deriveCabinView(base({
@@ -183,5 +194,17 @@ describe("deriveCabinView", () => {
       delegations: [{ id: "d1", title: "对比", state: "waiting_input" }],
     }))
     expect(v.attention.some(a => a.id === "delegation-ask-d1")).toBe(true)
+  })
+})
+describe("deriveCabinView · 用户自开会话（origin=user）", () => {
+  it("不产待办：done 不发完成回执、waiting_input 也不出 ask", () => {
+    const v = deriveCabinView(base({
+      delegations: [
+        { id: "u1", title: "整理阈值", state: "done", origin: "user", handle: "D1" },
+        { id: "u2", title: "还在跑", state: "waiting_input", origin: "user", handle: "D2" },
+        { id: "d1", title: "汐音的", state: "done", handle: "D3" },
+      ],
+    }))
+    expect(v.attention.map((a) => a.id)).toEqual(["done-delegation-d1"])
   })
 })

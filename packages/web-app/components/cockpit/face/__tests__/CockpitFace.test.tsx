@@ -33,7 +33,14 @@ vi.mock('@/lib/tasks-api', async (importOriginal) => {
 })
 vi.mock('@/lib/agent/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/agent/api')>()
-  return { ...actual, listRunningSessions: vi.fn() }
+  return {
+    ...actual,
+    listRunningSessions: vi.fn(),
+    // 详情面「子代理」角标/页签会挂会话活动轮询（2026-11-25）：测试里给空电平。
+    listSessionSubagents: vi.fn(async () => ({ runs: [] })),
+    getSessionRunning: vi.fn(async () => ({ background_tasks: [] })),
+    listSessionBackgroundRuns: vi.fn(async () => ({ runs: [] })),
+  }
 })
 
 import {

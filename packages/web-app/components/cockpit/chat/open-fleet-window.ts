@@ -3,6 +3,10 @@
 //   行体 / 💬 / 详情里的「💬 对话」都走这里 —— 已开过就聚焦（共享 z 栈置顶），
 //   否则开一扇新窗：默认几何量主通讯台，和它一样大、直接盖上去；多扇逐扇
 //   错开 18px。上限仍为 5，超出 toast 拒绝（不静默吞掉）。
+//
+// v23（2026-11-27 用户）：openNewSessionWindow —— 编队「新会话」草稿窗；
+// 发第一条消息才创建会话。创建后窗口原地转正（threadKey 仍为 null），
+// 编队行再点开时按 sessionId 命中同一扇窗，不重复开。
 
 import { toast } from 'sonner'
 import type { CockpitRect, CockpitThreadsApi, CockpitWindowsApi } from '../state/cockpit-state'
@@ -54,16 +58,32 @@ export function openFleetChat(
   threads: Pick<CockpitThreadsApi, 'clearUnread'>,
   threadKey: string,
   consoleView?: ConsoleView | null,
+  sessionId?: string | null,
 ): boolean {
-  const hit = wins.windows.find((win) => win.threadKey === threadKey)
+  const hit = wins.windows.find((win) => win.threadKey === threadKey
+    || (!!sessionId && win.sessionId === sessionId))
   const rect = hit
     ? hit.rect
     : cascadeFromConsole(consoleRectOf(consoleView) ?? defaultConsoleRect(), wins.windows.length, {
       width: window.innerWidth,
       height: window.innerHeight,
     })
-  const ok = wins.openWindow(threadKey, rect)
+  const ok = wins.openWindow(threadKey, rect, sessionId)
   if (!ok) toast.error('独立窗口最多 5 个 —— 先关一扇再开')
   else threads.clearUnread(threadKey)
+  return ok
+}
+
+/** v23（2026-11-27 用户）：编队「新会话」—— 空白草稿窗，发第一条消息才创建会话。 */
+export function openNewSessionWindow(
+  wins: CockpitWindowsApi,
+  consoleView?: ConsoleView | null,
+): boolean {
+  const rect = cascadeFromConsole(consoleRectOf(consoleView) ?? defaultConsoleRect(), wins.windows.length, {
+    width: window.innerWidth,
+    height: window.innerHeight,
+  })
+  const ok = wins.openDraftWindow(rect)
+  if (!ok) toast.error('独立窗口最多 5 个 —— 先关一扇再开')
   return ok
 }

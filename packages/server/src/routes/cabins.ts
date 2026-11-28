@@ -6,7 +6,6 @@
 // Usage aggregation (P4) and comm note/resume (P3) land with their phases.
 
 import fs from "fs"
-import os from "os"
 import path from "path"
 import { Hono } from "hono"
 import type { Context } from "hono"
@@ -30,6 +29,9 @@ import type { SSEService } from "../services/sse"
 import { gitOps } from "../services/git-ops"
 import { getLocalTree } from "../services/local-tree"
 import { touchTreeWatch } from "../services/tree-watch"
+import {
+  DocAccessError, resolveDocPath, readDoc, readDocRaw,
+} from "../services/doc-file"
 import { findingView } from "./findings"
 
 function classifyError(err: unknown): { status: number; message: string } {
@@ -107,60 +109,8 @@ const CABIN_RAW_IMAGE_MIME: Record<string, string> = {
 const CABIN_RAW_MAX_BYTES = 8 * 1024 * 1024
 
 /* ── 文档查看器（2026-11-19 用户 #4）：聊天里出现的产物绝对路径 → 只读查阅。
-      文本类回内容（2MB 上限）；图片 / 视频 / 音频走 /doc-raw（64MB，支持 Range）；
-      其余（未知扩展 = 二进制）只回 kind=binary，UI 显示「无法查阅二进制文件」。 ── */
-class DocAccessError extends Error {
-  constructor(readonly status: number, message: string) {
-    super(message)
-    this.name = "DocAccessError"
-  }
-}
-
-/** 文本类文档（md / yaml / json 等优化显示，html 按纯文本看，不做页面渲染）。 */
-const DOC_TEXT_EXT = new Set([
-  ".md", ".markdown", ".mdx", ".txt", ".json", ".jsonc", ".yaml", ".yml", ".toml", ".ini", ".conf",
-  ".csv", ".tsv", ".log", ".xml", ".html", ".htm", ".css", ".scss", ".less",
-  ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".vue", ".svelte",
-  ".py", ".go", ".rs", ".java", ".kt", ".kts", ".sh", ".bash", ".zsh", ".ps1",
-  ".sql", ".graphql", ".proto", ".diff", ".patch", ".rst", ".adoc",
-])
-
-/** 媒体类文档：<img> / <video> / <audio> 直连 /doc-raw（只读字节流）。 */
-const CABIN_DOC_MEDIA_MIME: Record<string, string> = {
-  ...CABIN_RAW_IMAGE_MIME,
-  ".mp4": "video/mp4",
-  ".m4v": "video/x-m4v",
-  ".webm": "video/webm",
-  ".ogv": "video/ogg",
-  ".mov": "video/quicktime",
-  ".mp3": "audio/mpeg",
-  ".m4a": "audio/mp4",
-  ".wav": "audio/wav",
-  ".ogg": "audio/ogg",
-}
-
-const DOC_TEXT_MAX_BYTES = 2 * 1024 * 1024
-const DOC_RAW_MAX_BYTES = 64 * 1024 * 1024
-
-function withinDocRoot(target: string, root: string): boolean {
-  const fold = (v: string) => (process.platform === "win32" ? v.toLowerCase() : v)
-  const t = fold(target)
-  const r = fold(root)
-  return t === r || t.startsWith(r + path.sep)
-}
-
-/** 绝对路径 → 校验必须落在本舱文档根内（舱目录 / 本舱任务 workspace）。 */
-function resolveCabinDoc(service: CabinService, cabinId: string, rawPath: string): { abs: string; ext: string } {
-  if (!rawPath.trim()) throw new DocAccessError(400, "Query param 'path' is required")
-  const expanded = rawPath.trim().replace(/^~(?=$|[\\/])/, os.homedir())
-  if (!path.isAbsolute(expanded)) throw new DocAccessError(400, "path must be absolute")
-  const abs = path.resolve(expanded)
-  const roots = service.docRoots(cabinId)
-  if (!roots.some((root) => withinDocRoot(abs, root))) {
-    throw new DocAccessError(403, "path outside this cabin's docs")
-  }
-  return { abs, ext: path.extname(abs).toLowerCase() }
-}
+      共享口径见 services/doc-file.ts（文本 2MB 上限；媒体 raw 64MB，支持 Range；
+      未知扩展 = binary，UI 显示「无法查阅二进制文件」）。 ── */
 
 const createBodySchema = z.object({
   /** v5：可选。空名先落「未命名舱」，init 开头按需求取名（一次请求就建）。 */
@@ -865,24 +815,12 @@ export function createCabinRoutes(
 
   router.get("/:id/doc", (c) => {
     try {
-      const { abs, ext } = resolveCabinDoc(service, c.req.param("id"), c.req.query("path") ?? "")
-      let st: fs.Stats
-      try {
-        st = fs.statSync(abs)
-      } catch {
-        throw new DocAccessError(404, "file not found")
-      }
-      if (!st.isFile()) throw new DocAccessError(404, "not a regular file")
-      const base = { path: abs, ext, size: st.size }
-      const mediaMime = CABIN_DOC_MEDIA_MIME[ext]
-      if (mediaMime) {
-        const kind = mediaMime.startsWith("video/") ? "video"
-          : mediaMime.startsWith("audio/") ? "audio" : "image"
-        return c.json({ ...base, kind, mime: mediaMime })
-      }
-      if (!DOC_TEXT_EXT.has(ext)) return c.json({ ...base, kind: "binary" })
-      if (st.size > DOC_TEXT_MAX_BYTES) throw new DocAccessError(413, "file too large to read")
-      return c.json({ ...base, kind: "text", content: fs.readFileSync(abs, "utf8") })
+      const { abs, ext } = resolveDocPath(
+        c.req.query("path") ?? "",
+        service.docRoots(c.req.param("id")),
+        "path outside this cabin's docs",
+      )
+      return c.json(readDoc(abs, ext))
     } catch (err) {
       const { status, message } = classifyError(err)
       return c.json({ error: message }, status as 400)
@@ -892,52 +830,31 @@ export function createCabinRoutes(
   // 媒体字节流：<img src> / <video src> 直连；支持 Range（视频可拖动进度）。
   router.get("/:id/doc-raw", (c) => {
     try {
-      const { abs, ext } = resolveCabinDoc(service, c.req.param("id"), c.req.query("path") ?? "")
-      const mime = CABIN_DOC_MEDIA_MIME[ext]
-      if (!mime) throw new DocAccessError(415, "unsupported raw file type")
-      let st: fs.Stats
-      try {
-        st = fs.statSync(abs)
-      } catch {
-        throw new DocAccessError(404, "file not found")
+      const { abs, ext } = resolveDocPath(
+        c.req.query("path") ?? "",
+        service.docRoots(c.req.param("id")),
+        "path outside this cabin's docs",
+      )
+      const raw = readDocRaw(abs, ext, c.req.header("range"))
+      if (raw.kind === "range-not-satisfiable") {
+        return c.body(null, 416, { "Content-Range": `bytes */${raw.total}` })
       }
-      if (!st.isFile()) throw new DocAccessError(404, "not a regular file")
-      if (st.size > DOC_RAW_MAX_BYTES) throw new DocAccessError(413, "file too large")
-      const buf = fs.readFileSync(abs)
       const headers: Record<string, string> = {
-        "Content-Type": mime,
+        "Content-Type": raw.mime,
         "Cache-Control": "no-store",
         "Accept-Ranges": "bytes",
         "X-Content-Type-Options": "nosniff",
       }
-      const range = c.req.header("range")
-      const m = range ? /^bytes=(\d*)-(\d*)$/.exec(range.trim()) : null
-      if (m && (m[1] || m[2])) {
-        let start: number
-        let end: number
-        if (!m[1] && m[2]) {
-          // 后缀区间：最后 N 字节
-          const suffix = Number(m[2])
-          start = Math.max(0, buf.byteLength - suffix)
-          end = buf.byteLength - 1
-        } else {
-          start = Number(m[1])
-          end = m[2] ? Number(m[2]) : buf.byteLength - 1
-        }
-        end = Math.min(end, buf.byteLength - 1)
-        if (!Number.isFinite(start) || start > end || start >= buf.byteLength) {
-          return c.body(null, 416, { "Content-Range": `bytes */${buf.byteLength}` })
-        }
-        const slice = buf.subarray(start, end + 1)
-        return c.body(new Uint8Array(slice), 206, {
+      if (raw.kind === "partial") {
+        return c.body(new Uint8Array(raw.buf), 206, {
           ...headers,
-          "Content-Range": `bytes ${start}-${end}/${buf.byteLength}`,
-          "Content-Length": String(slice.byteLength),
+          "Content-Range": `bytes ${raw.start}-${raw.end}/${raw.total}`,
+          "Content-Length": String(raw.buf.byteLength),
         })
       }
-      return c.body(new Uint8Array(buf), 200, {
+      return c.body(new Uint8Array(raw.buf), 200, {
         ...headers,
-        "Content-Length": String(buf.byteLength),
+        "Content-Length": String(raw.buf.byteLength),
       })
     } catch (err) {
       const { status, message } = classifyError(err)
@@ -1223,11 +1140,61 @@ export function createCabinRoutes(
     }
   })
 
+  // 用户自开会话登记（2026-11-27 用户）：会话先由前端 /agent/sessions 建好，
+  // 这里登记成委派（origin=user）—— 与汐音委派同一本账、同一套状态机。
+  const userSessionBodySchema = z.object({
+    session_id: z.string().min(1),
+    title: z.string().optional(),
+    intent: z.string().optional(),
+  })
+
+  router.post("/:id/delegations/register", async (c) => {
+    if (!delegations) return c.json({ error: "delegation service not wired" }, 503)
+    const body = await safeJson(c)
+    if (!body) return c.json({ error: "Invalid or missing JSON body" }, 400)
+    try {
+      const input = userSessionBodySchema.parse(body)
+      const cabinId = c.req.param("id")
+      const row = delegations.registerUserSession(cabinId, {
+        sessionId: input.session_id,
+        title: input.title,
+        intent: input.intent,
+      })
+      const h = service.listWorkView(cabinId)
+        .find((w) => w.kind === "delegation" && w.id === row.id)
+      return c.json({
+        delegation: {
+          ...row,
+          brief: row.brief ? JSON.parse(row.brief) as unknown : null,
+          handle: h?.handle ?? null,
+          color: h?.color ?? null,
+        },
+      }, 201)
+    } catch (err) {
+      const { status, message } = classifyError(err)
+      return c.json({ error: message }, status as 400)
+    }
+  })
+
   router.post("/:id/delegations/:did/cancel", (c) => {
     if (!delegations) return c.json({ error: "delegation service not wired" }, 503)
     const row = delegations.get(c.req.param("did"))
     if (!row || row.cabin_id !== c.req.param("id")) return c.json({ error: "delegation not found" }, 404)
     return c.json({ delegation: delegations.cancel(row.id) })
+  })
+
+  // 归档闸（2026-11-25 用户）：会话也有归档；汐音走工具，REST 留给面板 / 脚本。
+  router.post("/:id/delegations/:did/archive", async (c) => {
+    if (!delegations) return c.json({ error: "delegation service not wired" }, 503)
+    const row = delegations.get(c.req.param("did"))
+    if (!row || row.cabin_id !== c.req.param("id")) return c.json({ error: "delegation not found" }, 404)
+    const body = await safeJson(c)
+    const summary = typeof body?.summary === "string" && body.summary.trim() ? body.summary : undefined
+    try {
+      return c.json({ delegation: delegations.archive(row.id, { summary }) })
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 409)
+    }
   })
 
   // ── SSE (channel cabin:<id>) ───────────────────────────────────────

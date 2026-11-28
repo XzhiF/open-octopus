@@ -27,11 +27,15 @@ import { CockpitItemReceipt } from '@/components/cockpit/items/CockpitItemReceip
 import type { RunningAgentSession } from '@/lib/agent/api'
 import { CwdPicker, type CwdChoice } from './cwd-picker'
 import { ChatArea, type ChatComposerBridge } from './ChatArea'
+import { ComposerModelPopover } from './composer-model-popover'
+import { ComposerIdentityPicker } from './composer-identity-picker'
 import { TaskModulesLayer } from '@/components/chat-workbench/task-modules-layer'
 import { TriggerDialog } from '@/components/tasks/trigger-dialog'
 import type { RunTarget, SubagentTarget, TaskModule, TaskWindowMap, YamlTarget } from '@/components/chat-workbench/task-window-types'
 import { useTaskModuleSurface } from '@/lib/task-module-surface'
 import { TaskProjectChip } from '@/components/chat-workbench/task-project-chip'
+import { ChatMediaProvider } from './chat-images'
+import { ChatDocWindow } from './chat-doc-window'
 import { WorkspaceExplorerDock, type CabinDockModule } from '@/components/workspace/workspace-explorer-dock'
 import { useActivitySnapshot } from '@/components/chat-workbench/inspector-activity'
 import { WorkflowWindow } from '@/components/chat-workbench/workflow-window'
@@ -188,6 +192,18 @@ export interface ChatPaneProps {
   attachSlot?: HTMLElement | null
   /** 索引面板定位主机：通讯台 = .ck12-comms（缺省），独立窗 = .ck12-cwin。 */
   chromeHostSelector?: string
+  /** v23（2026-11-27 用户）：全舱「新会话」草稿窗 —— hero 第二行给 classic 同款的
+   *  工作区 / 模型 / 分身三件套（cockpitVariant 平时把模型与身份藏进舰桥，这里补回来）。 */
+  newSessionOptions?: boolean
+  /** v23：草稿窗的第一条消息创建会话后回调 —— 宿主把窗原地绑成正式会话
+   *  （窗口不重开；编队同时落一行）。 */
+  onSessionCreated?: (
+    session: AgentSession,
+    info: { clone: string | null; cloneLabel: string | null; firstMessage: string },
+  ) => void
+  /** v23：新会话草稿的默认工作区（全舱 = 舱自己的工作空间），缺省 = Main Agent cwd。
+   *  只在还没有会话时生效；用户手动选过目录后不再覆盖。 */
+  defaultCwd?: CwdChoice
 }
 
 /** 决策卡上「选择即写回卡片」的按钮 id。其余按钮（打开规格/运行窗…）只是导航，
@@ -238,6 +254,9 @@ export function ChatPane({
   indexSlot,
   attachSlot,
   chromeHostSelector,
+  newSessionOptions,
+  onSessionCreated,
+  defaultCwd,
 }: ChatPaneProps) {
   const {
     sessions, sessionsLoading, createNewSession, updateSessionTitle,
@@ -246,6 +265,8 @@ export function ChatPane({
   } = shared
 
   const [creatingTask, setCreatingTask] = useState(false)
+  // 对话图片缩略图（2026-11-26 用户）：会话 id 下发给渲染层，图片接口按会话解析白名单。
+  const mediaScope = useMemo(() => ({ sessionId: sessionId ?? null }), [sessionId])
   const [taskModuleRequest, setTaskModuleRequest] = useState<{ module: TaskModule; nonce: number; runTarget?: RunTarget | null; subagentTarget?: SubagentTarget | null } | null>(null)
   // 全舱宿主提供 → 规格/运行/验收开舱系浮窗；桌面（null）→ 回落 TaskModulesLayer。
   const moduleSurface = useTaskModuleSurface()
@@ -284,7 +305,20 @@ export function ChatPane({
   } | null>(null)
   const [acceptNoteText, setAcceptNoteText] = useState('')
   const [acceptNoteBusy, setAcceptNoteBusy] = useState(false)
-  const [mainCwd, setMainCwd] = useState<CwdChoice>({ kind: 'default', label: 'Main Agent 工作区' })
+  // v23：全舱新会话的默认工作区 = 舱自己的工作空间（宿主经 defaultCwd 传入）。
+  // 用户手动选过就锁住 —— 舱详情晚到 / 重渲染不再把它改回去。
+  const [mainCwd, setMainCwd] = useState<CwdChoice>(
+    () => defaultCwd ?? { kind: 'default', label: 'Main Agent 工作区' },
+  )
+  const mainCwdTouchedRef = useRef(false)
+  const chooseMainCwd = useCallback((choice: CwdChoice) => {
+    mainCwdTouchedRef.current = true
+    setMainCwd(choice)
+  }, [])
+  useEffect(() => {
+    if (!defaultCwd || mainCwdTouchedRef.current) return
+    setMainCwd(defaultCwd)
+  }, [defaultCwd])
   const [taskCwd, setTaskCwd] = useState<CwdChoice>({ kind: 'default', label: '新建工作空间' })
   const [workflowWindow, setWorkflowWindow] = useState<{
     workspaceId: string
@@ -686,6 +720,7 @@ export function ChatPane({
         // 没手动挑目录时把身份带下去：服务端把 cwd 落在该分身自己的工作区，
         // 而不是所有分身都挤在 Main Agent 的目录里。
         const identityClone = pendingIdentityRef.current?.name
+        const identityCloneLabel = pendingIdentityRef.current?.label ?? null
         const cwdOpts = mainCwd.kind === 'default'
           ? identityClone ? { identity_clone: identityClone } : undefined
           : { workspace_id: mainCwd.workspaceId, cwd: mainCwd.path }
@@ -696,6 +731,12 @@ export function ChatPane({
             return
           }
           writeLastChatContext({ kind: 'session', sessionId: created.id })
+          // v23：草稿窗原地升级成正式会话（宿主绑窗 + 编队落行）。
+          onSessionCreated?.(created, {
+            clone: identityClone ?? null,
+            cloneLabel: identityCloneLabel,
+            firstMessage: message,
+          })
           setSessionId(created.id)
         })
       }
@@ -769,7 +810,7 @@ export function ChatPane({
   }, [
     pendingTaskSession, creatingTask, sessionId, setSessionId, sendMessage, createNewSession,
     model, effort, maxContext, refreshChatTasks, refreshSessions, mainCwd, taskCwd, setActiveTask, setPendingTaskSession,
-    cabinId, cabinWorkspaceId,
+    cabinId, cabinWorkspaceId, onSessionCreated,
   ])
 
   const handleSelectSession = useCallback((id: string) => {
@@ -1397,6 +1438,38 @@ export function ChatPane({
       : { label: '主 Agent', active: false, title: '当前为主身份（主 Agent）' }
   })()
 
+  // v23（2026-11-27 用户）：全舱「新会话」草稿窗的 hero 第二行 —— 与 classic
+  // 新建会话同口径：工作区（含系统目录浏览）/ 模型 / 分身，一行排开。
+  // cockpitVariant 平时把模型与身份藏进舰桥，草稿阶段这里补回来；创建后自动消失。
+  const newSessionFooter = newSessionOptions && heroActive ? (
+    <div className="ck12-nw-opts" data-testid="cockpit-new-session-options">
+      <CwdPicker
+        mode="main"
+        org={preferredOrg}
+        value={mainCwd}
+        onChange={chooseMainCwd}
+        hero
+        // 选了身份 → 默认档不再是 Main Agent，而是该分身自己的工作区。
+        defaultLabel={pendingIdentity ? `${pendingIdentity.label} 工作区` : undefined}
+        defaultHint={pendingIdentity ? '该分身自己的目录' : undefined}
+      />
+      <ComposerModelPopover
+        currentModel={model}
+        onModelChange={setModel}
+        effort={effort}
+        onEffortChange={setEffort}
+        context={maxContext}
+        onContextChange={setMaxContext}
+        modelPresets={modelPresets}
+      />
+      <ComposerIdentityPicker
+        activeName={pendingIdentity?.name ?? null}
+        label={pendingIdentity?.label ?? null}
+        onSelect={choosePendingIdentity}
+      />
+    </div>
+  ) : null
+
   const explorerWorkspaceId =
     activeTask?.workspace_id ??
     activeSession?.workspace_id ??
@@ -1617,6 +1690,7 @@ export function ChatPane({
             onNew={startNewFromPicker}
           />
         ) : (
+          <ChatMediaProvider value={mediaScope}>
           <ChatArea
             messages={viewMessages}
             hasMoreMessages={hasMoreMessages}
@@ -1701,12 +1775,12 @@ export function ChatPane({
             // hero：新建对话 = 空主会话；新建开发任务 = 未落盘的 pendingTask（同一套
             // 居中 composer + 第二行控件，2026-10-28 看齐）。
             heroEmpty={heroActive}
-            composerHeroFooter={!heroActive ? undefined : draftScope ? draftControls(true) : (
+            composerHeroFooter={!heroActive ? undefined : newSessionOptions ? newSessionFooter : draftScope ? draftControls(true) : (
               <CwdPicker
                 mode="main"
                 org={preferredOrg}
                 value={mainCwd}
-                onChange={setMainCwd}
+                onChange={chooseMainCwd}
                 hero
                 // 选了身份 → 默认档不再是 Main Agent，而是该分身自己的工作区。
                 defaultLabel={pendingIdentity ? `${pendingIdentity.label} 工作区` : undefined}
@@ -1715,7 +1789,7 @@ export function ChatPane({
             )}
             workspaceContext={composerWorkspaceContext}
             identityDisplay={identityDisplay}
-            identity={!taskThread && !cabinId ? (
+            identity={newSessionOptions ? undefined : !taskThread && !cabinId ? (
               sessionId
                 ? {
                     activeName: identity.activeName,
@@ -1744,8 +1818,13 @@ export function ChatPane({
             onQueueDepthChange={reportQueueDepth}
             composerBridgeRef={composerBridgeRef}
           />
+          </ChatMediaProvider>
         )}
       </div>
+
+      {/* 2026-11-26 用户：桌面 / 经典舱的文档 chip 点开 → 会话级只读窗。
+          全舱已有 CockpitDocWindow（舱级白名单），这里只补非全舱表面。 */}
+      {composerVariant !== 'cockpit' && <ChatDocWindow sessionId={sessionId} />}
 
       {/* One main chat for every task state. Task modules float over the whole
           chat region (portaled to ChatTab's region) so split-mode windows can

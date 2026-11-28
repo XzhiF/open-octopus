@@ -22,12 +22,13 @@ import { useCabinOptional } from '@/components/cabin/cabin-provider'
 import { JobFace } from '@/components/cabin/job-face'
 import { cn } from '@/lib/utils'
 import { useCockpitState } from '../state/CockpitStateProvider'
-import { cockpitRefKey, COCKPIT_DEFAULT_TAB, type CockpitRef } from '../state/cockpit-state'
+import { cockpitRefKey, defaultTabForRef, type CockpitRef } from '../state/cockpit-state'
 import { openFleetChat } from '../chat/open-fleet-window'
 import { useCockpitFleet } from '../fleet/CockpitFleetProvider'
 import { groupOf, type CockpitRow } from '../fleet/fleet-model'
 import { CockpitAttentionFace } from './CockpitAttentionFace'
 import { CockpitTaskFace } from './CockpitTaskFace'
+import { CockpitSessionFace } from './CockpitSessionFace'
 import { CockpitManifestFace } from '../projects/CockpitManifestFace'
 import { CockpitProjectFace } from '../projects/CockpitProjectFace'
 import { PROJECT_ROSTER_ID, projectNameFromKey } from '../projects/project-model'
@@ -61,10 +62,11 @@ export interface CockpitFaceProps {
   entryCabinId: string
 }
 
-/** 编队行 → 面 ref。delegation 没有详情面（点开是 doer 会话）→ null。 */
+/** 编队行 → 面 ref。2026-11-25：委派（会话）也有详情面。 */
 function refOfRow(row: CockpitRow): CockpitRef | null {
   if (row.kind === 'job') return { kind: 'job', cabinId: row.cabinId, id: row.job.id }
   if (row.kind === 'task') return { kind: 'task', cabinId: row.cabinId, id: row.task.id }
+  if (row.kind === 'delegation') return { kind: 'delegation', cabinId: row.cabinId, id: row.delegation.id }
   if (row.kind === 'attention') return { kind: 'attention', cabinId: row.cabinId, id: row.item.id }
   return null
 }
@@ -73,6 +75,7 @@ function rowMatches(row: CockpitRow, ref: CockpitRef): boolean {
   if (row.cabinId !== ref.cabinId) return false
   if (ref.kind === 'job') return row.kind === 'job' && row.job.id === ref.id
   if (ref.kind === 'task') return row.kind === 'task' && row.task.id === ref.id
+  if (ref.kind === 'delegation') return row.kind === 'delegation' && row.delegation.id === ref.id
   return row.kind === 'attention' && row.item.id === ref.id
 }
 
@@ -112,12 +115,20 @@ export function CockpitFace({ entryCabinId }: CockpitFaceProps) {
     if (!chatRow) return null
     if (chatRow.kind === 'job') return chatRow.job.session_id ? chatRow.key : null
     if (chatRow.kind === 'task') return chatRow.task.doer_session_id ? chatRow.key : null
+    if (chatRow.kind === 'delegation') return chatRow.delegation.doer_session_id ? chatRow.key : null
+    return null
+  }, [chatRow])
+  const chatSessionId = useMemo(() => {
+    if (!chatRow) return null
+    if (chatRow.kind === 'job') return chatRow.job.session_id
+    if (chatRow.kind === 'task') return chatRow.task.doer_session_id ?? null
+    if (chatRow.kind === 'delegation') return chatRow.delegation.doer_session_id
     return null
   }, [chatRow])
   const openChat = useCallback(() => {
     if (!chatThreadKey) return
-    if (openFleetChat(wins, threadApi, chatThreadKey, chatWindow)) select(null)
-  }, [chatThreadKey, wins, threadApi, chatWindow, select])
+    if (openFleetChat(wins, threadApi, chatThreadKey, chatWindow, chatSessionId)) select(null)
+  }, [chatThreadKey, chatSessionId, wins, threadApi, chatWindow, select])
 
   // ── 窗口化（原型 .pwin / .pgrip / bindPanelWin）─────────────────────────
   const faceRef = useRef<HTMLDivElement | null>(null)
@@ -297,7 +308,7 @@ export function CockpitFace({ entryCabinId }: CockpitFaceProps) {
     })
     const nextRef = next ? refOfRow(next) : null
     // 验收通过后落下一行：保持在同一种落位（inbox 开的继续在左侧，编队开的居中）。
-    if (nextRef) select(nextRef, COCKPIT_DEFAULT_TAB, detailSource)
+    if (nextRef) select(nextRef, defaultTabForRef(nextRef), detailSource)
   }, [rows, select, detailSource])
 
   if (!selection) return null
@@ -407,6 +418,22 @@ export function CockpitFace({ entryCabinId }: CockpitFaceProps) {
           onClose={close}
           onMutated={refetch}
           onAcceptanceMutated={() => advance(selection)}
+          onOpenChat={chatThreadKey ? openChat : null}
+        />
+      )
+    }
+
+    // 会话（delegation）：六页签详情面（2026-11-25 用户）。
+    if (selection.kind === 'delegation') {
+      const delegationRow = row?.kind === 'delegation' ? row : null
+      return (
+        <CockpitSessionFace
+          cabinId={selection.cabinId}
+          delegation={delegationRow?.delegation ?? null}
+          cabinName={cabinName}
+          tab={tab}
+          onTabChange={setTab}
+          onClose={close}
           onOpenChat={chatThreadKey ? openChat : null}
         />
       )

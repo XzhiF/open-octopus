@@ -747,9 +747,14 @@ export interface CabinJobEventRow {
   created_at: string
 }
 
-/** 独立委派（design 25 §4.2）：不是任务 —— 没有 phase / worktree / 验收 / 归档。
+/** 独立委派（design 25 §4.2）：不是任务 —— 没有 phase / worktree / 验收。
+ *  会话有自己的归档闸（2026-11-25 用户）：state=done 只代表交完结论（活跃），
+ *  `archived_at` 有值才是已归档（由汐音管理，可带反思 / wiki 沉淀）。
  *  与 cabin_jobs 账本不合并（CHECK 约束不可扩值），读侧归一化。 */
 export type CabinDelegationState = 'queued' | 'running' | 'waiting_input' | 'done' | 'failed' | 'cancelled'
+
+/** 会话创建者（2026-11-27）：同一种会话，只差谁开的。 */
+export type CabinDelegationOrigin = 'xiyin' | 'user'
 
 export interface CabinDelegationRow {
   id: string
@@ -759,11 +764,13 @@ export interface CabinDelegationRow {
   brief: string | null
   autonomy: 'approve' | 'checkpoint' | 'hands-off'
   state: CabinDelegationState
+  origin: CabinDelegationOrigin
   doer_session_id: string | null
   result_summary: string | null
   created_at: string
   updated_at: string
   ended_at: string | null
+  archived_at: string | null
 }
 
 /** 舱内事项（2026-11-24）：零散小待办；与 task 不是一层。 */
@@ -781,4 +788,20 @@ export interface CabinItemRow {
   closed_at: string | null
   delivery_session_id: string | null
   delivery_message_id: string | null
+}
+
+/** 手机设备令牌（M3 · 2026-11-27）：一台设备一条长期令牌。
+ *  `token_hash` 是 sha256(明文令牌)，明文只在兑换响应里出现一次；
+ *  `token_prefix` 只用于设置页认出是哪一条。 */
+export interface DeviceRow {
+  id: string
+  name: string
+  token_hash: string
+  token_prefix: string
+  platform: string | null
+  created_at: string
+  last_seen_at: string | null
+  revoked_at: string | null
+  /** M4 远程拉起：配对时下发的那把 SSH 密钥槽（如 slot-03）；null = 没配远程。 */
+  ssh_key_slot: string | null
 }

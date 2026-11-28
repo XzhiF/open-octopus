@@ -74,6 +74,15 @@ export class CabinItemService {
     return this.assertItem(cabinId, itemId)
   }
 
+  /** 按 id 批量取（投递时服务端按库补全正文用）。缺的 id 跳过，不报错；
+   *  顺序按 seq 升序，和投递消息里的条目顺序一致。 */
+  getMany(cabinId: string, ids: string[]): CabinItemRow[] {
+    this.assertCabin(cabinId)
+    const list = Array.from(new Set(ids.filter((id) => typeof id === "string" && id.length > 0)))
+    if (list.length === 0) return []
+    return this.listByIds(cabinId, list)
+  }
+
   create(cabinId: string, input: { title?: string; body?: string; kind?: CabinItemKind }): CabinItemRow {
     this.assertCabin(cabinId)
     const now = nowIso()
@@ -180,6 +189,30 @@ export class CabinItemService {
         WHERE id = ? AND cabin_id = ? AND status IN ('done','dropped')`,
     ).run(nowIso(), itemId, cabinId)
     return this.assertItem(cabinId, itemId)
+  }
+
+  /**
+   * 批量改状态（舱主工具复用）：done / dropped → 关项，todo → 重开。
+   * 关项走 close（todo / delivered 生效）；重开逐条走 reopen（仅已关闭生效）。
+   * 不存在的 id 归入 missing，不让整批失败；已处于目标状态的条目照常返回。
+   */
+  setStatus(
+    cabinId: string,
+    ids: string[],
+    status: "todo" | "done" | "dropped",
+  ): { items: CabinItemRow[]; missing: string[] } {
+    this.assertCabin(cabinId)
+    const list = this.normalizeIds(ids)
+    const existingIds = this.listByIds(cabinId, list).map((row) => row.id)
+    const missing = list.filter((id) => !existingIds.includes(id))
+    if (existingIds.length > 0) {
+      if (status === "todo") {
+        for (const id of existingIds) this.reopen(cabinId, id)
+      } else {
+        this.close(cabinId, existingIds, status)
+      }
+    }
+    return { items: this.listByIds(cabinId, existingIds), missing }
   }
 
   /** 当前未决条数（todo + delivered）—— HUD 徽标与 attention 读它。 */

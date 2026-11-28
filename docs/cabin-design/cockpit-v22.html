@@ -205,7 +205,9 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .flrow.on{background:linear-gradient(90deg,color-mix(in srgb,var(--accent,var(--sky)) 24%,rgba(16,13,40,.6)),rgba(16,13,40,.35));border-color:color-mix(in srgb,var(--accent,var(--sky)) 62%,transparent);box-shadow:0 0 16px color-mix(in srgb,var(--accent,var(--sky)) 22%,transparent)}
 .flrow.on::before{content:"";position:absolute;left:0;top:16%;bottom:16%;width:2px;background:var(--accent,var(--sky));box-shadow:0 0 10px var(--accent,var(--sky))}
 .flhw{position:relative;flex:none;width:44px;height:50px;filter:drop-shadow(0 0 7px color-mix(in srgb,var(--accent,var(--sky)) 32%,transparent))}
-.flhw::before{content:"";position:absolute;inset:0;clip-path:var(--hex);background:conic-gradient(from 90deg,var(--accent,var(--sky)) calc(var(--p,0)*1%),rgba(185,179,217,.2) 0);transition:.3s}
+/* 2026-11-25 用户（rev5）：六边形边不再表示进度 —— 静态项目色细边；
+   运行中的「还在干活」信号在行左缘天蓝竖条 + 秒表转字（见下方 .flrow.is-flow）。 */
+.flhw::before{content:"";position:absolute;inset:0;clip-path:var(--hex);background:color-mix(in srgb,var(--accent,var(--sky)) 40%,rgba(185,179,217,.2));transition:.3s}
 .flhw::after{content:"";position:absolute;inset:2.5px;clip-path:var(--hex);background:linear-gradient(160deg,rgba(255,255,255,.14),rgba(16,13,40,.82))}
 .flhg{position:absolute;inset:4px;clip-path:var(--hex);display:grid;place-items:center;font-size:16px;font-weight:800;color:#fff;
   background:linear-gradient(160deg,color-mix(in srgb,var(--accent,var(--sky)) 92%,#fff),color-mix(in srgb,var(--accent,var(--sky)) 48%,#120f2b));
@@ -214,6 +216,7 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .flbody{flex:1;min-width:0}
 .fltop{display:flex;align-items:center;gap:5px;font-size:11.5px;font-weight:800;font-family:var(--font-ui);color:#fff;white-space:nowrap}
 .fltop b{overflow:hidden;text-overflow:ellipsis;font-weight:800}
+/* 真实进度仍以数字保留（拿到 pct 才画；null 不显示、不猜）—— 2026-11-25 用户。 */
 .flpct{margin-left:auto;flex:none;font-size:8.5px;color:var(--metal2);font-family:var(--font-mono);font-weight:700}
 /* #5：状态签挪到副行左端 —— 给行尾两枚动作按钮让出宽度，标题不再被压成两三个字。 */
 .flst{flex:none;font-size:7.5px;font-weight:800;letter-spacing:.04em;padding:0 5px;line-height:13px;clip-path:polygon(3px 0,100% 0,calc(100% - 3px) 100%,0 100%);background:rgba(255,255,255,.1);color:var(--ink2)}
@@ -234,8 +237,6 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .flrow.wait .flsub{color:color-mix(in srgb,var(--amber) 80%,var(--ink2))}
 .flrow.blocked .flsub{color:color-mix(in srgb,var(--red) 75%,var(--ink2))}
 .flrow.arch .flsub{color:color-mix(in srgb,var(--pink) 78%,var(--ink2))}
-.flbar{display:block;height:3px;margin-top:5px;background:rgba(255,255,255,.07);overflow:hidden}
-.flbar i{display:block;height:100%;background:linear-gradient(90deg,var(--accent,var(--sky)),var(--pink));box-shadow:0 0 8px color-mix(in srgb,var(--accent,var(--sky)) 55%,transparent);transition:width .5s}
 .flrow.done{opacity:.72}
 /* #5（2026-11-23 用户）：编队行两条入口 —— 行体点击 = 进这条作战的 chat；
    行尾两枚小按钮：💬 对话（有未读加红点）/ ▦ 详情。主通讯台不再切线程。 */
@@ -245,29 +246,22 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .flact{position:relative;width:21px;height:23px;clip-path:var(--hex);display:grid;place-items:center;
   background:rgba(255,255,255,.07);border:1px solid rgba(185,179,217,.22);color:var(--ink2);font-size:9.5px;transition:.13s}
 .flact:hover{color:#fff;border-color:var(--teal);background:rgba(46,230,214,.16)}
-.flact.pri{color:color-mix(in srgb,var(--teal) 78%,var(--ink2))}
+.flact.pri{color:color-mix(in srgb,var(--accent,var(--teal)) 78%,var(--ink2))}
 .flactwrap .und{position:absolute;top:-4px;right:-5px;min-width:13px;height:13px;padding:0 3px;border-radius:999px;background:var(--red);color:#fff;font-size:7.5px;font-weight:800;display:grid;place-items:center;font-style:normal;font-family:var(--font-mono);line-height:1;box-shadow:0 0 7px rgba(255,59,92,.6),0 0 0 1px rgba(16,13,40,.75)}
 .flrow{cursor:pointer}
-.flrow.is-chat{border-color:rgba(46,230,214,.45)}
+/* 2026-11-27 用户：窗开着时行边框随该作战的项目色（与 chat 窗 --waccent 同源），不再统一青绿。
+   规则放在 .is-flow 之后，运行中的 open chat 也以「开着」优先。 */
 .flrow:focus-visible{outline:1px solid var(--teal);outline-offset:1px}
-/* v23 十六轮 rev4（2026-11-24 用户）：运行中不再闪动 —— 静态青色左缘 + 进度条滚动。
-   · 作战中：真实进度条上有一道缓行的流光（连续，不闪）；
-   · 待验收/待命在跑：没有真实进度，底部用不定长滚动条（占原进度条槽位）。 */
-.flrow.is-flow{border-color:color-mix(in srgb,var(--teal) 34%,rgba(185,179,217,.13))}
+/* rev6（2026-11-25 用户）：琥珀巡边不好看 —— 改回「蓝色条」，与秒表同色同律。
+   · is-flow = agent 在跑（作战中 / 待验收在跑 / 待命在跑）：行左缘 2px 天蓝竖条，
+     秒表前一枚 braille 转字（与 chat 流尾工作行同一套帧，10fps）；
+   · 六边形边保持静态项目色，不再滚动；
+   · 百分比不进编队行（要看阶段进度进详情）。 */
+.flrow.is-flow{border-color:rgba(53,199,240,.34)}
 .flrow.is-flow::before{content:"";position:absolute;left:0;top:20%;bottom:20%;width:2px;border-radius:2px;
-  background:var(--teal);box-shadow:0 0 8px color-mix(in srgb,var(--teal) 65%,transparent);pointer-events:none}
-.flbar.is-live{background:rgba(46,230,214,.10)}
-.flbar.is-live i{display:block;width:40%;height:100%;background:linear-gradient(90deg,transparent,var(--teal),transparent);
-  box-shadow:0 0 8px var(--teal);animation:flbar 2.6s linear infinite}
-@keyframes flbar{0%{transform:translateX(-105%)}100%{transform:translateX(255%)}}
-.flbar.is-run i{position:relative;overflow:hidden}
-.flbar.is-run i::after{content:"";position:absolute;top:0;bottom:0;left:-35%;width:35%;
-  background:linear-gradient(90deg,transparent,rgba(255,255,255,.5),transparent);animation:runflow 2.4s linear infinite}
-@keyframes runflow{0%{left:-35%}100%{left:100%}}
-@media (prefers-reduced-motion:reduce){
-  .flbar.is-live i{animation:none;width:100%;transform:none;background:rgba(46,230,214,.45);box-shadow:none}
-  .flbar.is-run i::after{animation:none;display:none}
-}
+  background:var(--sky);box-shadow:0 0 8px rgba(53,199,240,.55);pointer-events:none}
+.flrow.is-chat{border-color:color-mix(in srgb,var(--accent,var(--teal)) 60%,transparent)}
+.flspin{font-family:var(--font-mono);font-size:9.5px;line-height:1;color:var(--sky)}
 .fltime.bgw,.fltime.bgw::before{color:var(--amber)}
 .fltime.bgw::before{background:var(--amber);box-shadow:0 0 6px var(--amber)}
 /* 原型样张（打开「全部 →」看）：编队行实宽下并列摆出所有干活态。 */
@@ -578,10 +572,7 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .rcpt-btn.ok{color:var(--green);border-color:rgba(61,220,151,.5);background:rgba(61,220,151,.12)}
 .rcpt-btn.ok:hover{background:rgba(61,220,151,.22);color:#fff}
 .rcpt-done{padding:6px 10px;font-size:9.5px;color:var(--metal2);letter-spacing:.04em}
-.cwl .tline{font-size:11px}
-.cwl .tmeta{font-size:8.5px;padding-left:0}
-.cwl .tline.me .tx{padding:0 6px}
-.cwl .tline .tm{display:none}
+/* 2026-11-27 用户：窗内转录不再缩字号 —— 与主通讯台同肤同尺寸（窗默认与通讯台同大）。 */
 .con-cur{flex:none;padding:7px 18px 9px;border-top:1px solid rgba(46,230,214,.14);background:linear-gradient(180deg,rgba(46,230,214,.035),transparent)}
 .con-cur .spk{display:flex;align-items:center;gap:7px;font-size:9px;letter-spacing:.14em;color:#C9BFFF;font-weight:700;margin-bottom:2px}
 .con-cur .spk i{width:5px;height:5px;border-radius:50%;background:#C9BFFF;box-shadow:0 0 8px rgba(201,191,255,.85)}
@@ -688,6 +679,29 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .dtabs{display:flex;gap:5px;margin-bottom:8px;flex-wrap:wrap}
 .dtab{height:24px;padding:0 12px;clip-path:var(--btncut);background:rgba(255,255,255,.07);color:var(--ink2);font-size:10px;font-weight:700;font-family:var(--font-ui)}
 .dtab.on{background:linear-gradient(90deg,var(--sky),var(--violet));color:#fff}
+.dtab .n{display:inline-block;min-width:13px;margin-left:5px;padding:0 3px;font-size:8px;line-height:13px;border-radius:6px;background:rgba(255,255,255,.14);color:var(--ink2);font-family:var(--font-mono);font-style:normal;text-align:center}
+.dtab.on .n{background:rgba(255,255,255,.28);color:#fff}
+/* ═══ 详情 · 消耗 / 子代理（2026-11-25 用户）：会话与任务共用的两个基础页签。
+       消耗 = 这一个作业自己的账（主回合 + 子代理单列，防双算）；子代理 = 按作业归属过滤的活动。 ═══ */
+.agsum{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 9px;margin-bottom:8px;clip-path:var(--cut);border:1px solid rgba(185,179,217,.16);background:rgba(255,255,255,.04);font-size:9px;color:var(--ink2)}
+.agsum .k{font-size:8px;letter-spacing:.12em;color:var(--metal2);font-family:var(--font-mono)}
+.agsum b{color:#fff;font-weight:800}
+.agsum .sp{flex:1}
+.aggrp{font-size:9.5px;letter-spacing:.16em;color:var(--teal);font-weight:700;margin:12px 0 6px;display:flex;gap:8px;align-items:center}
+.aggrp::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,rgba(46,230,214,.4),transparent)}
+.agrow{display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:8px 10px;margin-bottom:6px;clip-path:var(--cut);background:rgba(255,255,255,.05);border:1px solid rgba(185,179,217,.16);border-left:3px solid var(--violet);transition:.14s}
+.agrow.bg{border-left-color:var(--sky)}
+.agrow:hover{transform:translateX(2px);background:rgba(255,255,255,.1)}
+.agrow .agk{flex:none;font-size:8px;font-weight:800;letter-spacing:.04em;line-height:15px;padding:0 5px;border:1px solid rgba(123,77,255,.45);color:#c9b6ff;clip-path:polygon(3px 0,100% 0,calc(100% - 3px) 100%,0 100%)}
+.agrow.bg .agk{color:var(--sky);border-color:rgba(53,199,240,.4)}
+.agrow .agb{flex:1;min-width:0}
+.agrow .agb b{display:block;font-size:11.5px;font-weight:700;font-family:var(--font-ui);color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.agrow .agb span{display:block;margin-top:1px;font-size:9px;color:var(--ink2);font-family:var(--font-mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.agrow .agr{flex:none;display:flex;flex-direction:column;align-items:flex-end;gap:2px}
+.agrow .agr .st{font-size:8.5px;font-weight:800;color:var(--green)}
+.agrow .agr .st.done{color:var(--metal2)}
+.agrow .agr .mt{font-size:8.5px;color:var(--ink2);font-family:var(--font-mono)}
+.agrow .go{flex:none;font-size:9.5px;font-weight:800;color:var(--teal)}
 /* ── 详情 · 对话：这条作战的 chat 记录（TUI 转录同肤，只读；去通讯台接着聊） ── */
 .pb.dcon-on{overflow:hidden;display:flex;flex-direction:column}
 .dcon{flex:1;min-height:0;display:flex;flex-direction:column;gap:8px}
@@ -1482,6 +1496,10 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 @keyframes addpulse{0%,100%{opacity:.45;transform:scale(.92)}50%{opacity:1;transform:scale(1.08)}}
 .con-add i{position:absolute;right:-3px;top:-3px;min-width:14px;height:14px;padding:0 3px;display:grid;place-items:center;border-radius:999px;background:var(--sky);color:#04121c;font-size:8.5px;font-style:normal;font-weight:900}
 .con-add i[hidden]{display:none}
+/* 2026-11-27 用户：收起旁边挂汐音头像（桌面版 icon）—— 一眼认出这是主对话。 */
+.con-av{position:relative;flex:none;width:26px;height:26px;padding:0;border-radius:50%;overflow:hidden;border:1px solid rgba(46,230,214,.55);background:rgba(46,230,214,.08);box-shadow:0 0 12px rgba(46,230,214,.22);transition:.16s}
+.con-av img{width:100%;height:100%;display:block;object-fit:cover}
+.con-av:hover{border-color:var(--teal);box-shadow:0 0 16px rgba(46,230,214,.55)}
 .addpop{position:absolute;left:38px;top:48px;z-index:58;width:min(430px,calc(100% - 20px));max-height:min(432px,calc(100% - 60px));display:flex;flex-direction:column;min-height:0;border-radius:var(--wrad);overflow:hidden;background:var(--glass2);backdrop-filter:blur(16px) saturate(1.3);border:1px solid var(--edge);box-shadow:0 20px 60px rgba(16,13,40,.6)}
 .addpop[hidden]{display:none}
 .ap-h{flex:none;display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid rgba(46,230,214,.22);background:linear-gradient(180deg,rgba(46,230,214,.06),transparent)}
@@ -1756,12 +1774,21 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 #conDock.ping{animation:tping .9s ease}
 .has-wins #conDock{left:auto;right:12px;transform:none;bottom:52px}
 #winLayer{position:absolute;inset:0;z-index:30;pointer-events:none}
-.cwin{position:absolute;pointer-events:auto;display:flex;flex-direction:column;min-height:0;background:linear-gradient(180deg,rgba(20,16,48,.86),rgba(10,8,24,.9) 40%,rgba(8,6,20,.92));backdrop-filter:blur(16px) saturate(1.2);border:1px solid var(--edge);border-radius:14px;overflow:hidden;opacity:var(--winop,1);box-shadow:0 18px 50px rgba(16,13,40,.6)}
-.cwin.focus{border-color:var(--teal);box-shadow:0 18px 50px rgba(16,13,40,.6),0 0 22px rgba(46,230,214,.28)}
-.cwh{flex:none;display:flex;align-items:center;gap:7px;padding:7px 10px;border-bottom:1px solid rgba(46,230,214,.22);cursor:grab;user-select:none}
+/* 2026-11-27 用户：独立 chat 窗统一到主通讯台的窗壳语言 —— 同底色 / 同 var(--wrad) 圆角 / 同 2px 渐变顶线 / 同投影。
+   区别只在配色：每扇窗用自己的项目色 --waccent 描边（主对话不变，仍是青绿）。 */
+.cwin{position:absolute;pointer-events:auto;display:flex;flex-direction:column;min-height:0;
+  background:
+    radial-gradient(120% 80% at 82% 0%,color-mix(in srgb,var(--waccent,var(--teal)) 22%,transparent),transparent 58%),
+    linear-gradient(180deg,rgba(22,17,50,.8),rgba(11,8,26,.9) 38%,rgba(8,6,20,.92));
+  backdrop-filter:blur(16px) saturate(1.2);border:2px solid color-mix(in srgb,var(--waccent,var(--teal)) 78%,rgba(10,8,24,.9));border-radius:var(--wrad);overflow:hidden;opacity:var(--winop,1);
+  box-shadow:0 22px 64px rgba(16,13,40,.6),0 0 36px color-mix(in srgb,var(--waccent,var(--teal)) 26%,transparent),inset 0 1px 0 rgba(255,255,255,.08)}
+.cwin::before{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:linear-gradient(90deg,var(--waccent,var(--teal)),color-mix(in srgb,var(--waccent,var(--teal)) 55%,#fff));opacity:1;box-shadow:0 0 16px color-mix(in srgb,var(--waccent,var(--teal)) 55%,transparent);z-index:4}
+.cwin::after{content:"";position:absolute;inset:0;pointer-events:none;opacity:.035;background:repeating-linear-gradient(180deg,var(--waccent,var(--teal)) 0 1px,transparent 1px 4px);z-index:3}
+.cwin.focus{border-color:var(--waccent,var(--teal));box-shadow:0 22px 64px rgba(16,13,40,.6),0 0 44px color-mix(in srgb,var(--waccent,var(--teal)) 42%,transparent),inset 0 1px 0 rgba(255,255,255,.08)}
+.cwh{flex:none;display:flex;align-items:center;gap:8px;padding:9px 14px 7px;border-bottom:2px solid color-mix(in srgb,var(--waccent,var(--teal)) 75%,transparent);background:linear-gradient(180deg,color-mix(in srgb,var(--waccent,var(--teal)) 36%,rgba(16,13,40,.46)),color-mix(in srgb,var(--waccent,var(--teal)) 12%,transparent));cursor:grab;user-select:none}
 .cwh:active{cursor:grabbing}
 .cwh .te{font-size:12px}
-.cwh b{flex:0 1 auto;min-width:0;max-width:30%;font-size:11px;font-weight:800;font-family:var(--font-ui);color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cwh b{flex:0 1 auto;min-width:0;max-width:32%;font-size:12.5px;font-weight:800;font-family:var(--font-ui);color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .cwh .cwid{flex:none;max-width:42%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-left:7px;border-left:1px solid rgba(185,179,217,.25);font-size:9.5px;font-family:var(--font-mono);color:var(--ink2)}
 /* v22 #5：窗头遥测 = 通讯台同一套芯片（模型 / CTX / token·费用）+ ≡ 轮次，
    数据来自该窗自己的会话。窗头空间紧，芯片收一档；窄窗由脚本按宽度省略。 */
@@ -1773,33 +1800,77 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .cwh .telem button.tok b{color:var(--gold)}
 .cwh .cwidx{flex:none;display:flex;align-items:center;gap:3px;padding:0 6px;border-left:1px solid rgba(185,179,217,.22);font-size:9px;color:var(--ink2);white-space:nowrap;font-family:var(--font-mono)}
 .cwh .cwidx b{font-size:9.5px;color:#fff}
-.cwh button{flex:none;width:22px;height:22px;clip-path:var(--hex);display:grid;place-items:center;background:rgba(255,255,255,.08);border:1px solid rgba(185,179,217,.25);color:var(--ink2);font-size:10px}
-.cwh button:hover{color:#fff;border-color:var(--teal)}
+.cwh button{flex:none;width:24px;height:26px;clip-path:var(--hex);display:grid;place-items:center;background:rgba(255,255,255,.08);border:1px solid rgba(185,179,217,.25);color:var(--ink2);font-size:10px}
+.cwh button:hover{color:#fff;border-color:var(--waccent,var(--teal))}
 .cwh button[data-wclose]:hover{background:var(--red);border-color:var(--red)}
 .cwh button[data-warch]{color:var(--pink);border-color:rgba(255,92,138,.5);background:rgba(255,92,138,.12)}
 .cwh button[data-warch]:hover{color:#fff;background:rgba(255,92,138,.28);border-color:var(--pink)}
-/* 窗头星核（技能 / 分身 / MCP）—— 与主通讯台同位：紧跟 ✕，不在输入行。 */
-.cwh .cwadd{clip-path:none;border-radius:50%;border-color:rgba(46,230,214,.5);background:rgba(46,230,214,.1);color:#9ff7ee;font-size:11px}
-.cwh .cwadd:hover{border-color:rgba(46,230,214,.95);background:rgba(46,230,214,.24);color:#eafffd;box-shadow:0 0 12px rgba(46,230,214,.45)}
-.cwl{flex:1;min-height:40px;overflow:auto;display:flex;flex-direction:column;gap:5px;padding:8px 12px;
+/* 2026-11-27 用户：窗头排版对齐主通讯台 —— 左上只留 ✕ / ✦；右侧 = 详情 + 收起（最右）。
+   会话 / 任务名可点，直接开详情。 */
+.cwh .cwbtn{width:auto;height:24px;padding:0 11px;clip-path:var(--btncut);display:inline-flex;align-items:center;gap:4px;background:rgba(255,255,255,.07);border:1px solid rgba(185,179,217,.28);color:var(--ink2);font-size:9.5px;font-weight:700;font-family:var(--font-ui);white-space:nowrap}
+.cwh .cwbtn:hover{color:#fff;border-color:var(--waccent,var(--teal));background:color-mix(in srgb,var(--waccent,var(--teal)) 16%,transparent)}
+.cwh .cwtitle{flex:0 1 auto;min-width:0;max-width:32%;width:auto;height:auto;padding:0;clip-path:none;border:0;background:none;color:color-mix(in srgb,var(--waccent,var(--teal)) 30%,#fff);font-size:12.5px;font-weight:800;font-family:var(--font-ui);text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cwh .cwtitle:hover{color:#fff;text-decoration:underline;text-decoration-color:color-mix(in srgb,var(--waccent,var(--teal)) 78%,transparent);text-underline-offset:3px}
+/* 2026-11-27 用户：星环按钮复刻主通讯台 .con-add —— 同 26px 圆形、同 SVG 星＋轨道。 */
+.cwh .cwadd{position:relative;flex:none;width:26px;height:26px;display:grid;place-items:center;border-radius:50%;clip-path:none;border:1px solid rgba(46,230,214,.5);background:rgba(46,230,214,.1);color:#9ff7ee;transition:.16s}
+.cwh .cwadd svg{width:15px;height:15px;display:block;overflow:visible}
+.cwh .cwadd:hover{border-color:rgba(46,230,214,.95);background:rgba(46,230,214,.24);color:#eafffd;box-shadow:0 0 14px rgba(46,230,214,.45)}
+.cwh .cwadd .orbit{transform-origin:12px 12px;opacity:.55;transition:.16s}
+.cwh .cwadd .pulse{transform-origin:12px 12px}
+.cwl{flex:1;min-height:40px;overflow:auto;display:flex;flex-direction:column;gap:7px;padding:12px 18px;
   background:
-    linear-gradient(180deg,rgba(6,5,16,.4),rgba(6,5,16,.22)),
-    linear-gradient(rgba(46,230,214,.03) 1px,transparent 1px),
-    linear-gradient(90deg,rgba(46,230,214,.03) 1px,transparent 1px);
-  background-size:auto,28px 28px,28px 28px;
-  box-shadow:inset 0 8px 20px rgba(4,3,12,.32)}
+    radial-gradient(120% 70% at 50% 0%,color-mix(in srgb,var(--waccent,var(--teal)) 6%,transparent),transparent 62%),
+    linear-gradient(180deg,rgba(6,5,16,.42),rgba(6,5,16,.2)),
+    linear-gradient(color-mix(in srgb,var(--waccent,var(--teal)) 4%,transparent) 1px,transparent 1px),
+    linear-gradient(90deg,color-mix(in srgb,var(--waccent,var(--teal)) 4%,transparent) 1px,transparent 1px);
+  background-size:auto,auto,32px 32px,32px 32px;
+  border-top:1px solid color-mix(in srgb,var(--waccent,var(--teal)) 12%,transparent);
+  box-shadow:inset 0 10px 26px rgba(4,3,12,.35),inset 0 -10px 26px rgba(4,3,12,.22)}
 .cwl::before{content:"";margin-top:auto}
-.cwc{flex:none;padding:5px 10px;border-top:1px solid rgba(46,230,214,.16);font-size:10.5px;line-height:1.55;color:#fff;font-family:var(--font-mono);max-height:64px;overflow:auto}
-.cwch{flex:none;display:flex;flex-direction:column;gap:4px;padding:4px 10px}
-.cwch .vchoice{padding:4px 8px;font-size:10px}
-.cwch .vchoice span{display:none}
-.cwi{flex:none;display:flex;align-items:flex-end;gap:6px;padding:6px 8px;border-top:1px solid rgba(46,230,214,.2);background:rgba(6,5,16,.5)}
-.cwi .pr{flex:none;color:var(--teal);font-weight:800;line-height:28px}
-.cwi textarea{flex:1;min-width:0;resize:none;border:1px solid rgba(46,230,214,.22);background:rgba(6,5,16,.55);color:#fff;padding:5px 8px;font-size:11px;line-height:1.4;font-family:var(--font-mono);min-height:28px;max-height:70px;overflow:auto}
-.cwi textarea:focus{outline:none;border-color:var(--teal)}
-.cwi .send{flex:none;width:30px;height:28px;clip-path:var(--hex);display:grid;place-items:center;font-size:12px;font-weight:800;color:var(--indigo);background:linear-gradient(160deg,var(--gold),var(--sun))}
+/* 当前行 / 选项区与主通讯台 .con-cur / .con-choices 同构，边框与高光随窗色。 */
+.cwc{flex:none;padding:7px 18px 9px;border-top:1px solid color-mix(in srgb,var(--waccent,var(--teal)) 18%,transparent);background:linear-gradient(180deg,color-mix(in srgb,var(--waccent,var(--teal)) 4%,transparent),transparent)}
+.cwc .spk{display:flex;align-items:center;gap:7px;font-size:9px;letter-spacing:.14em;color:#C9BFFF;font-weight:700;margin-bottom:2px}
+.cwc .spk i{width:5px;height:5px;border-radius:50%;background:#C9BFFF;box-shadow:0 0 8px rgba(201,191,255,.85)}
+.cwc .line{font-size:12.5px;line-height:1.65;color:#fff;font-family:var(--font-mono);font-weight:500;min-height:36px;text-shadow:0 0 16px rgba(53,199,240,.22);word-break:break-word}
+.cwch{flex:none;display:flex;flex-direction:column;gap:4px;padding:2px 18px 8px}
+.cwi{flex:none;display:flex;align-items:flex-end;gap:9px;padding:8px 14px 10px;border-top:1px solid color-mix(in srgb,var(--waccent,var(--teal)) 26%,transparent);background:rgba(6,5,16,.5)}
+.cwi .pr{flex:none;color:color-mix(in srgb,var(--waccent,var(--teal)) 80%,#fff);font-size:14px;font-weight:800;line-height:36px;text-shadow:0 0 12px color-mix(in srgb,var(--waccent,var(--teal)) 55%,transparent)}
+.cwi textarea{flex:1;min-width:0;resize:none;border:1px solid color-mix(in srgb,var(--waccent,var(--teal)) 26%,transparent);background:rgba(6,5,16,.55);color:#fff;padding:7px 11px;font-size:12.5px;line-height:1.5;font-family:var(--font-mono);min-height:36px;max-height:92px;overflow:auto;transition:.2s}
+.cwi textarea::placeholder{color:var(--metal2)}
+.cwi textarea:focus{outline:none;border-color:var(--waccent,var(--teal));box-shadow:0 0 0 1px color-mix(in srgb,var(--waccent,var(--teal)) 35%,transparent),0 0 18px color-mix(in srgb,var(--waccent,var(--teal)) 18%,transparent)}
+.cwi .send{flex:none;width:38px;height:34px;clip-path:var(--hex);display:grid;place-items:center;font-size:14px;font-weight:800;color:var(--indigo);background:linear-gradient(160deg,var(--gold),var(--sun));box-shadow:0 0 16px rgba(255,138,61,.4);transition:.15s}
+.cwi .send:hover{filter:brightness(1.1)}
 .cwi.shake{animation:sh .3s}
-.cwgr{position:absolute;right:0;bottom:0;width:14px;height:14px;cursor:nwse-resize;background:linear-gradient(135deg,transparent 50%,var(--teal) 50%);opacity:.5}
+/* 2026-11-27 用户：编队「新会话」—— 无内容窗口；发第一条消息才落成正式会话。
+   版式参考 classic：中间输入框，下面一行 工作区 / 模型 / 分身。 */
+.cwl.nw-body{justify-content:flex-start}
+.cwl.nw-body::before{display:none}
+.nw-main{width:100%;max-width:560px;margin:auto;padding:6px 2px 10px;display:flex;flex-direction:column;gap:11px}
+.nw-kick{font-size:8.5px;letter-spacing:.18em;color:var(--sky);font-weight:800;font-family:var(--font-ui)}
+.nw-h1{font-size:16px;font-weight:800;font-family:var(--font-ui);color:#fff;line-height:1.35}
+.nw-p{font-size:10.5px;line-height:1.7;color:var(--ink2);margin-top:-5px}
+.nw-compose{display:flex;align-items:flex-start;gap:9px;padding:8px 12px;border:1px solid color-mix(in srgb,var(--sky) 30%,transparent);background:rgba(6,5,16,.62);transition:border-color .2s,box-shadow .2s}
+.nw-compose:focus-within{border-color:var(--sky);box-shadow:0 0 0 1px rgba(53,199,240,.35),0 0 18px rgba(53,199,240,.16)}
+.nw-compose .pr{flex:none;color:color-mix(in srgb,var(--sky) 80%,#fff);font-size:13px;font-weight:800;line-height:20.8px;padding-top:7px;text-shadow:0 0 12px rgba(53,199,240,.55)}
+.nw-compose textarea{flex:1;min-width:0;min-height:36px;max-height:98px;padding:7px 2px;border:0;background:transparent;color:#fff;font:500 13px/1.6 var(--font-mono);resize:none;outline:none}
+.nw-compose textarea::placeholder{color:var(--metal2)}
+.nw-compose .send{flex:none;width:38px;height:34px;clip-path:var(--hex);display:grid;place-items:center;font-size:14px;font-weight:800;color:var(--indigo);background:linear-gradient(160deg,var(--gold),var(--sun));box-shadow:0 0 16px rgba(255,138,61,.4);transition:.15s}
+.nw-compose .send:hover{filter:brightness(1.1)}
+.nw-compose.shake{animation:sh .3s}
+.nw-row{display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:6px}
+.nw-chip{display:flex;flex-direction:column;align-items:stretch;gap:2px;min-width:0;padding:6px 9px;border:1px solid rgba(185,179,217,.22);background:rgba(10,8,24,.52);text-align:left;transition:.14s}
+.nw-chip:hover{border-color:color-mix(in srgb,var(--sky) 55%,transparent);background:rgba(16,13,40,.7)}
+.nw-chip>span{font-size:7px;letter-spacing:.14em;color:var(--metal2);font-weight:800;font-family:var(--font-ui)}
+.nw-chip>b{display:block;width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#fff;font-family:var(--font-mono);font-size:10.5px;font-weight:700}
+.nw-chip select{width:100%;min-width:0;padding:0;border:0;background:transparent;color:#fff;font-family:var(--font-mono);font-size:10.5px;font-weight:700;outline:none;color-scheme:dark;cursor:pointer}
+.nw-tip{display:flex;align-items:center;gap:6px;margin-top:1px;font-size:9px;color:var(--metal2);font-family:var(--font-mono)}
+.nw-tip b{color:var(--gold);font-weight:800}
+/* 编队头部同时有「新会话」和「全部 →」：这一枚收紧内边距，行不溢出。 */
+.fr-h [data-new-chat]{padding:0 5px;letter-spacing:0}
+@media (max-width:560px){.nw-row{grid-template-columns:1fr}.nw-main{max-width:none}}
+
+
+.cwgr{position:absolute;right:0;bottom:0;width:14px;height:14px;cursor:nwse-resize;background:linear-gradient(135deg,transparent 50%,var(--waccent,var(--teal)) 50%);opacity:.5}
 #winBar{position:absolute;left:10px;bottom:10px;z-index:55;display:flex;gap:6px;align-items:center;padding:5px 8px;border-radius:12px;opacity:var(--winop,1);background:var(--glass2);backdrop-filter:blur(12px);border:1px solid rgba(185,179,217,.3);max-width:calc(100vw - 20px);overflow-x:auto;scrollbar-width:thin}
 #winBar .wl{flex:none;font-size:8px;letter-spacing:.14em;color:var(--metal2);font-weight:800;margin-right:2px}
 .wbchip{position:relative;flex:none;display:flex;align-items:center;gap:5px;height:24px;padding:0 9px;clip-path:polygon(5px 0,100% 0,calc(100% - 5px) 100%,0 100%);background:rgba(255,255,255,.07);border:1px solid rgba(185,179,217,.22);color:var(--ink2);font-size:9.5px;font-weight:700;font-family:var(--font-ui);max-width:120px}
@@ -1807,6 +1878,8 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
 .wbchip:hover{color:#fff;border-color:var(--teal)}
 .wbchip.on{background:linear-gradient(90deg,var(--sky),var(--violet));color:#fff}
 .wbchip.min{opacity:.65;border-style:dashed}
+.wbchip.wacc{border-color:color-mix(in srgb,var(--waccent,var(--teal)) 50%,rgba(185,179,217,.22))}
+.wbchip.wacc.on{background:rgba(16,13,40,.78);color:#fff;border-color:var(--waccent,var(--teal));box-shadow:0 0 12px color-mix(in srgb,var(--waccent,var(--teal)) 30%,transparent)}
 .wbchip .un{min-width:13px;height:13px;padding:0 3px;border-radius:999px;background:var(--dot);color:#fff;font-size:8px;font-weight:800;display:grid;place-items:center}
 
 /* ═══ 响应式 ═══ */
@@ -1835,9 +1908,9 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
   .flrow.wait::after{background:var(--amber)}
   .flrow.blocked::after{background:var(--red);animation:np 1.5s infinite}
   .flrow.done::after{background:var(--green)}
-  /* 极窄档：干活行用静态青点代替（优先于上面的状态点）。 */
+  /* 极窄档：干活行用天蓝点（与秒表同色；优先于上面的状态点）。 */
   .flrow.is-flow::after{left:auto;top:auto;right:6px;bottom:6px;width:5px;height:5px;border-radius:50%;
-    background:var(--teal);box-shadow:0 0 7px var(--teal);animation:none;transform:none}
+    background:var(--sky);box-shadow:0 0 7px var(--sky);animation:none;transform:none}
   .fr-foot{padding:4px 3px}
   .fr-more{font-size:8px;padding:0 3px;gap:3px}
   .fr-more .fml{display:none}
@@ -2203,6 +2276,7 @@ kbd{border:1px solid rgba(185,179,217,.35);border-bottom-width:2px;border-radius
         <div class="turndrop" id="turnDrop" hidden></div>
       </span>
       <span class="sp"></span>
+      <button class="con-av" id="conAvatar" title="汐音 · 主对话 · 点开汐音档案" aria-label="汐音头像 · 主对话"><img src="./assets/xiyin-avatar.png" alt="汐音"/></button>
       <button class="cbtn" id="conMin" title="收起通讯台（⌥C）· 停靠pill 点击展开">⌄ 收起</button>
     </div>
     <div class="addpop" id="addPop" hidden role="dialog" aria-label="添加技能 / 分身 / MCP"></div>
@@ -2280,24 +2354,24 @@ const SCENES=[{name:'舰桥 · 日落',short:'舰桥·日落',file:'./assets/sce
 const PROJECTS=[
  /* 2026-11-23 用户 #1：时间来真值（yyyy-MM-dd HH:mm:ss）；gateway 故意留长分支，
     验「分支吃剩余宽度 + 截断，HEAD / 时间定宽不越框」。 */
- {id:'ledger',name:'账务核心',color:'#35C7F0',org:'octo-finance',group:'ledger',
+ {id:'ledger',name:'账务核心',color:'#4D8DFF',org:'octo-finance',group:'ledger',
   branch:'main',head:'a74bee6',msg:'chore: bump settlement snapshot to 11-18',at:'2026-11-23 12:04:18',dirty:false,
   remote:'git@github.com:octo-finance/ledger.git',
   worktrees:[{branch:'fix/reconcile',path:'D:/octopus-ws/cabin/worktrees/ledger/reconcile'}]},
- {id:'gateway',name:'API 网关',color:'#8B7CF6',org:'octo-finance',group:'gateway',
+ {id:'gateway',name:'API 网关',color:'#D45BFF',org:'octo-finance',group:'gateway',
   branch:'feat/rate-limit-token-bucket-per-tenant-v2-with-fallback-budget',head:'de29609',msg:'feat: per-tenant token bucket limiter',at:'2026-11-23 13:41:52',dirty:true,
   remote:'git@github.com:octo-finance/gateway.git',worktrees:[]},
- {id:'risk',name:'风控引擎',color:'#FFB020',org:'octo-finance',group:'risk',
+ {id:'risk',name:'风控引擎',color:'#FF9E2C',org:'octo-finance',group:'risk',
   branch:'main',head:'ec8a626',msg:'fix: alert dedup window',at:'2026-11-22 18:26:07',dirty:false,
   remote:'git@github.com:octo-finance/risk.git',worktrees:[]},
- {id:'edge',name:'边缘节点',color:'#3DDC97',org:'octo-edge',group:'edge',
+ {id:'edge',name:'边缘节点',color:'#8FE24B',org:'octo-edge',group:'edge',
   branch:'main',head:'3acd561',msg:'chore: canary probe labels',at:'2026-11-20 09:12:45',dirty:false,
   remote:'git@github.com:octo-edge/edge.git',worktrees:[]}];
 const projOf=id=>PROJECTS.find(p=>p.id===id)||PROJECTS[0];
 /* 工作树根（演示用绝对路径）：项目页签与目录树窗口都显示完整路径。 */
 const WS_ROOT='D:/octopus-ws/cabin';
 const wsPath=id=>WS_ROOT+'/projects/'+id;
-const KIND={task:{g:'◆',label:'任务'},workflow:{g:'⬡',label:'工作流'},subagent:{g:'◈',label:'分身'},external:{g:'⧉',label:'外部'},wfdev:{g:'⚙',label:'流程开发'}};
+const KIND={task:{g:'◆',label:'任务'},workflow:{g:'⬡',label:'工作流'},chat:{g:'❯',label:'会话'},subagent:{g:'◈',label:'分身'},external:{g:'⧉',label:'外部'},wfdev:{g:'⚙',label:'流程开发'}};
 /* 2026-11-25 用户：完结 ≠ 归档 —— done 组只说「已完成」；真正的归档态由归档页签 / 📦 表达。 */
 const STATE_LABEL={run:'作战中',wait:'等你答',blocked:'受阻',queue:'待命',arch:'待归档',archiving:'归档中',done:'已完成'};
 const STATE_EMO={run:'⚡',wait:'❗',blocked:'💦',queue:'💤',arch:'📦',archiving:'⚙',done:'✅'};
@@ -2315,6 +2389,7 @@ const JOBS_INIT=[
  {id:'j-m4',proj:'ledger',kind:'task',title:'M4 · 结息重算',short:'M4 结息',status:'wait',st:'待验收',pct:100,doing:'补 AC-5 覆盖 · 2 文件',agent:'ledger-1',branch:'fix/interest',clock:'—',live:'在跑',liveSec:161,cost:0.18,tok:63000,rarity:3,tid:'t-2647',slug:'interest',born:2},
  {id:'j-arch',proj:'ledger',kind:'subagent',title:'归档沉淀 · M2',short:'归档 M2',status:'run',pct:40,doing:'编译 wiki/结算对账.md',agent:'ledger-1',branch:'archive/m2',clock:'6m10s',cost:0.05,tok:18000,rarity:2,tid:'t-2643',slug:'archive-m2',born:6},
  {id:'j-ext',proj:'gateway',kind:'external',title:'合规审计 · 网关',short:'合规审计',status:'run',pct:65,doing:'扫描配置 · 2 处偏差',agent:'claude-code',branch:'audit/gateway',clock:'22m',cost:0.10,tok:31000,rarity:2,tid:'t-2640',slug:'audit-gateway',born:22},
+ {id:'j-s1',proj:'ledger',kind:'chat',title:'收银台对接 · 会话',short:'收银台对接',status:'run',pct:null,doing:'比对旧适配器与新版返回字段',agent:'ledger-1',branch:'—',clock:'12m',live:'在跑',liveSec:740,cost:0.14,tok:48000,rarity:2,tid:'s-9f2a',slug:'cashier-session',born:12},
  {id:'j-m2x',proj:'ledger',kind:'wfdev',title:'发布脚本迁移',short:'脚本迁移',status:'run',pct:55,doing:'迁移第 4/7 个脚本',agent:'ledger-2',branch:'feat/release-scripts',clock:'8m',cost:0.05,tok:22000,rarity:2,tid:'t-2644',slug:'release-scripts',born:8},
  {id:'j-m3',proj:'risk',kind:'task',title:'M3 · 风控告警',short:'M3 风控',status:'queue',pct:0,doing:'待命 · 等并发位',agent:'—',branch:'—',clock:'—',cost:0,tok:0,rarity:1,tid:'t-2645',slug:'risk-alert',born:44},
  {id:'j-m5',proj:'risk',kind:'task',title:'M5 · 账单导出',short:'M5 导出',status:'queue',st:'待命',pct:0,doing:'dev 服务起着 · 等唤醒',agent:'risk-1',branch:'feat/bill-export',clock:'—',live:'等后台',liveSec:305,cost:0.03,tok:9000,rarity:2,tid:'t-2648',slug:'bill-export',born:3},
@@ -2345,6 +2420,7 @@ const THREADS_INIT={
  'j-m2':[{who:'sys',text:'—— M2 · 结算对账 ——'},{who:'you',name:'指挥官',text:'M2 的验收跑完叫我。',t:'09:31'},{who:'xy',name:'汐音',text:'接 M2 结算对账，走 spec-dev，AC 1–4 逐条对齐。',t:'09:31',mood:'working'},{who:'doer',name:'ledger-2',text:'impl 完成 · 2 文件 +184/−32 · 42 passed。',t:'09:36'},{who:'doer',name:'ledger-2',text:'AC-4 大额差异缺覆盖，要指挥决定本轮补不补。',t:'09:41'},{who:'xy',name:'汐音',text:'M2 可以验收了，证据与变更都摊好了。AC-4 我建议下一轮补，您定。',t:'09:41',mood:'happy'}],
  'j-arch':[{who:'sys',text:'—— 归档沉淀 · M2 ——'},{who:'xy',name:'汐音',text:'M2 归档沉淀，编译 wiki。',t:'09:31',mood:'working'},{who:'doer',name:'ledger-1',text:'抽 2 条可复用结论 · 1 处术语冲突。',t:'09:36'}],
  'j-ext':[{who:'sys',text:'—— 合规审计 · 网关 ——'},{who:'xy',name:'汐音',text:'派外部 agent 做合规审计，只回报结果。',t:'09:20',mood:'working'},{who:'doer',name:'claude-code',text:'扫描 12 个配置文件 · 2 处突发偏差。',t:'09:36'}],
+ 'j-s1':[{who:'sys',text:'—— 收银台对接 · 会话 ——'},{who:'you',name:'指挥官',text:'收银台新旧接口的返回字段对一下，差异列给我。',t:'09:38'},{who:'xy',name:'汐音',text:'接这件事：比对旧适配器与新版返回字段，差异落成清单。',t:'09:38',mood:'working'},{who:'doer',name:'ledger-1',text:'旧适配器 12 个字段，新版 15 个：3 个新增、2 个语义变了。',t:'09:47'}],
  'j-m2x':[{who:'sys',text:'—— 发布脚本迁移 ——'},{who:'xy',name:'汐音',text:'发布脚本迁移，7 个逐个过。',t:'09:31',mood:'working'},{who:'doer',name:'ledger-2',text:'前 3 个已迁 · 第 4 个遇回滚边界。',t:'09:39'}],
  'j-m3':[{who:'sys',text:'—— M3 · 风控告警 · 待命 ——'},{who:'xy',name:'汐音',text:'风控扫描在待命，等并发位。',t:'09:31',mood:'idle'}],
  'j-m2a':[{who:'sys',text:'—— M1 · 幂等修复 · 已归档 ——'},{who:'doer',name:'ledger-2',text:'2 文件 +96/−41 · 42 passed · 验收通过。',t:'09:02'}],
@@ -2356,6 +2432,7 @@ const JOB_EVENTS={
  'j-m2':[['09:31','汐音','dispatch','接 M2 结算对账'],['09:33','ledger-2','report','spec 定稿 4 tickets'],['09:36','ledger-2','tool','42 passed'],['09:41','ledger-2','attention','AC-4 未覆盖']],
  'j-arch':[['09:31','汐音','dispatch','归档沉淀'],['09:36','ledger-1','tool','写 wiki']],
  'j-ext':[['09:20','汐音','dispatch','外部合规审计'],['09:36','claude-code','tool','2 偏差']],
+ 'j-s1':[['09:38','汐音','dispatch','接下收银台字段比对'],['09:44','ledger-1','tool','读取旧适配器 12 字段'],['09:47','ledger-1','report','差异清单 3 新增 / 2 语义变更']],
  'j-m2x':[['09:31','汐音','dispatch','脚本迁移'],['09:40','ledger-2','attention','回滚策略待定']],
  'j-m3':[['09:31','汐音','note','待命']],
  'j-m2a':[['08:58','ledger-2','report','42 passed'],['09:02','ledger-2','report','已归档']],
@@ -2430,7 +2507,7 @@ const ARC_FILES={
  'verify.log':'[verify] 42 tests passed\n[verify] 0 failed\n',
  'round-report-r1.md':'# Round 1 · report\n\n- 31 passed · 0 failed\n',
  'risk.diff':'diff --git a/src/risk/terms.ts b/src/risk/terms.ts\n+export const TERMS = { idempotent: "幂等" }\n'};
-const KW={'j-m1':'退款','j-m2g':'限流','j-m2':'对账','j-arch':'归档','j-ext':'审计','j-m2x':'迁移','j-m3':'风控','j-m2a':'幂等','j-m7':'导出','j-edge':'灰度'};
+const KW={'j-m1':'退款','j-m2g':'限流','j-m2':'对账','j-arch':'归档','j-ext':'审计','j-s1':'收银台','j-m2x':'迁移','j-m3':'风控','j-m2a':'幂等','j-m7':'导出','j-edge':'灰度'};
 const SAY=[['指挥官，舰桥一切正常，编队在跑。','idle'],['我在。您说。','wink'],['要拍板的都在「决断」里，点一条就地回我。','thinking'],['跃迁可以换场景，星空巡航和星云门都准备好了。','happy'],['别担心，阻塞那条我先停住现场了。','worried'],['右边「要我处理」亮起来是有新回传，点进去就地处理。','alert']];
 const PROGRESS=['探针正常 · 推进到下一节点。','单测绿 · 继续 impl。','已写 round-report · 进入 verify。','缓存命中 82% · 成本低于预估。','worktree 干净 · 无越权改动。','第 2 阶段完成 · 进入第 3 阶段。'];
 /* 便签配色（与 classic 快速便签同一组）。 */
@@ -2471,7 +2548,7 @@ const state={sound:true,theme:0,winAlpha:1,thread:'main',panel:null,detailJob:nu
  actLogOpen:false,actLogSel:'a-bg-3',actLogFilter:'all',actLogQ:'',
  doc:null,
  addOpen:false,addTab:'skill',addQ:'',attSkill:null,attExpert:null,attLb:null,apMcp:null,
- flash:{job:null,op:null,at:0},autoWarp:true,conMin:false,conLeft:null,conTop:null,conGeo:null,wins:[],winSeq:0,zTop:30,
+ flash:{job:null,op:null,at:0},autoWarp:true,conMin:false,conLeft:null,conTop:null,conGeo:null,wins:[],winSeq:0,nwSeq:0,nwPickWin:null,zTop:30,
  inboxOpen:false,inboxSel:null,inboxPick:null,fanOpen:false,fleetOpen:false,relayJump:false,panelGeo:null,panelMax:false,panelAside:false,
  pjPop:false,projFocus:null,pjDiff:null,pjTab:'files',pjChgOpen:{},
  notes:NOTES_SEED.map(n=>({...n})),notesOpen:false,noteSel:'nt1',noteQ:'',noteUndo:null,notesGeo:null,notesMax:false,
@@ -2612,21 +2689,18 @@ function renderFleetRail(){
   const row=j=>{const pr=projOf(j.proj);const un=state.unread[j.id]||0;const label=labelOf(j);
     const active=activeOf(j);
     const clock=jobClockOf(j), full=jobClockOf(j,true);
-    const timer=clock?`<span class="fltime${j.live==='等后台'?' bgw':''}" data-fltime="${j.id}" title="已作战 ${full}">⏱ ${clock}</span>`:'';
-    const bar=j.status==='done'||j.status==='arch'?'':(j.live?'<span class="flbar is-live"><i></i></span>'
-      :j.status==='run'?`<span class="flbar is-run"><i style="width:${Math.round(j.pct)}%"></i></span>`
-      :`<span class="flbar"><i style="width:${Math.round(j.pct)}%"></i></span>`);
-    return `<div class="flrow ${j.status}${j.live?' live':''}${active?' is-flow':''}${openSet.has(j.id)?' is-chat':''}" role="option" tabindex="0" data-rail-job="${j.id}" style="--accent:${pr.color};--p:${j.live?0:Math.round(j.pct)}" title="${esc(j.title)} · ${label}${j.live?` · ${liveTextOf(j)}`:''}${full?` · 已作战 ${full}`:''} · ${esc(j.doing)} · 点行进对话">
+    const timer=clock?`<span class="fltime${j.live==='等后台'?' bgw':''}" data-fltime="${j.id}" title="已作战 ${full}"><span class="flspin" data-flspin>⠋</span> <span data-flclock>${clock}</span></span>`:'';
+    return `<div class="flrow ${j.status}${j.live?' live':''}${active?' is-flow':''}${openSet.has(j.id)?' is-chat':''}" role="option" tabindex="0" data-rail-job="${j.id}" style="--accent:${pr.color}" title="${esc(j.title)} · ${label}${j.live?` · ${liveTextOf(j)}`:''}${full?` · 已作战 ${full}`:''} · ${esc(j.doing)} · 点行进对话">
       <span class="flhw"><span class="flhg">${KIND[j.kind].g}</span></span>
-      <span class="flbody"><span class="fltop"><b>${esc(j.short)}</b>${j.live||j.status==='done'||j.status==='arch'?'':`<span class="flpct">${Math.round(j.pct)}%</span>`}</span>
+      <span class="flbody"><span class="fltop"><b>${esc(j.short)}</b>${j.live||j.pct==null||j.status==='done'||j.status==='arch'?'':`<span class="flpct">${Math.round(j.pct)}%</span>`}</span>
       <span class="flsub"><span class="flst ${j.status}">${label}</span>${j.live||j.status==='done'?'':`<span class="flsub-t">${esc(j.doing)}</span>`}${timer}</span>
-      ${bar}</span>
+      </span>
       <span class="flacts">
         <span class="flactwrap">
           <button class="flact pri" data-rail-chat="${j.id}" title="💬 对话 · 这条作战的 chat 窗" aria-label="对话">💬</button>
           ${un?`<i class="und">${un>9?'9+':un}</i>`:''}
         </span>
-        <button class="flact" data-rail-detail="${j.id}" title="▦ 详情 · 作战详情（${j.status==='arch'||j.status==='archiving'?'归档页签':'不改主通讯台'}）" aria-label="详情">${j.status==='arch'||j.status==='archiving'?'📦':'▦'}</button>
+        <button class="flact" data-rail-detail="${j.id}" title="▦ 详情 · ${j.kind==='chat'?'会话详情':'作战详情'}（${j.status==='arch'||j.status==='archiving'?'归档页签':'不改主通讯台'}）" aria-label="详情">${j.status==='arch'||j.status==='archiving'?'📦':'▦'}</button>
       </span></div>`;};
   const list=fleetSorted();
   const LIMIT=6;
@@ -2635,7 +2709,7 @@ function renderFleetRail(){
   const more=list.length>LIMIT
     ? `<div class="fr-foot"><button class="fr-more" data-fleet-more>${state.fleetOpen?'<span class="fml">收起</span><b>⌃</b>':`<span class="fml">更多</span><b>+${hidden}</b><span class="fmc">⌄</span>`}</button></div>`
     : '';
-  el.innerHTML=`<div class="fr-h"><span class="fr-mark">⬡</span><span class="lh"><span>编队</span><b>${total}</b>${run?'<i class="live"></i>':''}</span><span class="sp"></span><button class="fr-all" data-fleet-all title="展开编队面板 · 按项目筛选">全部 →</button></div>
+  el.innerHTML=`<div class="fr-h"><span class="fr-mark">⬡</span><span class="lh"><span>编队</span><b>${total}</b>${run?'<i class="live"></i>':''}</span><span class="sp"></span><button class="fr-all" data-new-chat title="新建会话 · 发第一条消息才创建">新会话</button><button class="fr-all" data-fleet-all title="展开编队面板 · 按项目筛选">全部 →</button></div>
    <div class="fr-sub"><span>在跑 <b>${run}</b></span><span>待命 <b>${queue}</b></span>${arch?`<span style="color:var(--pink)">待归档 <b style="color:var(--pink)">${arch}</b></span>`:''}<span>归档 <b>${done}</b></span></div>
    <div class="fr-list">${shownList.map(row).join('')||'<div class="fr-empty">本舱还没有作战</div>'}</div>${more}`;
   /* #5：行体 = 进这条作战的 chat；💬 同义；▦ 只是打开详情，不换主通讯台。 */
@@ -2644,22 +2718,22 @@ function renderFleetRail(){
   $$('[data-rail-job]',el).forEach(r=>{const go=()=>openJobChat(r.dataset.railJob);
     r.addEventListener('click',e=>{if(e.target.closest('.flact'))return;go();});
     r.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go();}});});
-  $('[data-fleet-all]',el)?.addEventListener('click',()=>{openPanel('fleet');Audio.sfx('click');});
+  $('[data-new-chat]',el)?.addEventListener('click',()=>{openNewWin();Audio.sfx('open');});
+ $('[data-fleet-all]',el)?.addEventListener('click',()=>{openPanel('fleet');Audio.sfx('click');});
   $('[data-fleet-more]',el)?.addEventListener('click',()=>{state.fleetOpen=!state.fleetOpen;renderFleetRail();Audio.sfx('click');});
 }
-/** 轻量刷新进度，不重建整条 rail（避免悬停时闪烁）。 */
-function tickFleetRail(){const el=$('#fleetrail');if(!el)return;
-  state.jobs.forEach(j=>{const row=el.querySelector(`[data-rail-job="${j.id}"]`);if(!row)return;
-    const pct=row.querySelector('.flpct');if(pct)pct.textContent=Math.round(j.pct)+'%';
-    const bar=row.querySelector('.flbar i');
-    // 不定长滚动条（待验收/待命在跑）不吃真实 pct，别把它的宽度改掉。
-    if(bar&&!bar.closest('.flbar.is-live'))bar.style.width=Math.round(j.pct)+'%';
-    row.style.setProperty('--p',Math.round(j.pct));});}
 /* 统一秒表每秒走字：只改这一格的 textContent，不重建整行。 */
 setInterval(()=>{if(document.hidden)return;const el=$('#fleetrail');if(!el)return;
-  state.jobs.forEach(j=>{const t=el.querySelector(`[data-fltime="${j.id}"]`);if(!t)return;
-    const rc=jobClockOf(j);if(!rc)return;
-    t.textContent='⏱ '+rc;t.title='已作战 '+jobClockOf(j,true);});},1000);
+  state.jobs.forEach(j=>{const wrap=el.querySelector(`[data-fltime="${j.id}"]`);if(!wrap)return;
+    const t=wrap.querySelector('[data-flclock]');const rc=jobClockOf(j);if(!rc||!t)return;
+    t.textContent=rc;wrap.title='已作战 '+jobClockOf(j,true);});},1000);
+/* 干活行的 braille 转字（2026-11-25 用户）：与 chat 流尾工作行同一套帧，10fps。
+   reduced-motion 下冻结在首帧。 */
+const FL_SPIN=['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
+setInterval(()=>{if(document.hidden)return;
+  if(window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches)return;
+  const g=FL_SPIN[Math.floor(performance.now()/100)%FL_SPIN.length];
+  document.querySelectorAll('[data-flspin]').forEach(s=>{if(s.textContent!==g)s.textContent=g;});},100);
 
 /* ── 右栏「活动」（v22 十四轮 · rev2 · 2026-11-21 用户）：
       与「要我处理」同一套浮层 —— 一级 = 列表；点一条 → 浮层变两栏，列表左边出详情；
@@ -3368,7 +3442,8 @@ function openJobChat(jid){if(!jid||jid==='main'){setConMin(false);requestAnimati
 /* ── 归档页签（2026-11-24 用户）：编队任务在三处都能落到这同一扇只读明细 ──
    ① 编队行 / 作战详情页签；② chat 窗头部 📦；③ 主对话任务状态卡的归档角标。
    操作仍在对话里完成：这里只展示归档闸、四步编排与逐仓落点。 */
-const detailTabFor=j=>j&&(j.status==='arch'||j.status==='archiving'||ARCHIVE[j.id]?.state==='pending'||ARCHIVE[j.id]?.state==='running')?'archive':'run';
+/* 详情默认页签：归档态优先；会话（chat）默认落「对接」（它那六项的首页签）；其余落「运行」。 */
+const detailTabFor=j=>j&&(j.status==='arch'||j.status==='archiving'||ARCHIVE[j.id]?.state==='pending'||ARCHIVE[j.id]?.state==='running')?'archive':(j&&j.kind==='chat')?'relay':'run';
 function archRun(jid){const a=ARCHIVE[jid],j=jobOf(jid);if(!a||a.state!=='pending')return;
  a.state='running';a.step=0;a.startedAt=nowHM();a.elapsed='0:12';
  a.events=[['刚刚','汐音','dispatch','你说「归档」· 启动归档编排']];
@@ -3553,7 +3628,7 @@ function bindArcWins(){
 function openDetail(jid,tab,keepInbox){if(!jid)return;state.detailJob=jid;state.detailTab=tab||detailTabFor(jobOf(jid));state.archTab='overview';state.panel='detail';openPanel('detail',!!keepInbox);Audio.sfx('click');}
 
 /* ── send / spawn / resolve ── */
-function autoGrowEl(t){const win=!!t.closest('.cwi');t.style.height='auto';const min=win?28:36,max=win?70:92;const h=Math.max(min,Math.min(t.scrollHeight,max));t.style.height=h+'px';t.style.overflowY=t.scrollHeight>max?'auto':'hidden';}
+function autoGrowEl(t,maxCap){t.style.height='auto';const min=36,max=maxCap||92;const h=Math.max(min,Math.min(t.scrollHeight,max));t.style.height=h+'px';t.style.overflowY=t.scrollHeight>max?'auto':'hidden';}
 function autoGrow(){autoGrowEl($('#cmdInput'));}
 function sendCommand(){const t=$('#cmdInput');const raw=t.value.trim();
  if(raw&&state.attSkill&&!raw.startsWith('/'))t.value='/'+state.attSkill+' '+raw;
@@ -3870,6 +3945,18 @@ const ACTIVITY_INIT=[
    {k:'tool',name:'Read',arg:'wiki/结算对账.md',res:'74 lines'},
    {k:'text',t:'「结算日」在 wiki 指 T+1 入账日，M2 报告里却指交易发生日 —— 这是一处真冲突。'},
   ],summary:null},
+ {id:'a-sa-4',kind:'subagent',title:'返回字段语义比对',type:'Explore',by:'ledger-1 · 收银台会话',status:'run',started:'09:44',elapsed:'2m10s',steps:9,
+  tin:5200,tout:3100,tcache:4200,cost:0.02,model:'qwen3.7-plus',src:'j-s1',
+  prompt:'把旧适配器与新版收银台接口的返回字段逐项比对：列出新增 / 删除 / 语义变更，给出兼容层的最小改法。只读，不改文件。',
+  log:[
+   {k:'think',t:'先读旧适配器的字段定义，再拉新版接口的样例返回。'},
+   {k:'tool',name:'Read',arg:'src/pay/cashier-adapter.ts',res:'96 lines'},
+   {k:'tool',name:'Bash',arg:'curl -s /pay/settle/sample | jq keys',res:'15 keys'},
+   {k:'text',t:'新增 3 个字段（channel_trace / settle_cycle / fee_detail），其中 fee_detail 是嵌套结构。'},
+  ],summary:null},
+ {id:'a-bg-4',kind:'background',title:'curl 新版收银台 /pay/settle',type:'bash',by:'ledger-1 · 收银台会话',status:'done',started:'09:43',elapsed:'8s',pid:'4521',exit:0,src:'j-s1',
+  command:'curl -s http://localhost:4100/pay/settle/sample | jq .',
+  output:'{\n  "order_id": "A-9201",\n  "amount": 128.00,\n  "currency": "CNY",\n  "channel_trace": "wxpay-7f2c",\n  "settle_cycle": "T+1",\n  "fee_detail": { "rate": 0.006, "fixed": 0 }\n}\n\n[exit 0]'},
  {id:'a-bg-1',kind:'background',title:'vitest --run src/settlement',type:'bash',by:'汐音 · 主会话',status:'run',started:'09:40',elapsed:'1m05s',pid:'4412',src:'j-m2',
   command:'pnpm vitest run src/settlement --reporter=dot',
   output:'RUN  v2.1.9  D:/octopus-ws/cabin/projects/ledger\n\n❯ src/settlement/reconcile.test.ts (14 tests | 3 failed) 812ms\n   × reconciles cross-account replay\n     → expected 1 but got 2\n   ✓ settles T+1 boundary\n   ✓ ignores duplicate events\n\nTest Files  1 failed (1)\n     Tests  3 failed | 11 passed (14)\n  Start at  09:40:12\n  Duration  1.05s\n\n[watch] waiting for file changes…'},
@@ -4116,7 +4203,9 @@ function openItemCount(){return state.items.filter(itemOpen).length;}
 function renderItemBadge(){const b=$('#itemBadge');if(!b)return;const n=openItemCount();b.hidden=n===0;b.textContent=String(n);}
 function pickedItems(){return state.itemPicks.map(itemById).filter(itemOpen);}
 function markItemsDelivered(ids){const at=Date.now();ids.forEach(id=>{const it=itemById(id);if(it&&it.status==='todo'){it.status='delivered';it.deliveredAt=at;}});renderItemBadge();if(state.itemsOpen)renderItemsWin();}
-function itemMsgText(list){return '处理这几条事项：\n'+list.map(i=>'- #IT-'+i.n+'　'+i.title).join('\n');}
+/* 投递正文 = 标题做索引 + 正文逐字（2026-11-26 用户事故：只发标题，汐音拿不到需求）。
+   生产口径在 shared/formatCabinItemDeliveryText（含超长截断与回读指路）。 */
+function itemMsgText(list){return '处理这几条事项：\n'+list.map(i=>'### #IT-'+i.n+' '+i.title+'（'+i.kind+'）\n'+(i.body||'')).join('\n');}
 
 function toggleItemsWin(next){
  const open=next==null?!state.itemsOpen:!!next;
@@ -4595,6 +4684,41 @@ function renderRelay(j){
    <div class="rl-flow">${lines.length?lines.map(l=>`<div class="rm is-${l.from}${l.head?' head':''}" data-relay-key="${l.key}"><div class="rm-h"><b>${esc(roleName(l.from))} → ${esc(roleName(l.to))}</b><span class="k">${esc(l.kind)}</span><span class="t">${esc(l.at)}</span></div><p>${esc(l.text)}</p></div>`).join(''):'<div class="pempty">还没有交接事件 · 派发后这里留痕</div>'}</div>
    <div class="rl-foot">${esc(doer)}不直接找你：它的回报先到汐音，汐音汇总后再找你；要它做什么，也由汐音转达。</div>`;
 }
+/* ── 详情 · 消耗 / 子代理（2026-11-25 用户）：会话与任务共用的两个基础页签。
+      消耗 = 这一个作业自己的账（主回合 + 子代理单列，防双算）；本舱全域累计仍在右栏「消耗」。
+      子代理 = 按作业归属过滤的 subagent / 后台作业，点开进「活动日志」看过程。 ── */
+function jobActs(j){return ACTIVITY.filter(a=>a.src===j.id);}
+function renderUsage(j){
+ const turns=turnsFor(j),acts=jobActs(j);
+ const inTok=turns.reduce((s,t)=>s+t.inTok,0),outTok=turns.reduce((s,t)=>s+t.outTok,0);
+ const cr=turns.reduce((s,t)=>s+t.cr,0),cw=turns.reduce((s,t)=>s+t.cw,0);
+ const turnCost=turns.reduce((s,t)=>s+t.cost,0);
+ const subCost=acts.reduce((s,a)=>s+(a.cost||0),0);
+ const subTok=acts.reduce((s,a)=>s+((a.tin||0)+(a.tout||0)+(a.tcache||0)),0);
+ const byModel={};turns.forEach(t=>{const m=byModel[t.model]=byModel[t.model]||{calls:0,tok:0,cost:0};m.calls++;m.tok+=t.inTok+t.cr+t.outTok;m.cost+=t.cost;});
+ const what=j.kind==='chat'?'会话':'作业';
+ const subRow=a=>`<div class="mrow"><span class="mn">${a.kind==='subagent'?'◈':'⌁'}</span><span class="md">${esc(a.title)} · ${esc(a.type||'')} · ${a.status==='run'?'运行中':'已结束'}</span><span class="mv">${fmtK((a.tin||0)+(a.tout||0))}</span><span class="mc">¥${(a.cost||0).toFixed(2)}</span></div>`;
+ return `<div class="pnote">本${what}账本 = 这一个${what}自己的消耗（主回合 + 子代理单列，只读）；本舱全域累计看右栏 <b>「消耗」</b>。</div>
+  <div class="ledger"><div><div class="big">${fmtK(inTok+cr+outTok)} <small>tok</small></div><div style="font-size:9px;color:var(--ink2)">${turns.length} 轮 · ${acts.length} 个子代理 · 只读</div></div><div class="cost"><b>¥${(turnCost+subCost).toFixed(2)}</b><span>主回合 + 子代理单列</span></div></div>
+  <div class="tokcells"><div class="tokc in"><div class="k">输入</div><div class="v">${fmtK(inTok)}</div></div><div class="tokc out"><div class="k">输出</div><div class="v">${fmtK(outTok)}</div></div><div class="tokc cr"><div class="k">缓存读</div><div class="v">${fmtK(cr)}</div></div><div class="tokc cw"><div class="k">缓存写</div><div class="v">${fmtK(cw)}</div></div></div>
+  <div class="sect">按轮 · 主回合</div>${turns.map(t=>`<div class="mrow"><span class="mn">T${t.n}</span><span class="md">${esc(t.model)} · ${esc(t.status)} · ${esc(t.dur)}</span><span class="mv">${fmtK(t.inTok+t.cr+t.outTok)}</span><span class="mc">¥${t.cost.toFixed(3)}</span></div>`).join('')}
+  <div class="sect">按模型</div>${Object.entries(byModel).map(([id,m])=>`<div class="mrow"><span class="mn">${esc(id)}</span><span class="md">${m.calls} 次 · ${esc(modelOf(id).desc)}</span><span class="mv">${fmtK(m.tok)}</span><span class="mc">¥${m.cost.toFixed(3)}</span></div>`).join('')}
+  <div class="sect">子代理 · 单列（不与主回合盲加）</div>${acts.length?acts.map(subRow).join(''):`<div class="pempty">这个${what}还没有子代理 · 需要时在对话里让它派一个</div>`}
+  <div class="pnote" style="color:var(--metal2);border-color:rgba(185,179,217,.24);background:rgba(255,255,255,.025);margin-top:9px">防双算：子代理 token 走 subagent_runs 单列（${fmtK(subTok)} tok · ¥${subCost.toFixed(2)}），不与主回合的 llm_calls 相加；成本按 token 用量派生，钱不落账本。</div>`;
+}
+function renderAgents(j){
+ const acts=jobActs(j);
+ const live=acts.filter(a=>a.status==='run'),done=acts.filter(a=>a.status!=='run');
+ const what=j.kind==='chat'?'会话':'作业';
+ const row=a=>{const bg=a.kind==='background';return `<button class="agrow${bg?' bg':''}" data-agopen="${esc(a.id)}" title="点开看过程（活动日志）">
+   <span class="agk">${bg?'⌁ 后台':'◈ 子代理'}</span>
+   <span class="agb"><b>${esc(a.title)}</b><span>${esc(a.type||(bg?'bash':'subagent'))} · ${esc(a.by)} · ${bg?`pid ${esc(a.pid||'—')}`:`${a.steps||0} 步`} · ${esc(a.started||'')} 起</span></span>
+   <span class="agr"><span class="st${a.status==='run'?'':' done'}">${a.status==='run'?'运行中':'已结束'}</span><span class="mt">${esc(a.elapsed||'—')} · ${fmtK((a.tin||0)+(a.tout||0))} tok · ¥${(a.cost||0).toFixed(2)}</span></span>
+   <span class="go">详情 →</span></button>`;};
+ return `<div class="pnote">只列这个${what}自己派出去的 —— 子代理与后台作业都归到发起它的作业；全舱历史在右栏「更多 → 活动日志」。</div>
+  <div class="agsum"><span class="k">子代理</span><b>${acts.filter(a=>a.kind==='subagent').length}</b><span class="k">后台</span><b>${acts.filter(a=>a.kind==='background').length}</b><span class="k">合计</span><b>¥${acts.reduce((s,a)=>s+(a.cost||0),0).toFixed(2)}</b><span class="sp"></span><span>运行中 <b>${live.length}</b></span></div>
+  ${acts.length?`${live.length?`<div class="aggrp">运行中</div>${live.map(row).join('')}`:''}${done.length?`<div class="aggrp">已结束</div>${done.map(row).join('')}`:''}`:`<div class="pempty">这个${what}还没有子代理<br><small>需要时在对话里让它开一个</small></div>`}`;
+}
 /* ── 详情 · 项目：只摆本作战的 worktree（任务 = 任务绑定的项目集；会话 = 会话锚点）。
       一行一个项目：名称 / 分支 / 路径；点击在 dossier 之上弹「目录树」窗口（只读）。 ── */
 function jobProjIds(j){return (j.projs&&j.projs.length)?j.projs:[j.proj];}
@@ -4747,15 +4871,12 @@ function renderProjectFace(pr){
 /* 原型样张（v23 十六轮）：用编队真行的 markup 摆出各干活态，实宽 198px。 */
 function lvSamp(o){
   const active=o.live||o.status==='run';
-  const timer=active&&o.clock?`<span class="fltime${o.live==='等后台'?' bgw':''}">⏱ ${o.clock}</span>`:'';
-  const bar=o.status==='done'||o.status==='arch'?'':(o.live?'<span class="flbar is-live"><i></i></span>'
-    :o.status==='run'?`<span class="flbar is-run"><i style="width:${o.pct??0}%"></i></span>`
-    :`<span class="flbar"><i style="width:${o.pct??0}%"></i></span>`);
-  return `<div><span class="lvtag">${o.tag}</span><div class="flrow ${o.status}${o.live?' live':''}${active?' is-flow':''}" style="--accent:${o.accent};--p:${o.live?0:(o.pct??0)}">
+  const timer=active&&o.clock?`<span class="fltime${o.live==='等后台'?' bgw':''}"><span class="flspin" data-flspin>⠋</span> <span data-flclock>${o.clock}</span></span>`:'';
+  return `<div><span class="lvtag">${o.tag}</span><div class="flrow ${o.status}${o.live?' live':''}${active?' is-flow':''}" style="--accent:${o.accent}">
     <span class="flhw"><span class="flhg">${o.g||'◆'}</span></span>
-    <span class="flbody"><span class="fltop"><b>${esc(o.title)}</b>${o.live||o.pct==null||o.status==='arch'?'':`<span class="flpct">${o.pct}%</span>`}</span>
+    <span class="flbody"><span class="fltop"><b>${esc(o.title)}</b>${o.live||o.pct==null||o.status==='done'||o.status==='arch'?'':`<span class="flpct">${o.pct}%</span>`}</span>
     <span class="flsub"><span class="flst ${o.status}">${o.label}</span>${o.live||o.status==='done'?'':`<span class="flsub-t">${esc(o.doing)}</span>`}${timer}</span>
-    ${bar}</span>
+    </span>
   </div></div>`;
 }
 function renderPanel(){const p=$('#panel');if(!state.panel){p.classList.remove('open');return;}p.classList.add('open');applyPanelGeo();
@@ -4767,24 +4888,24 @@ function renderPanel(){const p=$('#panel');if(!state.panel){p.classList.remove('
  if(state.panel==='fleet'){
   const js=[...state.jobs].filter(j=>state.fleetFilter==='all'||j.proj===state.fleetFilter).sort((a,b)=>rankOf(a)-rankOf(b)||((a.born??999)-(b.born??999)));
   body=`<div class="fchips"><button class="fchip${state.fleetFilter==='all'?' on':''}" data-fproj="all">全部 ${state.jobs.length}</button>${PROJECTS.map(pr=>`<button class="fchip${state.fleetFilter===pr.id?' on':''}" data-fproj="${pr.id}">${pr.name} ${state.jobs.filter(j=>j.proj===pr.id).length}</button>`).join('')}<button class="fchip" data-ops-jump style="color:var(--amber);border-color:rgba(255,176,32,.5)">◈ 待你决断 ${openOps().length}</button></div>`;
-  body+=js.map(j=>{const pr=projOf(j.proj),op=opForJob(j.id);const archP=ARCHIVE[j.id]?.state==='pending';const arr=Date.now()-state.flash.at<1400&&state.flash.job===j.id;const label=labelOf(j);return `<div class="frow${arr?' arrived':''}" data-job="${j.id}" style="--accent:${pr.color}" role="button" tabindex="0"><span class="fg">${KIND[j.kind].g}</span><span class="fm"><span class="ft">${esc(j.title)}<span class="stars">${'★'.repeat(j.rarity||1)}</span></span><span class="fd">${esc(pr.name)} · ${esc(j.doing)}</span><span class="fb"><i style="width:${Math.round(j.pct)}%"></i></span></span><span class="fr">${j.live?`<span class="fstate run">⌁ ${liveTextOf(j)}</span>`:''}<span class="fstate ${j.status}">${STATE_EMO[j.status]} ${label}</span>${op?'<span class="fneed"><i></i>需要你</span>':''}${archP?'<span class="fneed arc"><i></i>等你点头</span>':''}</span><span class="fa"><button data-talk="${j.id}" title="与汐音谈这条">💬</button>${op?`<button class="dec" data-decide="${j.id}" title="就地决断">◈</button>`:''}${archP?`<button class="dec" data-archtab="${j.id}" title="📦 归档 · 待归档，打开归档页签">📦</button>`:''}</span></div>`;}).join('')||'<div class="pempty">该项目暂无作战。</div>';
+  body+=js.map(j=>{const pr=projOf(j.proj),op=opForJob(j.id);const archP=ARCHIVE[j.id]?.state==='pending';const arr=Date.now()-state.flash.at<1400&&state.flash.job===j.id;const label=labelOf(j);return `<div class="frow${arr?' arrived':''}" data-job="${j.id}" style="--accent:${pr.color}" role="button" tabindex="0"><span class="fg">${KIND[j.kind].g}</span><span class="fm"><span class="ft">${esc(j.title)}<span class="stars">${'★'.repeat(j.rarity||1)}</span></span><span class="fd">${esc(pr.name)} · ${esc(j.doing)}</span><span class="fb"><i style="width:${j.pct==null?0:Math.round(j.pct)}%"></i></span></span><span class="fr">${j.live?`<span class="fstate run">⌁ ${liveTextOf(j)}</span>`:''}<span class="fstate ${j.status}">${STATE_EMO[j.status]} ${label}</span>${op?'<span class="fneed"><i></i>需要你</span>':''}${archP?'<span class="fneed arc"><i></i>等你点头</span>':''}</span><span class="fa"><button data-talk="${j.id}" title="与汐音谈这条">💬</button>${op?`<button class="dec" data-decide="${j.id}" title="就地决断">◈</button>`:''}${archP?`<button class="dec" data-archtab="${j.id}" title="📦 归档 · 待归档，打开归档页签">📦</button>`:''}</span></div>`;}).join('')||'<div class="pempty">该项目暂无作战。</div>';
   body+=`<div class="sect">原型样张 · 作者在干活（编队行实宽 198px）</div><div class="lvsamp">${[
     lvSamp({tag:'① 待验收 · 无人在跑',status:'wait',label:'待验收',g:'◆',title:'M2 · 对账',doing:'停在验收 · 等你决定',pct:100,accent:'#8B7CF6'}),
     lvSamp({tag:'② 待验收 · Agent工作中',status:'wait',label:'待验收',g:'◆',title:'M4 · 结息',doing:'补 AC-5 覆盖 · 2 文件',pct:100,live:'在跑',clock:'42:41',accent:'#8B7CF6'}),
     lvSamp({tag:'③ 待命 · Agent工作中',status:'queue',label:'待命',g:'◆',title:'M5 · 账单导出',doing:'dev 服务起着 · 等唤醒',live:'在跑',clock:'3:07',accent:'#FFB020'}),
     lvSamp({tag:'④ 受阻 · Agent工作中',status:'blocked',label:'受阻',g:'◆',title:'M0 · 回调重试',doing:'CI 红 · 作者在排原因',live:'在跑',clock:'18:22',accent:'#FF3B5C'}),
-    lvSamp({tag:'⑤ 作战中（真实进度条 + 缓行流光）',status:'run',label:'作战中',g:'⬡',title:'边缘节点灰度',doing:'灰度 2/5 · 探针正常',pct:45,clock:'1:05',accent:'#3DDC97'}),
+    lvSamp({tag:'⑤ 作战中（天蓝条 + 转字 · 无进度条）',status:'run',label:'作战中',g:'⬡',title:'边缘节点灰度',doing:'灰度 2/5 · 探针正常',pct:45,clock:'1:05',accent:'#3DDC97'}),
     lvSamp({tag:'⑥ 待验收 · 等后台',status:'wait',label:'待验收',g:'◆',title:'M6 · 脚本迁移',doing:'dev 服务起着 · 等唤醒',pct:100,live:'等后台',clock:'5:05',accent:'#35C7F0'}),
     lvSamp({tag:'⑦ 已归档（无秒表）',status:'done',label:'已归档',g:'⬡',title:'M1 · 幂等修复',doing:'已验收归档',pct:null,accent:'#A78BFA'}),
     lvSamp({tag:'⑧ 待归档（末 phase 已通过 · 最后一道人工闸）',status:'arch',label:'待归档',g:'◆',title:'M7 · 对账导出',doing:'等你说「归档」',pct:100,accent:'#FF5C8A'}),
   ].join('')}<div class="lvnote">
-    <b>左侧保留 44×50 六边形</b>：种类字形（◆ 任务 / ⬡ 工作流 / ◈ 分身）+ 进度环；不换小图标。<br>
+    <b>左侧保留 44×50 六边形</b>：种类字形（◆ 任务 / ⬡ 工作流 / ◈ 分身）+ 静态项目色细边；<b>不画进度环 / 进度条</b>；真实进度只以数字保留（拿到 pct 才显示，null 不显示、不猜）。<br>
+    <b>运行中</b>：行左缘 2px 天蓝竖条 + 秒表前的 braille 转字（与 chat 流尾工作行同一套帧，10fps）；六边形边保持静态项目色，不滚动 —— 扫光 / 呼吸 / 脉冲全部去掉。<br>
     <b>待归档</b>是独立状态签（📦 粉），行尾 📦 直达「作战详情 → 归档」；chat 窗头部 📦 与主对话任务状态卡的归档角标落到同一页签。<br>
     <b>计时统一</b>：只要 agent 在跑（作战中 / 待验收在跑 / 待命在跑），秒表口径一致 = <b>已作战</b> job 起点 → now；≥1h 只显示 h:mm，完整 h:mm:ss 在悬停 title。<br>
-    <b>执行中不闪</b>：作战中用真实进度条 + 一道缓行的流光；待验收/待命在跑没有真实进度，底部用不定长滚动条；扫光 / 呼吸 / 脉冲全部去掉。<br>
-    <b>签</b>只表示生命周期（待验收仍是待验收）；是否 agent 在跑看秒表 + 状态签；doing 文本在 Agent 工作中的行让位给秒表（细节进 title）。<br>
+    <b>签</b>只表示生命周期（待验收仍是待验收）；是否 agent 在跑看六边巡边 + 秒表；doing 文本在 Agent 工作中的行让位给秒表（细节进 title）。<br>
     <b>顶栏「在跑」</b>按真正在干活计数——含待验收 / 待命里在跑的行；受阻行即使作者在跑也仍排最上（阻塞不能藏）。<br>
-    <b>reduced-motion</b>：滚动条静止，只留静态色块。
+    <b>reduced-motion</b>：转字冻结在首帧，只留秒表走字。
   </div></div>`;
  }
  else if(state.panel==='ops'){const open=[...openOps()].sort((a,b)=>OP_KIND[a.kind].pri-OP_KIND[b.kind].pri);const done=state.ops.filter(o=>o.status==='done'&&!o.removed);
@@ -4792,8 +4913,12 @@ function renderPanel(){const p=$('#panel');if(!state.panel){p.classList.remove('
   body+=open.map(o=>{const k=OP_KIND[o.kind];const j=jobOf(o.job);const arr=Date.now()-state.flash.at<1400&&state.flash.op===o.id;return `<div class="ocard${arr?' arrived':''}" data-op="${o.id}" style="--accent:${k.color}" role="button" tabindex="0"><span class="ot"><span class="oh">${esc(o.handle)}</span><span class="ok">${k.k}</span><span class="oa">${STATE_EMO[j?j.status:'run']} ${esc(o.age)}</span></span><span class="ti">${esc(o.title)}</span><span class="q">${esc(o.question)}</span><span class="orow"><span class="go">就地回答 →</span><button class="od" data-opdetail="${o.job}">▦ 详情</button></span></div>`;}).join('');
   body+=done.map(o=>`<div class="ocard done" data-opdone="${o.id}"><span class="ot"><span class="oh">${esc(o.handle)}</span><span class="ok">已处理</span></span><span class="rc">✓ ${esc(o.choice)}</span></div>`).join('');}
  else if(state.panel==='detail'){const j=jobOf(state.detailJob)||state.jobs[0];state.detailJob=j.id;state.focusJob=j.id;const pr=projOf(j.proj);const op=opForJob(j.id);
-  /* #5：详情不再带「对话」页签 —— 对话改走独立 chat 窗（头部 💬 对话）。 */
-  const tabs=['relay','run','changes','accept',...(j.kind==='task'||j.kind==='workflow'||ARCHIVE[j.id]?['archive']:[]),'files','debug','project'];const TL={relay:'对接',run:'运行',changes:'变更',accept:'验收',archive:'归档',files:'文件',debug:'调试',project:'项目'};let inner='';
+  /* #5：详情不再带「对话」页签 —— 对话改走独立 chat 窗（头部 💬 对话）。
+     2026-11-25 用户：会话（chat）至少要有 对接 / 文件 / 运行 / 调试 / 消耗 / 子代理；
+     任务在这些之外保留 变更 / 验收 / 归档 / 项目，并补 消耗 / 子代理。 */
+  const tabs=j.kind==='chat'?['relay','files','run','debug','usage','agents']:['relay','run','changes','accept',...(j.kind==='task'||j.kind==='workflow'||ARCHIVE[j.id]?['archive']:[]),'files','debug','project','usage','agents'];
+  const TL={relay:'对接',run:'运行',changes:'变更',accept:'验收',archive:'归档',files:'文件',debug:'调试',project:'项目',usage:'消耗',agents:'子代理'};
+  const agentsN=jobActs(j).length;let inner='';
   if(state.detailTab==='relay')inner=renderRelay(j);
   else if(state.detailTab==='run')inner=`<div class="sect">执行事件流</div>${(JOB_EVENTS[j.id]||[]).map(evHTML).join('')||'<div class="pempty">暂无事件</div>'}`;
   else if(state.detailTab==='changes'){const c=CHANGES[j.id];inner=c?`<div class="kv"><div class="kvi"><div class="k">分支</div><div class="v g">${esc(c.branch)}</div></div><div class="kvi"><div class="k">基线</div><div class="v">${esc(c.base)}</div></div><div class="kvi"><div class="k">文件</div><div class="v">${c.files.length}</div></div></div><div class="sect">变更 diff</div>${c.files.map(f=>`<div class="file"><div class="fh"><span class="st">${f.state}</span><span class="p">${esc(f.path)}</span><span class="ad">+${f.add}</span><span class="dl">−${f.del}</span></div><div class="diff">${f.diff.map(l=>`<div class="ln ${l[0]}"><span class="n">${l[1]}</span><span>${l[0]==='add'?'+':l[0]==='del'?'−':' '} ${esc(l[2])}</span></div>`).join('')}</div></div>`).join('')}`:'<div class="pempty">暂无代码变更。</div>';}
@@ -4801,11 +4926,13 @@ function renderPanel(){const p=$('#panel');if(!state.panel){p.classList.remove('
   else if(state.detailTab==='archive')inner=renderArchive(j);
   else if(state.detailTab==='files')inner=renderFiles(j);
   else if(state.detailTab==='project')inner=renderJobProject(j);
+  else if(state.detailTab==='usage')inner=renderUsage(j);
+  else if(state.detailTab==='agents')inner=renderAgents(j);
   else inner=renderDebug(j);
-  body=`<div class="dtabs">${tabs.map(t=>`<button class="dtab${state.detailTab===t?' on':''}" data-dtab="${t}">${TL[t]}${t==='archive'&&ARCHIVE[j.id]&&ARCHIVE[j.id].state!=='done'?'<i class="dtab-dot"></i>':''}</button>`).join('')}</div>${inner}`;
+  body=`<div class="dtabs">${tabs.map(t=>`<button class="dtab${state.detailTab===t?' on':''}" data-dtab="${t}">${TL[t]}${t==='archive'&&ARCHIVE[j.id]&&ARCHIVE[j.id].state!=='done'?'<i class="dtab-dot"></i>':''}${t==='agents'&&agentsN?`<i class="n">${agentsN}</i>`:''}</button>`).join('')}</div>${inner}`;
   const archA=ARCHIVE[j.id];
   const archHead=archA&&archA.state==='pending'?`<button class="pha arc" data-dtab="archive" title="待归档 · 末 phase 已通过，去归档页签">📦 待归档</button>`:archA&&archA.state==='running'?`<button class="pha arc" data-dtab="archive" title="归档编排中 · 看进度">📦 归档中</button>`:'';
-  p.innerHTML=`<div class="ph"><button class="phx" data-close title="关闭">✕</button><span class="pt"><b>${STATE_EMO[j.status]} ${esc(j.title)}</b><span>${esc(pr.name)} · ${esc(j.branch)} · ${esc(j.tid)}</span></span><span class="sp" style="flex:1"></span>${archHead}<button class="pha" data-phchat title="打开这条作战的对话（独立 chat 窗）">💬 对话</button></div><div class="pb">${body}</div>`;
+  p.innerHTML=`<div class="ph"><button class="phx" data-close title="关闭">✕</button><span class="pt"><b>${STATE_EMO[j.status]} ${esc(j.title)}</b><span>${esc(pr.name)} · ${j.kind==='chat'?`会话 ${esc(j.tid)}`:`${esc(j.branch)} · ${esc(j.tid)}`}</span></span><span class="sp" style="flex:1"></span>${archHead}<button class="pha" data-phchat title="打开这条作战的对话（独立 chat 窗）">💬 对话</button></div><div class="pb">${body}</div>`;
   p.querySelector('[data-phchat]')?.addEventListener('click',()=>{closePanel();openWin(j.id);Audio.sfx('click');});
   const dlog=p.querySelector('.dcon-log');if(dlog)dlog.scrollTop=dlog.scrollHeight;
   bindPanel();restore();return;}
@@ -4865,6 +4992,8 @@ function bindPanel(){const p=$('#panel');
  $$('[data-op]',p).forEach(c=>{const go=()=>{const o=opOf(c.dataset.op);closePanel();openJobChat(o.job);};c.addEventListener('click',e=>{if(e.target.closest('[data-opdetail]'))return;go();});c.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go();}});});
  $$('[data-opdetail]',p).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();state.detailJob=b.dataset.opdetail;state.detailTab=detailTabFor(jobOf(b.dataset.opdetail));state.panel='detail';renderPanel();Audio.sfx('click');}));
  $$('[data-dtab]',p).forEach(b=>b.addEventListener('click',()=>{state.detailTab=b.dataset.dtab;state.relayJump=false;renderPanel();Audio.sfx('click');}));
+ /* 子代理页签：点一行 → 活动日志窗（左列表 + 右详情），与本舱「更多 → 活动日志」同源。 */
+ $$('[data-agopen]',p).forEach(b=>b.addEventListener('click',()=>{state.actLogFilter='all';state.actLogSel=b.dataset.agopen;openActLog();Audio.sfx('click');}));
  /* 归档：行内 📦 直达页签；页签里的演示按钮推进归档闸（真产品里操作仍在主对话）。 */
  $$('[data-archtab]',p).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();state.detailJob=b.dataset.archtab;state.detailTab='archive';state.archTab='overview';state.panel='detail';renderPanel();Audio.sfx('click');}));
  $$('[data-arctab]',p).forEach(b=>b.addEventListener('click',()=>{state.archTab=b.dataset.arctab;renderPanel();Audio.sfx('click');}));
@@ -4996,17 +5125,99 @@ function openWin(jid){const ex=state.wins.find(w=>w.job===jid);if(ex){focusWin(e
 function focusWin(id){const w=state.wins.find(x=>x.id===id);if(!w)return;bumpZ(w);w.min=false;state.unread[w.job]=0;renderWins();renderBar();}
 function closeWin(id){state.wins=state.wins.filter(w=>w.id!==id);renderWins();renderBar();Audio.sfx('close');}
 function minWin(id){const w=state.wins.find(x=>x.id===id);if(w){w.min=true;renderWins();renderBar();Audio.sfx('close');}}
+/* ═══ 2026-11-27 用户：编队「＋ 新会话」—— 无内容窗口；发第一条消息才落成正式会话。
+   不占汐音的线程；窗口就地转正（不重开、不换台），编队同步多一行。 ═══ */
+function openNewWin(){
+ if(state.wins.length>=5){toast('独立窗口最多 5 个 · 先关一些');return;}
+ const ex=state.wins.find(w=>w.isNew);
+ if(ex){focusWin(ex.id);requestAnimationFrame(()=>{const t=document.querySelector('[data-winput="'+ex.id+'"]');if(t)t.focus();});return;}
+ const n=state.wins.length;
+ const con=$('#console');const cr=con&&!con.hidden?con.getBoundingClientRect():null;
+ if(cr)lastConRect={x:Math.round(cr.left),y:Math.round(cr.top),w:Math.round(cr.width),h:Math.round(cr.height)};
+ const base=cr?{x:Math.round(cr.left),y:Math.round(cr.top),w:Math.round(cr.width),h:Math.round(cr.height)}:lastConRect;
+ const dw=base?base.w:Math.min(560,innerWidth-24);
+ const dh=base?base.h:Math.min(520,innerHeight-140);
+ const ww=clamp(dw,300,innerWidth-16);
+ const hh=clamp(dh,260,innerHeight-70);
+ const shift=n*18;
+ const w={id:'w'+(++state.winSeq),job:'new-'+(++state.nwSeq),isNew:true,nw:{ws:'cabin',model:'pro',clone:''},
+  x:clamp((base?base.x:120)+shift,8,Math.max(8,innerWidth-ww-8)),
+  y:clamp((base?base.y:66)+shift,54,Math.max(54,innerHeight-hh-8)),
+  w:ww,h:hh,z:31,min:false};
+ state.wins.push(w);bumpZ(w);renderWins();renderBar();
+ requestAnimationFrame(()=>{const t=document.querySelector('[data-winput="'+w.id+'"]');if(t)t.focus();});
+}
+function newWinHTML(w,top){
+ const X=w.max?4:w.x,Y=w.max?52:w.y,W=w.max?Math.max(320,innerWidth-8):w.w,H=w.max?Math.max(260,innerHeight-56):w.h;
+ const m=modelOf(w.nw.model);
+ const eff=m.id==='pro'?'高':m.id==='pro-max'?'极深':'标准';
+ const clone=w.nw.clone?AP_CLONES.find(c=>c[0]===w.nw.clone):null;
+ const who=clone?clone[0]:'汐音';
+ const wsOpts=[['cabin','本舱工作区 · Workspace'],['ledger','projects/ledger · 账务中台'],['gateway','projects/gateway · 网关'],['risk','projects/risk · 风控'],['edge','projects/edge · 边缘']];
+ return `<div class="cwin${w.z===top?' focus':''}${w.max?' maxed':''}" data-win="${w.id}" style="left:${X}px;top:${Y}px;width:${W}px;height:${H}px;z-index:${w.z};--waccent:var(--sky)">
+  <div class="cwh" data-wdrag="${w.id}"><button class="cwbtn" data-wclose="${w.id}" title="关闭窗口 · 还没发送就不创建会话">✕</button><button class="cwadd" title="添加：技能 / 分身 / MCP"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.4l1.75 5.6 5.6 1.75-5.6 1.75L12 18.1l-1.75-5.6-5.6-1.75 5.6-1.75z" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round" class="pulse"/><g class="orbit" fill="none" stroke="currentColor" stroke-width=".9"><ellipse cx="12" cy="12" rx="9" ry="3.4" transform="rotate(-28 12 12)"/></g><circle cx="20.2" cy="7.6" r="1" fill="currentColor" class="core"/></svg></button>${W>=640?`<span class="telem" title="新会话 · 还没落盘"><button class="tc" title="模型 · 只影响本会话"><i>MODEL</i><b>${esc(m.id)} · ${eff}</b></button><button class="tc" title="上下文占用 · 发送后才开始计账"><i>CTX</i><b>— / 1M 0.0%</b></button><button class="tc tok" title="token / 费用 · 发送后才开始计账"><i>TOKEN</i><b>0 · ¥0.00</b></button></span>`:''}<span class="cwidx" title="用户输入历史 · 新会话 0 轮">≡ <b>0</b> 轮</span><span class="csp"></span><span class="te">✚</span><span class="cwid" title="对话身份 · 发第一条消息前都能改">${esc(who)} · 待创建</span><b class="cwtitle" style="cursor:default" title="新会话 · 发送第一条消息后转正">新会话</b><button class="cwbtn" data-wmin="${w.id}" title="收起窗口 · 底部窗口条展开">⌄ 收起</button></div>
+  <div class="cwl nw-body"><div class="nw-main">
+   <div class="nw-kick">NEW SESSION · 并行会话</div>
+   <div class="nw-h1">不和汐音抢线程，单独开一条</div>
+   <div class="nw-p">汐音在干活时也能立刻开新会话。发送第一条消息才真正创建；不发送关掉，什么都不会留下。</div>
+   <div class="nw-compose"><span class="pr">❯</span><textarea data-winput="${w.id}" rows="1" placeholder="描述你要做的事…（⏎ 创建会话 · ⇧⏎ 换行）"></textarea><button class="send" data-wsend="${w.id}">⏎</button></div>
+   <div class="nw-row">
+    <button type="button" class="nw-chip" data-nw-dir title="选择系统里的一个文件夹作为工作区"><span>工作区</span><b>${w.nw.dir?'📁 '+esc(w.nw.dir):'📁 本舱工作区 · 选择目录'}</b></button>
+    <label class="nw-chip"><span>模型</span><select data-nw-model>${MODELS.map(x=>`<option value="${x.id}"${w.nw.model===x.id?' selected':''}>${x.id} · ${x.desc}</option>`).join('')}</select></label>
+    <label class="nw-chip"><span>分身</span><select data-nw-clone><option value=""${!w.nw.clone?' selected':''}>汐音 · 自己接</option>${AP_CLONES.map(c=>`<option value="${c[0]}"${w.nw.clone===c[0]?' selected':''}>${c[0]}</option>`).join('')}</select></label>
+   </div>
+   <div class="nw-tip"><b>⏎</b> 发送 · 窗口就地转正，左侧编队同步多一行</div>
+  </div></div>
+  ${w.max?'':'<span class="cwgr" data-wgr="'+w.id+'" title="拖拽调整窗口大小"></span>'}</div>`;
+}
+function pickNewDir(id){
+ state.nwPickWin=id;
+ let inp=document.getElementById('nwDirPick');
+ if(!inp){
+  inp=document.createElement('input');
+  inp.type='file';inp.id='nwDirPick';inp.multiple=true;inp.hidden=true;
+  inp.setAttribute('webkitdirectory','');inp.setAttribute('directory','');
+  inp.addEventListener('change',()=>{
+   const w=state.wins.find(x=>x.id===state.nwPickWin);
+   const f=inp.files&&inp.files[0];
+   if(w&&w.isNew&&f){const rel=f.webkitRelativePath||'';w.nw.dir=rel.split('/')[0]||f.name;renderWins();}
+   inp.value='';state.nwPickWin=null;
+  });
+  document.body.appendChild(inp);
+ }
+ inp.click();
+}
+function sendFromNew(w,t){
+ const text=t.value.trim();
+ if(!text){const box=t.closest('.nw-compose')||t.closest('.cwi');if(box){box.classList.remove('shake');void box.offsetWidth;box.classList.add('shake');}Audio.sfx('deny');return;}
+ const dir=(w.nw.dir||'').toLowerCase();
+ const dirProj=['ledger','gateway','risk','edge'].find(p=>dir.includes(p));
+ const proj=dirProj||(/网关|限流|退款|路由/.test(text)?'gateway':/风控|告警/.test(text)?'risk':/边缘|灰度|节点/.test(text)?'edge':'ledger');
+ const seq=++state.seq;const id='j-sess'+seq;
+ const title=text.length>18?text.slice(0,18)+'…':text;
+ const clone=AP_CLONES.find(c=>c[0]===w.nw.clone);
+ const where=w.nw.dir?('📁 '+w.nw.dir):'本舱工作区';
+ state.jobs.unshift({id,proj,kind:'chat',title,short:title.length>6?title.slice(0,6)+'…':title,status:'run',pct:null,doing:'刚创建 · 汐音已接单',agent:clone?clone[0]:'汐音',branch:'—',clock:'0m',live:'在跑',liveSec:0,cost:0,tok:0,rarity:2,tid:'s-'+(2600+seq),slug:'session-'+seq,born:0});
+ state.threads[id]=[
+  {who:'sys',text:'—— 新会话 · '+where+' · '+w.nw.model+' ——'},
+  {who:'you',name:'指挥官',text,t:nowHM()},
+  clone?{who:'doer',name:clone[0],text:'收到，指挥官。这条会话我独立接，不占主对话的上下文；有要拍板的我举上来。',t:nowHM()}
+       :{who:'xy',name:'汐音',text:'收到，指挥官。这条会话独立跑，不占主对话的上下文；我先看一遍，有要拍板的举上来。',t:nowHM(),mood:'working'}];
+ w.model=w.nw.model;w.isNew=false;w.job=id;t.value='';autoGrowEl(t);
+ state.fleetOpen=true;renderWins();renderBar();renderFleetRail();renderDots();Audio.sfx('confirm');toast('会话已创建 · '+title);
+}
 function renderWins(){const L=$('#winLayer');const top=state.wins.reduce((m,w)=>Math.max(m,w.z),0);
- L.innerHTML=state.wins.filter(w=>!w.min).map(w=>{const j=jobOf(w.job);const msgs=threadOf(w.job);const cur=currentOf(w.job);const o=opForJob(w.job);
+ L.innerHTML=state.wins.filter(w=>!w.min).map(w=>{if(w.isNew)return newWinHTML(w,top);const j=jobOf(w.job);const msgs=threadOf(w.job);const cur=currentOf(w.job);const o=opForJob(w.job);
   const X=w.max?4:w.x,Y=w.max?52:w.y,W=w.max?Math.max(320,innerWidth-8):w.w,H=w.max?Math.max(260,innerHeight-56):w.h;
+  const mdl=modelOf(w.model||'pro'),mdlEff=mdl.id==='pro'?'高':mdl.id==='pro-max'?'极深':'标准',mdlLabel=mdl.id+' · '+mdlEff;
   /* v22 #5：窗 = 同一条会话的真 chat —— 遥测也用通讯台同一套芯片，读这扇窗自己的账。 */
   const turns=msgs.filter(m=>m.who==='you').length;
   const ctxTok=Math.min(260000,Math.round((j.tok||0)*0.4)+48000);
   const ctxLabel=fmtK(ctxTok)+' / 1M '+(ctxTok/1e6*100).toFixed(1)+'%';
-  return `<div class="cwin${w.z===top?' focus':''}${w.max?' maxed':''}" data-win="${w.id}" style="left:${X}px;top:${Y}px;width:${W}px;height:${H}px;z-index:${w.z}">
-  <div class="cwh" data-wdrag="${w.id}"><button data-wclose="${w.id}" title="关闭窗口（历史保留）">✕</button><button class="cwadd" title="添加：技能 / 分身 / MCP">✦</button><button data-wmin="${w.id}" title="最小化到切换条">—</button><button data-wmax="${w.id}" title="全屏 / 还原">${w.max?'⤡':'⛶'}</button><span class="te">${STATE_EMO[j.status]}</span><b>${esc(j.title)}</b>${W>=640?`<span class="telem" title="本窗会话的模型 / 上下文 / token 账"><button class="tc" title="模型设置 · 模型 / 思考强度 / 最大上下文"><i>MODEL</i><b>pro · 高</b></button><button class="tc" title="上下文占用"><i>CTX</i><b>${ctxLabel}</b></button><button class="tc tok" title="本次会话 token / 费用"><i>TOKEN</i><b>${fmtK(j.tok||0)} · ¥${(j.cost||0).toFixed(2)}</b></button></span>`:''}<span class="cwidx" title="用户输入历史 · 这是一个聊天窗的轮次索引">≡ <b>${turns}</b> 轮</span><span class="cwid" title="对话对象 · 身份由任务状态派生">${esc(j.agent)}</span><span class="csp"></span>${ARCHIVE[j.id]&&ARCHIVE[j.id].state!=='done'?`<button data-warch="${w.id}" title="📦 归档 · 待归档 / 编排中（打开作战详情 · 归档页签）">📦</button>`:''}<button data-wdetail="${w.id}" title="▦ 作战详情（chat 窗留着）">▦</button></div>
+  return `<div class="cwin${w.z===top?' focus':''}${w.max?' maxed':''}" data-win="${w.id}" style="left:${X}px;top:${Y}px;width:${W}px;height:${H}px;z-index:${w.z};--waccent:${projOf(j.proj).color}">
+  <div class="cwh" data-wdrag="${w.id}"><button class="cwbtn" data-wclose="${w.id}" title="关闭窗口（历史保留）">✕</button><button class="cwadd" title="添加：技能 / 分身 / MCP"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.4l1.75 5.6 5.6 1.75-5.6 1.75L12 18.1l-1.75-5.6-5.6-1.75 5.6-1.75z" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round" class="pulse"/><g class="orbit" fill="none" stroke="currentColor" stroke-width=".9"><ellipse cx="12" cy="12" rx="9" ry="3.4" transform="rotate(-28 12 12)"/></g><circle cx="20.2" cy="7.6" r="1" fill="currentColor" class="core"/></svg></button>${W>=640?`<span class="telem" title="本窗会话的模型 / 上下文 / token 账"><button class="tc" title="模型设置 · 模型 / 思考强度 / 最大上下文"><i>MODEL</i><b>${mdlLabel}</b></button><button class="tc" title="上下文占用"><i>CTX</i><b>${ctxLabel}</b></button><button class="tc tok" title="本次会话 token / 费用"><i>TOKEN</i><b>${fmtK(j.tok||0)} · ¥${(j.cost||0).toFixed(2)}</b></button></span>`:''}<span class="cwidx" title="用户输入历史 · 这是一个聊天窗的轮次索引">≡ <b>${turns}</b> 轮</span><span class="csp"></span><span class="te">${STATE_EMO[j.status]}</span><span class="cwid" title="对话对象 · 身份由任务状态派生">${esc(j.agent)}</span>${ARCHIVE[j.id]&&ARCHIVE[j.id].state!=='done'?`<button data-warch="${w.id}" title="📦 归档 · 待归档 / 编排中（打开作战详情 · 归档页签）">📦</button>`:''}<button class="cwtitle" data-wdetail="${w.id}" title="点击看详情 · ${esc(j.title)}">${esc(j.title)}</button><button class="cwbtn" data-wdetail="${w.id}" title="▦ ${j.kind==='chat'?'会话详情':'作战详情'}（chat 窗留着）">▦ 详情</button><button class="cwbtn" data-wmin="${w.id}" title="收起窗口 · 底部窗口条展开">⌄ 收起</button></div>
   <div class="cwl">${msgs.filter(m=>m!==cur).slice(-40).map(tlHTML).join('')}</div>
-  <div class="cwc">${cur?esc(cur.text):''}</div>
+  <div class="cwc"><div class="spk"><i></i><span>${cur?(cur.who==='doer'?esc(cur.name||j.agent):'汐音'):esc(j.agent)}</span></div><div class="line">${cur?esc(cur.text):''}</div></div>
   ${o?`<div class="cwch">${o.options.map((opt,i)=>`<button class="vchoice${opt.label===o.rec?' rec':''}" data-wchoice="${o.id}" data-wlabel="${esc(opt.label)}" data-wid="${w.id}" style="--accent:${OP_KIND[o.kind].color}"><span class="n">[${i+1}]</span><b>${esc(opt.label)}</b></button>`).join('')}</div>`:''}
   <div class="cwi"><span class="pr">❯</span><textarea data-winput="${w.id}" rows="1" placeholder="回应 ${esc(j.agent)} / 下指令…"></textarea><button class="send" data-wsend="${w.id}">⏎</button></div>
   ${w.max?'':'<span class="cwgr" data-wgr="'+w.id+'" title="拖拽调整窗口大小"></span>'}</div>`;}).join('');
@@ -5026,16 +5237,20 @@ function bindWins(){const L=$('#winLayer');
  $$('[data-wclose]',L).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();closeWin(b.dataset.wclose);}));
  $$('[data-wdetail]',L).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();const w=state.wins.find(x=>x.id===b.dataset.wdetail);if(w)openDetail(w.job,detailTabFor(jobOf(w.job)));}));
  $$('[data-warch]',L).forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();const w=state.wins.find(x=>x.id===b.dataset.warch);if(w)openDetail(w.job,'archive');}));
- $$('[data-wsend]',L).forEach(b=>b.addEventListener('click',()=>{const w=state.wins.find(x=>x.id===b.dataset.wsend);const ta=$(`[data-winput="${b.dataset.wsend}"]`);if(w&&ta)sendFrom(w.job,ta);}));
- $$('[data-winput]',L).forEach(t=>{t.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();const w=state.wins.find(x=>x.id===t.dataset.winput);if(w)sendFrom(w.job,t);}});t.addEventListener('input',()=>autoGrowEl(t));});
+ $$('[data-wsend]',L).forEach(b=>b.addEventListener('click',()=>{const w=state.wins.find(x=>x.id===b.dataset.wsend);const ta=$(`[data-winput="${b.dataset.wsend}"]`);if(w&&ta){if(w.isNew)sendFromNew(w,ta);else sendFrom(w.job,ta);}}));
+ $$('[data-winput]',L).forEach(t=>{t.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.altKey){e.preventDefault();const s=t.selectionStart,en=t.selectionEnd;const ok=document.execCommand?document.execCommand('insertText',false,'\n'):false;if(!ok){t.value=t.value.slice(0,s)+'\n'+t.value.slice(en);t.selectionStart=t.selectionEnd=s+1;}autoGrowEl(t,t.closest('.nw-compose')?98:undefined);return;}if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();const w=state.wins.find(x=>x.id===t.dataset.winput);if(w){if(w.isNew)sendFromNew(w,t);else sendFrom(w.job,t);}}});t.addEventListener('input',()=>autoGrowEl(t,t.closest('.nw-compose')?98:undefined));});
  $$('[data-wchoice]',L).forEach(b=>b.addEventListener('click',()=>{const ta=$(`[data-winput="${b.dataset.wid}"]`);const note=ta?ta.value.trim():'';resolveOp(b.dataset.wchoice,b.dataset.wlabel,note===b.dataset.wlabel?'':note);if(ta){ta.value='';autoGrowEl(ta);}}));
+ $$('[data-nw-dir]',L).forEach(b=>b.addEventListener('click',()=>{const w=state.wins.find(x=>x.id===b.closest('[data-win]')?.dataset.win);if(w&&w.isNew)pickNewDir(w.id);}));
+ $$('[data-nw-model]',L).forEach(s=>s.addEventListener('change',()=>{const w=state.wins.find(x=>x.id===s.closest('[data-win]')?.dataset.win);if(w&&w.isNew){w.nw.model=s.value;renderWins();}}));
+ $$('[data-nw-clone]',L).forEach(s=>s.addEventListener('change',()=>{const w=state.wins.find(x=>x.id===s.closest('[data-win]')?.dataset.win);if(w&&w.isNew){w.nw.clone=s.value;renderWins();}}));
  $$('[data-wgr]',L).forEach(g=>{g.addEventListener('pointerdown',e=>{e.stopPropagation();e.preventDefault();const w=state.wins.find(x=>x.id===g.dataset.wgr);if(!w||w.max)return;const sx=e.clientX,sy=e.clientY,ow=w.w,oh=w.h;
   const mv=ev=>{w.w=clamp(ow+ev.clientX-sx,300,innerWidth-16);w.h=clamp(oh+ev.clientY-sy,260,Math.max(260,innerHeight-70));const el=$(`[data-win="${w.id}"]`);if(el){el.style.width=w.w+'px';el.style.height=w.h+'px';}};
   const up=()=>{removeEventListener('pointermove',mv);removeEventListener('pointerup',up);};
   addEventListener('pointermove',mv);addEventListener('pointerup',up);});});}
 function renderBar(){const bar=$('#winBar');$('#app').classList.toggle('has-wins',state.wins.length>0);if(!state.wins.length){bar.hidden=true;bar.innerHTML='';return;}
  bar.hidden=false;const top=state.wins.reduce((m,w)=>Math.max(m,w.z),0);
- bar.innerHTML=`<span class="wl">WINDOWS</span><button class="wbchip${!state.conMin?' on':''}" data-wb="main"><span class="te">⬢</span><span class="tt2">主通讯</span></button>`+state.wins.map(w=>{const j=jobOf(w.job);const un=state.unread[w.job]||0;return `<button class="wbchip${w.z===top&&!w.min?' on':''}${w.min?' min':''}" data-wb="${w.id}" title="${esc(j.title)}${w.min?'（已最小化）':''}"><span class="te">${STATE_EMO[j.status]}</span><span class="tt2">${esc(j.short)}</span>${un?`<span class="un">${un}</span>`:''}</button>`;}).join('');
+ bar.innerHTML=`<span class="wl">WINDOWS</span><button class="wbchip${!state.conMin?' on':''}" data-wb="main"><span class="te">⬢</span><span class="tt2">主通讯</span></button>`+state.wins.map(w=>{if(w.isNew)return `<button class="wbchip wacc${w.z===top&&!w.min?' on':''}${w.min?' min':''}" data-wb="${w.id}" style="--waccent:var(--sky)" title="新会话 · 尚未创建"><span class="te">✚</span><span class="tt2">新会话</span></button>`;
+const j=jobOf(w.job);const un=state.unread[w.job]||0;return `<button class="wbchip wacc${w.z===top&&!w.min?' on':''}${w.min?' min':''}" data-wb="${w.id}" style="--waccent:${projOf(j.proj).color}" title="${esc(j.title)}${w.min?'（已最小化）':''}"><span class="te">${STATE_EMO[j.status]}</span><span class="tt2">${esc(j.short)}</span>${un?`<span class="un">${un}</span>`:''}</button>`;}).join('');
  $$('[data-wb]',bar).forEach(b=>b.addEventListener('click',()=>{const id=b.dataset.wb;if(id==='main'){setConMin(false);}else focusWin(id);}));}
 /* ── 主对话窗口：标题栏拖动 / 四边缩放 / 双击复位（几何会话内保留） ── */
 function bindGrips(){const c=$('#console');
@@ -5148,13 +5363,13 @@ function closeSettings(){state.settings=false;$('#setwrap').hidden=true;Audio.sf
    保存 = 与已绑求差集（取消勾选即解绑）。 */
 const ORG_CATALOG={
  'octo-finance':[
-  {group:'ledger',name:'账务核心',branch:'main',head:'a74bee6',msg:'chore: bump settlement snapshot to 11-18',at:'2026-11-23 12:04:18',dirty:false,color:'#35C7F0'},
-  {group:'gateway',name:'API 网关',branch:'feat/rate-limit-token-bucket-per-tenant-v2-with-fallback-budget',head:'de29609',msg:'feat: per-tenant token bucket limiter',at:'2026-11-23 13:41:52',dirty:true,color:'#8B7CF6'},
-  {group:'risk',name:'风控引擎',branch:'main',head:'ec8a626',msg:'fix: alert dedup window',at:'2026-11-22 18:26:07',dirty:false,color:'#FFB020'},
+  {group:'ledger',name:'账务核心',branch:'main',head:'a74bee6',msg:'chore: bump settlement snapshot to 11-18',at:'2026-11-23 12:04:18',dirty:false,color:'#4D8DFF'},
+  {group:'gateway',name:'API 网关',branch:'feat/rate-limit-token-bucket-per-tenant-v2-with-fallback-budget',head:'de29609',msg:'feat: per-tenant token bucket limiter',at:'2026-11-23 13:41:52',dirty:true,color:'#D45BFF'},
+  {group:'risk',name:'风控引擎',branch:'main',head:'ec8a626',msg:'fix: alert dedup window',at:'2026-11-22 18:26:07',dirty:false,color:'#FF9E2C'},
   {group:'settlement',name:'结算清分',branch:'main',head:'51cd9ab',msg:'feat: settling window v2',at:'2026-11-21 16:03:44',dirty:false,color:'#FF5C8A'},
   {group:'billing',name:'计费中心',branch:'release/2026-11',head:'9f2e804',msg:'chore: rate card sync',at:'2026-11-20 10:22:19',dirty:false,color:'#3DDC97'}],
  'octo-edge':[
-  {group:'edge',name:'边缘节点',branch:'main',head:'3acd561',msg:'chore: canary probe labels',at:'2026-11-20 09:12:45',dirty:false,color:'#3DDC97'},
+  {group:'edge',name:'边缘节点',branch:'main',head:'3acd561',msg:'chore: canary probe labels',at:'2026-11-20 09:12:45',dirty:false,color:'#8FE24B'},
   {group:'probe',name:'探针服务',branch:'main',head:'c41d7e2',msg:'fix: heartbeat jitter',at:'2026-11-19 22:48:31',dirty:false,color:'#35C7F0'},
   {group:'canary',name:'灰度调度',branch:'feat/step-rollout',head:'88ab30f',msg:'feat: step rollout weights',at:'2026-11-23 08:15:02',dirty:true,color:'#FFB020'}],
  'open-octopus':[
@@ -5414,7 +5629,7 @@ function fanAction(k){
 /* ── live tick：作战推进 + 账本 ── */
 setInterval(()=>{if(document.hidden)return;const mult=modelMult();
  state.jobs.forEach(j=>{if(j.status==='run'){j.pct=Math.min(96,j.pct+ .4);const dt=Math.round(260*mult);j.tok+=dt;j.cost+=dt*0.000012*mult;state.tokens=Math.min(state.ctxMax*.98,state.tokens+dt);state.tokIn+=Math.round(dt*.25);state.tokOut+=Math.round(dt*.1);state.tokCR+=Math.round(dt*.6);state.tokCW+=Math.round(dt*.05);state.cost+=dt*0.000012*mult;state.requests+=Math.random()<.3?1:0;}});
- renderHUD();tickFleetRail();if(state.panel==='usage'||state.panel==='fleet')renderPanel();},4000);
+ renderHUD();if(state.panel==='usage'||state.panel==='fleet')renderPanel();},4000);
 setInterval(()=>{if(document.hidden)return;const runs=state.jobs.filter(j=>j.status==='run');if(!runs.length)return;const j=rnd(runs);
  pushMsg(j.id,{who:'doer',name:j.agent,text:rnd(PROGRESS),t:nowHM()});
  state.flash={job:j.id,op:null,at:Date.now()};if(state.panel==='fleet')renderPanel();
@@ -5450,6 +5665,7 @@ $('#btnProj').addEventListener('click',e=>{e.stopPropagation();togglePjPop();});
 $('#character').addEventListener('click',()=>{Audio.sfx('click');state.lastAct=Date.now();playClip(state.clip+1);});
 $('#conClose').addEventListener('click',()=>setConMin(true));
 $('#conMin').addEventListener('click',()=>setConMin(!state.conMin));
+$('#conAvatar').addEventListener('click',()=>toggleXyPanel());
 $('#conAdd').addEventListener('click',e=>{e.stopPropagation();openAdd();});
 addEventListener('pointerdown',e=>{if(!state.addOpen)return;if(e.target.closest('#addPop,#conAdd'))return;openAdd(false);});
 $('#conTurns').addEventListener('click',e=>{e.stopPropagation();closeConPop();state.conTurns=!state.conTurns;state.conTurnSel=0;renderTurnDrop();Audio.sfx('click');});
@@ -5471,7 +5687,7 @@ addEventListener('pointerdown',e=>{if(!state.conTurns)return;if(e.target.closest
 $('#conDock').addEventListener('click',()=>setConMin(false));
 $('#btnSend').addEventListener('click',sendCommand);
 $('#cmdInput').addEventListener('input',autoGrow);
-$('#cmdInput').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendCommand();}});
+$('#cmdInput').addEventListener('keydown',e=>{if(e.key==='Enter'&&e.altKey){e.preventDefault();const t=e.currentTarget,s=t.selectionStart,en=t.selectionEnd;const ok=document.execCommand?document.execCommand('insertText',false,'\n'):false;if(!ok){t.value=t.value.slice(0,s)+'\n'+t.value.slice(en);t.selectionStart=t.selectionEnd=s+1;}return;}if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendCommand();}});
 $('#conChoices').addEventListener('click',e=>{const b=e.target.closest('[data-choice]');if(b){const note=$('#cmdInput').value.trim();resolveOp(b.dataset.choice,b.dataset.label,note===b.dataset.label?'':note);$('#cmdInput').value='';autoGrow();}});
 $('#banner').addEventListener('click',e=>{if(e.target.closest('#bannerX'))return;const o=state.brief;if(o){hideBanner();state.inboxOpen=true;state.inboxSel=o.id;state.inboxPick=null;renderInbox();Audio.sfx('open');}});
 $('#bannerX').addEventListener('click',e=>{e.stopPropagation();hideBanner();Audio.sfx('close');});

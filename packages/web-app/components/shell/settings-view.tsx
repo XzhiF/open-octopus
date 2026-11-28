@@ -16,6 +16,11 @@ const AppearancePanel = lazy(() =>
     default: m.AppearancePanel,
   })),
 )
+const DevicePairingPanel = lazy(() =>
+  import('@/components/settings/device-pairing-panel').then((m) => ({
+    default: m.DevicePairingPanel,
+  })),
+)
 
 export function SettingsView() {
   return (
@@ -25,6 +30,11 @@ export function SettingsView() {
           appearance: (
             <Suspense fallback={<ViewLoading />}>
               <AppearancePanel />
+            </Suspense>
+          ),
+          pairing: (
+            <Suspense fallback={<ViewLoading />}>
+              <DevicePairingPanel />
             </Suspense>
           ),
         }}

@@ -139,6 +139,28 @@
   background: rgba(46, 230, 214, 0.12);
 }
 
+/* v23（2026-11-27 用户）：编队头「新会话」—— 与「全部 →」同形，天蓝描边；
+   发第一条消息才创建会话，不占汐音的回合。紧贴「全部」左边。 */
+.ck12-fr-new {
+  height: 20px;
+  padding: 0 5px;
+  clip-path: polygon(4px 0, 100% 0, calc(100% - 4px) 100%, 0 100%);
+  border: 1px solid rgba(185, 179, 217, 0.25);
+  color: var(--ck12-ink2);
+  font-size: 8.5px;
+  font-weight: 800;
+  letter-spacing: 0;
+  white-space: nowrap;
+  background: transparent;
+  cursor: pointer;
+  transition: 0.13s;
+}
+.ck12-fr-new:hover {
+  color: #fff;
+  border-color: var(--ck12-sky);
+  background: rgba(53, 199, 240, 0.12);
+}
+
 /* ── 摘要行 ── */
 .ck12-fr-sub {
   flex: none;
@@ -231,8 +253,11 @@
   box-shadow: 0 0 10px var(--accent, var(--ck12-sky));
 }
 .ck12-flrow.is-done { opacity: 0.72; }
+/* 2026-11-25 用户：会话交完结论 = 待命（还能继续聊），与任务同档；已归档才是终态。 */
+.ck12-flrow.is-archived { opacity: 0.6; }
 
-/* 进度环 44×50：conic 外环 + 内衬 + 实心亮色字形 */
+/* 六边形 44×50（2026-11-25 用户：边不再表示进度）：
+   静态项目色细边 + 内衬 + 实心亮色字形；运行中的动势在行左缘竖条 + 秒表转字。 */
 .ck12-flhw {
   position: relative;
   flex: none;
@@ -245,11 +270,7 @@
   position: absolute;
   inset: 0;
   clip-path: var(--ck12-hex);
-  background: conic-gradient(
-    from 90deg,
-    var(--accent, var(--ck12-sky)) calc(var(--p, 0) * 1%),
-    rgba(185, 179, 217, 0.2) 0
-  );
+  background: color-mix(in srgb, var(--accent, var(--ck12-sky)) 40%, rgba(185, 179, 217, 0.2));
   transition: 0.3s;
 }
 .ck12-flhw::after {
@@ -327,6 +348,7 @@
   box-shadow: 0 0 8px rgba(255, 59, 92, 0.25);
 }
 .ck12-flst.is-done { background: rgba(61, 220, 151, 0.18); color: var(--ck12-green); }
+.ck12-flst.is-archived { background: rgba(185, 179, 217, 0.14); color: var(--ck12-metal2); }
 /* 2026-11-24：归档最后一道人工闸 —— 待归档粉 / 归档中蓝，看签就知道要不要点头。 */
 .ck12-flst.is-arch { background: rgba(255, 92, 138, 0.2); color: var(--ck12-pink); }
 .ck12-flst.is-archrun { background: rgba(53, 199, 240, 0.2); color: var(--ck12-sky); }
@@ -378,21 +400,6 @@
 }
 .ck12-flrow.is-wait .ck12-flsub { color: color-mix(in srgb, var(--ck12-amber) 80%, var(--ck12-ink2)); }
 .ck12-flrow.is-blocked .ck12-flsub { color: color-mix(in srgb, var(--ck12-red) 75%, var(--ck12-ink2)); }
-
-.ck12-flbar {
-  display: block;
-  height: 3px;
-  margin-top: 5px;
-  background: rgba(255, 255, 255, 0.07);
-  overflow: hidden;
-}
-.ck12-flbar i {
-  display: block;
-  height: 100%;
-  background: linear-gradient(90deg, var(--accent, var(--ck12-sky)), var(--ck12-pink));
-  box-shadow: 0 0 8px color-mix(in srgb, var(--accent, var(--ck12-sky)) 55%, transparent);
-  transition: width 0.5s;
-}
 
 /* #5（2026-11-23 用户）：编队行两条入口 —— 行体点击 = 进这条作战的 chat；
    行尾两枚小按钮：💬 对话（有未读加红点）/ ▦ 详情。主通讯台不再切线程。 */
@@ -460,12 +467,10 @@
   place-items: center;
   box-shadow: 0 0 7px rgba(255, 59, 92, 0.6), 0 0 0 1px rgba(16, 13, 40, 0.75);
 }
-/* 2026-11-24 用户：干活的编队行不再闪动 —— 静态青色左缘 + 进度条连续滚动。
-   · 有真实进度（作战中）：真实进度条 + 一道缓行流光（连续，不闪）；
-   · agent 在跑但没有真实进度（待验收 / 待命 / 受阻里作者在推进）：底部不定长滚动条。
-   选中行保留自己的强调色左缘，不被流动态盖掉。 */
+/* 2026-11-25 用户：运行中的信号 = 天蓝左缘竖条（与秒表同色）+ 秒表前 braille 转字；
+   进度条 / 六边进度环 / 琥珀巡边都不做了。选中行保留自己的强调色左缘。 */
 .ck12-flrow.is-flow {
-  border-color: color-mix(in srgb, var(--ck12-teal) 34%, rgba(185, 179, 217, 0.13));
+  border-color: rgba(53, 199, 240, 0.34);
 }
 .ck12-flrow.is-flow:not(.is-on)::before {
   content: '';
@@ -475,41 +480,22 @@
   bottom: 20%;
   width: 2px;
   border-radius: 2px;
-  background: var(--ck12-teal);
-  box-shadow: 0 0 8px color-mix(in srgb, var(--ck12-teal) 65%, transparent);
+  background: var(--ck12-sky);
+  box-shadow: 0 0 8px rgba(53, 199, 240, 0.55);
   pointer-events: none;
 }
-.ck12-flbar.is-live { background: rgba(46, 230, 214, 0.1); }
-.ck12-flbar.is-live i {
-  display: block;
-  width: 40%;
-  height: 100%;
-  background: linear-gradient(90deg, transparent, var(--ck12-teal), transparent);
-  box-shadow: 0 0 8px var(--ck12-teal);
-  animation: ck12-flbar 2.6s linear infinite;
+/* 转字：与 chat 流尾工作行同一套 braille 帧（10fps，由 RunClock 驱动）。 */
+.ck12-flspin {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  line-height: 1;
+  color: var(--ck12-sky);
 }
-@keyframes ck12-flbar {
-  0% { transform: translateX(-105%); }
-  100% { transform: translateX(255%); }
-}
-.ck12-flbar.is-run i { position: relative; overflow: hidden; }
-.ck12-flbar.is-run i::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: -35%;
-  width: 35%;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.5), transparent);
-  animation: ck12-runflow 2.4s linear infinite;
-}
-@keyframes ck12-runflow {
-  0% { left: -35%; }
-  100% { left: 100%; }
-}
+.ck12-fltime.is-bgw .ck12-flspin { color: var(--ck12-amber); }
 
-/* 这条作战的 chat 窗开着：行框亮一点，和详情选中态区分（选中 = is-on）。 */
-.ck12-flrow.is-chat { border-color: rgba(46, 230, 214, 0.45); }
+/* 这条作战的 chat 窗开着：行框用它的项目色亮一点（v22 2026-11-27：与窗同色，
+   不再是统一薄荷青），和详情选中态区分（选中 = is-on）。 */
+.ck12-flrow.is-chat { border-color: color-mix(in srgb, var(--accent, var(--ck12-teal)) 60%, transparent); }
 .ck12-flrow:focus-visible { outline: 1px solid var(--ck12-teal); outline-offset: 1px; }
 
 /* ── 底部：更多 / 收起 ── */
@@ -641,6 +627,7 @@
   .ck12-fr-mark,
   .ck12-rail-h-label span,
   .ck12-fr-all,
+  .ck12-fr-new,
   .ck12-fr-sub,
   .ck12-fr-sp { display: none; }
   .ck12-rail-h-label::before {
@@ -669,10 +656,11 @@
   .ck12-flrow.is-wait::after { background: var(--ck12-amber); }
   .ck12-flrow.is-blocked::after { background: var(--ck12-red); animation: ck12-np 1.5s infinite; }
   .ck12-flrow.is-done::after { background: var(--ck12-green); }
-  /* 极窄档：干活行用静态青点代替（优先于上面的状态点）。 */
+  .ck12-flrow.is-archived::after { background: var(--ck12-metal2); }
+  /* 极窄档：干活行用天蓝点（与秒表同色；优先于上面的状态点）。 */
   .ck12-flrow.is-flow::after {
-    background: var(--ck12-teal);
-    box-shadow: 0 0 7px var(--ck12-teal);
+    background: var(--ck12-sky);
+    box-shadow: 0 0 7px var(--ck12-sky);
     animation: none;
   }
   .ck12-fr-foot { padding: 4px 3px; }
@@ -706,6 +694,7 @@
   .ck12-fr-mark,
   .ck12-rail-h-label span,
   .ck12-fr-all,
+  .ck12-fr-new,
   .ck12-fr-sub,
   .ck12-fr-sp { display: revert; }
   .ck12-rail-h-label::before { content: none; }
@@ -730,14 +719,5 @@
   .ck12-flrow.is-blocked::after,
   .ck12-fltime::before,
   .ck12-fr-live { animation: none; }
-  /* 滚动条改成静态读数：不定长条铺满浅青，流光不再跑。 */
-  .ck12-flbar.is-live i {
-    animation: none;
-    width: 100%;
-    transform: none;
-    background: rgba(46, 230, 214, 0.45);
-    box-shadow: none;
-  }
-  .ck12-flbar.is-run i::after { animation: none; display: none; }
   .ck12-rail { transition: none; }
 }

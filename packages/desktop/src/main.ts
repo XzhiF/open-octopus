@@ -1,4 +1,7 @@
-import { app, BrowserWindow, dialog, ipcMain, screen, session, shell } from 'electron'
+import {
+  app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, screen, session, shell, Tray,
+  type NativeImage,
+} from 'electron'
 import { spawn, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -13,6 +16,85 @@ let mainWindow: BrowserWindow | null = null
 let sidecar: ChildProcess | null = null
 let sidecarLog: fs.WriteStream | null = null
 let quitting = false
+// 已经进入「停 sidecar → exit」的异步收尾，防止 before-quit 重入。
+let quitInProgress = false
+
+// 托盘常驻。桌面壳就是 server 的宿主：关窗只隐藏，sidecar 继续跑，
+// 手机 / 局域网还能连上来（远程控制的前提）。真退出只走托盘菜单。
+let tray: Tray | null = null
+let sidecarReady = false
+// 本次启动是否直接待在托盘里（`--tray`，登录自启走这条）。
+let startHidden = false
+/** 登录自启时附加的参数；Windows 靠它决定「起来后不弹窗」。 */
+const TRAY_LAUNCH_ARGS = ['--tray']
+
+// macOS 的登录项走原生 LaunchAgent（未签名的 .app 用 SMAppService 注册并不可靠），
+// 与远程拉起安装器 scripts/remote/install-remote.sh 共用同一个 label —— 只留一套登录项。
+const MAC_AGENT_LABEL = 'com.octopus.desktop.agent'
+
+function macAgentPath(): string {
+  return path.join(os.homedir(), 'Library', 'LaunchAgents', `${MAC_AGENT_LABEL}.plist`)
+}
+
+function xmlEscape(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+function macAgentEnabled(): boolean {
+  try {
+    return fs.existsSync(macAgentPath())
+  } catch {
+    return false
+  }
+}
+
+function setMacAgent(enabled: boolean): void {
+  const plistPath = macAgentPath()
+  try {
+    if (!enabled) {
+      // 只删 plist，不 bootout：如果本次就是被这个登录项拉起来的，
+      // bootout 会立刻把当前进程杀掉。卸载留到下次登录自然生效。
+      fs.rmSync(plistPath, { force: true })
+      return
+    }
+
+    fs.mkdirSync(path.dirname(plistPath), { recursive: true })
+    const logDir = app.getPath('logs')
+    fs.mkdirSync(logDir, { recursive: true })
+    const executable = app.getPath('exe')
+    const plist = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${MAC_AGENT_LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${xmlEscape(executable)}</string>
+    <string>--tray</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Interactive</string>
+  <key>LimitLoadToSessionType</key>
+  <string>Aqua</string>
+  <key>StandardOutPath</key>
+  <string>${xmlEscape(path.join(logDir, 'launchd.log'))}</string>
+  <key>StandardErrorPath</key>
+  <string>${xmlEscape(path.join(logDir, 'launchd.log'))}</string>
+</dict>
+</plist>
+`
+    fs.writeFileSync(plistPath, plist, 'utf8')
+    // 下一次登录由 launchd 自动加载；远程 start 会按需 bootstrap，不必现在拉起第二份。
+    // 也不 bootout 已有 job —— 当前进程可能正是它拉起来的。
+  } catch (err) {
+    console.error('[login-item] failed to update LaunchAgent', err)
+  }
+}
 
 // 冷启动时后端 routesReady 之前不接请求（packages/server/src/index.ts 里
 // listen 回调那段同步初始化，本机实测 40–75s）。窗口必须在这个等待之前就出现，
@@ -92,6 +174,160 @@ function openFromRenderer(url: string): void {
   openExternal(url)
 }
 
+// ── 托盘 ───────────────────────────────────────────────────────────
+
+function trayIconPath(): string {
+  const dir = app.isPackaged
+    ? path.join(process.resourcesPath, 'tray')
+    : path.join(__dirname, '..', 'build', 'tray')
+  return process.platform === 'darwin'
+    ? path.join(dir, 'tray-mac.png')
+    : path.join(dir, 'tray-16.png')
+}
+
+function loadTrayIcon(): NativeImage {
+  if (process.platform === 'darwin') {
+    // 图标是汐音立绘（彩色圆形头像 + 品牌色环），不能设成模板图 ——
+    // 模板化会把整块实心区域压成一枚黑圆。同名 tray-mac@2x.png 自动带上。
+    return nativeImage.createFromPath(trayIconPath())
+  }
+  // Windows / Linux：1x、2x 两档都塞进去，系统按 DPI 挑最合适的一张。
+  const dir = path.dirname(trayIconPath())
+  const image = nativeImage.createEmpty()
+  for (const [file, scale] of [['tray-16.png', 1], ['tray-32.png', 2]] as const) {
+    const full = path.join(dir, file)
+    if (!fs.existsSync(full)) continue
+    image.addRepresentation({
+      scaleFactor: scale,
+      width: 16 * scale,
+      height: 16 * scale,
+      buffer: fs.readFileSync(full),
+    })
+  }
+  return image
+}
+
+function loginItemEnabled(): boolean {
+  if (!app.isPackaged) return false
+  if (process.platform === 'darwin') {
+    // 原生 LaunchAgent（与远程拉起共用）；兼容旧版本留下的 SMAppService 登录项。
+    return macAgentEnabled() || app.getLoginItemSettings().openAtLogin
+  }
+  return app.getLoginItemSettings({ args: TRAY_LAUNCH_ARGS }).openAtLogin
+}
+
+function setLoginItem(enabled: boolean): void {
+  if (!app.isPackaged) return
+  if (process.platform === 'darwin') {
+    setMacAgent(enabled)
+    // 清掉旧版本可能注册过的 SMAppService 登录项，避免两套同时生效。
+    try {
+      app.setLoginItemSettings({ openAtLogin: false })
+    } catch {
+      /* 旧登录项本来就不存在时忽略 */
+    }
+    refreshTrayMenu()
+    return
+  }
+  app.setLoginItemSettings({
+    openAtLogin: enabled,
+    args: TRAY_LAUNCH_ARGS,
+  })
+  refreshTrayMenu()
+}
+
+function refreshTrayMenu(): void {
+  if (!tray) return
+  tray.setToolTip(`Octopus · ${sidecarReady ? '服务已就绪' : '启动中'}`)
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: '显示主窗口', click: () => showMainWindow() },
+    { type: 'separator' },
+    {
+      label: '开机自启',
+      type: 'checkbox',
+      checked: loginItemEnabled(),
+      // 未打包时注册的是 electron.exe，没有意义。
+      enabled: app.isPackaged,
+      click: (item) => setLoginItem(item.checked),
+    },
+    { type: 'separator' },
+    { label: '退出 Octopus', click: () => void requestQuit() },
+  ]))
+}
+
+function createTray(): void {
+  if (tray) return
+  const image = loadTrayIcon()
+  if (image.isEmpty()) {
+    // 图标丢了不该把应用拖死：没有托盘时关窗照旧退出（close 处理器里有判空）。
+    console.error(`[tray] icon missing: ${trayIconPath()}`)
+    return
+  }
+  tray = new Tray(image)
+  // Windows：左键回窗口、右键出菜单。macOS 设了菜单后左键也是开菜单。
+  tray.on('click', () => {
+    if (process.platform !== 'darwin') showMainWindow()
+  })
+  refreshTrayMenu()
+}
+
+function showMainWindow(): void {
+  startHidden = false
+  if (process.platform === 'darwin') void app.dock?.show()
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    mainWindow = createWindow()
+    void mainWindow.loadURL(isDev ? DEV_URL : BASE_URL)
+    return
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.show()
+  mainWindow.focus()
+}
+
+function hideMainWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  mainWindow.hide()
+  if (process.platform === 'darwin') app.dock?.hide()
+}
+
+/**
+ * 托盘「退出」：关窗已改成收进托盘，原来挂在 window close 上的
+ * 「agent 还在跑」守卫要挪到这里，否则退出会静默打断在跑的会话。
+ */
+async function hasRunningAgents(): Promise<boolean> {
+  // dev 没有 sidecar，服务跑在 pnpm dev 的 3001，与窗口不同源，不做这项检查。
+  if (isDev || !sidecarReady) return false
+  try {
+    const response = await fetch(`${BASE_URL}/api/agent/sessions/running`, {
+      // /api/agent 只校验 Bearer 前缀（见 server routes/agent/middleware.ts）。
+      headers: { Authorization: 'Bearer desktop-shell' },
+      signal: AbortSignal.timeout(1500),
+    })
+    if (!response.ok) return false
+    const body = (await response.json()) as { items?: unknown[] }
+    return Array.isArray(body.items) && body.items.length > 0
+  } catch {
+    return false
+  }
+}
+
+async function requestQuit(): Promise<void> {
+  if (await hasRunningAgents()) {
+    const choice = dialog.showMessageBoxSync({
+      type: 'warning',
+      buttons: ['退出并中断', '取消'],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+      title: 'Agent 正在工作',
+      message: '还有 agent 正在工作，退出会先中断它。',
+      detail: '被中断的这一轮会以「已中断」收尾，已经产出的内容保留在会话里。',
+    })
+    if (choice !== 0) return
+  }
+  app.quit()
+}
+
 function startSidecar(): void {
   if (isDev) return
 
@@ -130,6 +366,8 @@ function startSidecar(): void {
       OCTOPUS_BRANCH: 'desktop',
       OCTOPUS_HOST_PID: String(process.pid),
       OCTOPUS_HOST_PORTS: String(DESKTOP_PORT),
+      // M4：设置页「启用远程拉起」用这个目录里的安装器（install-remote.ps1 / .sh）。
+      OCTOPUS_REMOTE_DIR: path.join(resources, 'remote'),
       // 依赖树保留 node_modules 原名（ESM 的裸模块解析不认 NODE_PATH）；
       // NODE_PATH 只作为 CJS 兜底，与部署树保持一致。
       NODE_PATH: path.join(resources, 'server', 'node_modules'),
@@ -216,8 +454,17 @@ function createWindow(): BrowserWindow {
     },
   })
 
-  win.once('ready-to-show', () => win.show())
-  win.on('close', () => saveWindowState(win))
+  win.once('ready-to-show', () => {
+    if (!startHidden) win.show()
+  })
+  // 托盘常驻：关窗 = 收进托盘，sidecar 和窗口都留着（手机还要靠它连）。
+  // 没有托盘图标时保持旧行为真退出，否则这个进程就没人找得到了。
+  win.on('close', (event) => {
+    saveWindowState(win)
+    if (quitting || !tray) return
+    event.preventDefault()
+    hideMainWindow()
+  })
   win.on('closed', () => { mainWindow = null })
   // 渲染层装了「agent 在跑就拦关闭」的 beforeunload 守卫（web-app
   // cockpit/shell/use-cockpit-close-guard）。Chromium 默认对「拦了 unload」
@@ -256,12 +503,20 @@ function createWindow(): BrowserWindow {
 }
 
 async function bootstrap(): Promise<void> {
+  startHidden = process.argv.includes('--tray')
+  if (!startHidden && process.platform === 'darwin' && app.isPackaged) {
+    // macOS 13+ 的登录项不传 args，只能由系统告诉我们这次是不是自启起来的。
+    startHidden = app.getLoginItemSettings().wasOpenedAtLogin
+  }
+  createTray()
+  if (startHidden && process.platform === 'darwin') app.dock?.hide()
+
   // 先开窗、先给反馈：下面的 sidecar + waitFor 冷启动要几十秒，窗口必须已经立起来。
   const win = createWindow()
   mainWindow = win
   await win.loadURL(loadingUrl())
   if (win.isDestroyed()) return
-  win.show()
+  if (!startHidden) win.show()
 
   if (isDev) {
     await waitFor(DEV_URL, 15_000)
@@ -270,6 +525,8 @@ async function bootstrap(): Promise<void> {
     // 本机冷启动实测 44–75s（见文件头 LOADING_HTML 注释），30s 会把正常启动判成失败。
     await waitFor(`${BASE_URL}/api/actuator/ready`, 120_000)
   }
+  sidecarReady = true
+  refreshTrayMenu()
 
   session.defaultSession.on('will-download', (_event, item) => {
     const target = path.join(app.getPath('downloads'), item.getFilename())
@@ -305,12 +562,7 @@ const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
   app.quit()
 } else {
-  app.on('second-instance', () => {
-    if (!mainWindow) return
-    if (mainWindow.isMinimized()) mainWindow.restore()
-    mainWindow.show()
-    mainWindow.focus()
-  })
+  app.on('second-instance', () => showMainWindow())
 
   app.whenReady()
     .then(bootstrap)
@@ -320,18 +572,23 @@ if (!gotLock) {
       void stopSidecar().finally(() => app.exit(1))
     })
 
-  app.on('window-all-closed', () => app.quit())
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      mainWindow = createWindow()
-      void mainWindow.loadURL(isDev ? DEV_URL : BASE_URL)
-    }
+  // 有托盘时常驻进程继续为手机 / 局域网服务；真退出由托盘菜单发起。
+  app.on('window-all-closed', () => {
+    if (!tray) app.quit()
   })
+  app.on('activate', () => showMainWindow())
 
   app.on('before-quit', (event) => {
-    if (quitting || !sidecar) return
-    event.preventDefault()
+    // 真退出：关窗处理器必须让路，否则 quit 会被它拦下来、藏回托盘，
+    // 于是「退出」永远退不掉。
     quitting = true
+    if (quitInProgress) return
+    quitInProgress = true
+    // 托盘退出时窗口没走 close，几何要在这里补一次。
+    if (mainWindow && !mainWindow.isDestroyed()) saveWindowState(mainWindow)
+    if (sidecar) event.preventDefault()
+    // 没有 sidecar（dev / 已经退出）时也走同一条收尾：直接 exit，
+    // 不让关闭流程再去和窗口 close 处理器、渲染层 unload 守卫拉扯。
     void stopSidecar().finally(() => app.exit(0))
   })
 }

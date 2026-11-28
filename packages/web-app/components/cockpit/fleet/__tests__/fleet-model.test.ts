@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from 'vitest'
 import type { CabinAttentionItem } from '@octopus/shared'
-import type { CabinJobView } from '@/lib/cabin-api'
+import type { CabinDelegationView, CabinJobView } from '@/lib/cabin-api'
 import type { CabinTaskRow } from '@/components/cabin/modules/ui'
 import {
   buildCounts,
@@ -81,6 +81,34 @@ function attention(id: string, over: Partial<CabinAttentionItem> = {}): CabinAtt
 
 function attnRow(id: string, over: Partial<CabinAttentionItem> = {}): CockpitRow {
   return { key: `attn:${id}`, kind: 'attention', cabinId: 'c1', cabinName: 'A舱', item: attention(id, over) }
+}
+
+function delegationRow(id: string, over: Partial<CabinDelegationView> = {}): CockpitRow {
+  return {
+    key: `delegation:${id}`,
+    kind: 'delegation',
+    cabinId: 'c1',
+    cabinName: 'A舱',
+    pct: null,
+    delegation: {
+      id,
+      cabin_id: 'c1',
+      title: `会话${id}`,
+      intent_text: '体检一下',
+      brief: null,
+      autonomy: 'checkpoint',
+      state: 'done',
+      doer_session_id: 's1',
+      result_summary: '结论',
+      created_at: '2026-11-14T00:00:00.000Z',
+      updated_at: '2026-11-14T00:10:00.000Z',
+      ended_at: '2026-11-14T00:10:00.000Z',
+      archived_at: null,
+      handle: `D${id}`,
+      color: 1,
+      ...over,
+    },
+  }
 }
 
 describe('groupOf', () => {
@@ -229,7 +257,7 @@ describe('sortRows', () => {
     expect(sortRows(withAttention).map((row) => row.key)).toEqual(['job:first', 'job:second'])
   })
 
-  it('run 保持编队顺序；queue FIFO；done 最近结束在前且只留 3 条', () => {
+  it('run 保持编队顺序；queue FIFO；done 最近结束在前（不截断，显示上限归 rail）', () => {
     const rows = [
       jobRow('r1', { status: 'running' }),
       jobRow('r2', { status: 'running' }),
@@ -248,6 +276,7 @@ describe('sortRows', () => {
       'job:d4',
       'job:d3',
       'job:d2',
+      'job:d1',
     ])
   })
 
@@ -292,7 +321,8 @@ describe('isLiveRow / fleetStageOf / fleetStatusOf', () => {
       agent_running: true,
     })
     expect(isLiveRow(row)).toBe(false)
-    expect(fleetStatusOf(row)).toBe('done')
+    // 任务 raw done = 走完归档闸 → 已归档档（2026-11-25 用户）。
+    expect(fleetStatusOf(row)).toBe('archived')
   })
 
   it('普通待验收 / 待命 / running 的判定', () => {
@@ -422,5 +452,53 @@ describe('三型行 + duration / meta', () => {
       updated_at: '2026-11-14T01:00:00.000Z',
     })
     expect(durationLabel(task, Date.parse('2026-11-14T09:00:00.000Z'))).toBe('1h00m')
+  })
+})
+
+// 2026-11-25 用户：会话也有归档闸。done = 待命（与任务同档，还能继续聊），archived_at = 已归档。
+describe('会话归档（active / archived）', () => {
+  it('statusLabel：done → 待命（与任务同档）；archived_at → 已归档（任意 state）', () => {
+    expect(statusLabel(delegationRow('d1'))).toBe('待命')
+    expect(statusLabel(delegationRow('d2', { archived_at: '2026-11-14T02:00:00.000Z' }))).toBe('已归档')
+    expect(statusLabel(delegationRow('d3', { state: 'failed', archived_at: '2026-11-14T02:00:00.000Z' }))).toBe('已归档')
+  })
+
+  it('已归档会话即使 state=failed 也归 done 组，不再占 need', () => {
+    expect(groupOf(delegationRow('d1'))).toBe('done')
+    expect(groupOf(delegationRow('d2', { state: 'failed' }))).toBe('need')
+    expect(groupOf(delegationRow('d3', { state: 'failed', archived_at: '2026-11-14T02:00:00.000Z' }))).toBe('done')
+  })
+
+  it('fleetStageOf：会话 done = 待命、archived_at = 已归档；任务 raw done 才算已归档', () => {
+    expect(fleetStageOf(delegationRow('d1'))).toBe('queue')
+    expect(fleetStageOf(delegationRow('d2', { archived_at: '2026-11-14T02:00:00.000Z' }))).toBe('archived')
+    expect(fleetStageOf(jobRow('t1', { kind: 'task', status: 'done' }))).toBe('archived')
+    expect(fleetStageOf(jobRow('s1', { kind: 'subagent', status: 'completed' }))).toBe('done')
+  })
+
+  it('sortFleet：待命排在归档前；归档同档按创建时间新→旧（任务与会话同一档）', () => {
+    const activeOld = delegationRow('a-old', { created_at: '2026-11-10T00:00:00.000Z' })
+    const activeNew = delegationRow('a-new', { created_at: '2026-11-20T00:00:00.000Z' })
+    const archivedTask = jobRow('t1', {
+      kind: 'task', status: 'done', created_at: '2026-11-05T00:00:00.000Z',
+      ended_at: '2026-11-06T00:00:00.000Z',
+    })
+    const archivedSessionOld = delegationRow('arch-old', {
+      created_at: '2026-11-01T00:00:00.000Z',
+      archived_at: '2026-11-02T00:00:00.000Z',
+    })
+    const archivedSessionNew = delegationRow('arch-new', {
+      created_at: '2026-11-21T00:00:00.000Z',
+      archived_at: '2026-11-22T00:00:00.000Z',
+    })
+
+    const sorted = sortFleet([archivedTask, archivedSessionOld, activeNew, archivedSessionNew, activeOld])
+    expect(sorted.map((row) => row.key)).toEqual([
+      'delegation:a-old', // 待命：与任务同档，仍是旧→新
+      'delegation:a-new',
+      'delegation:arch-new', // 归档：新→旧（任务与会话混排）
+      'job:t1',
+      'delegation:arch-old',
+    ])
   })
 })

@@ -48,6 +48,8 @@ import {
 import { CockpitJobFiles } from '@/components/cockpit/face/CockpitJobFiles'
 import { CockpitJobDebug } from '@/components/cockpit/face/CockpitJobDebug'
 import { CockpitJobProject } from '@/components/cockpit/face/CockpitJobProject'
+import { CockpitJobUsage } from '@/components/cockpit/face/CockpitJobUsage'
+import { CockpitJobAgents, useSessionActivity } from '@/components/cockpit/face/CockpitJobAgents'
 import { projectNameFromKey } from '@/components/cockpit/projects/project-model'
 import { PHASE_PILL, PHASE_STATUS_LABEL } from '@/components/tasks/run-console/phase-status'
 
@@ -427,6 +429,11 @@ export function JobFace({
     )
     return () => { alive = false }
   }, [taskId])
+
+  // 2026-11-25 用户：消耗 / 子代理共用「本作业的会话」——任务优先作业会话，
+  // 没有再退 doer 会话；编队行摘要阶段先不挂请求（job 还没回来时 session_id 空）。
+  const agentsSessionId = job?.session_id ?? taskEntity?.doer_session_id ?? null
+  const agentsActivity = useSessionActivity(agentsSessionId)
 
   // 对接最后一跳：汐音 → 你。数据是舱主会话里带本任务 taskId 的事件卡
   // （任务里程碑 / 提问 / 决策回执）—— 执行者只回报汐音，汐音挑该说的
@@ -1210,6 +1217,25 @@ export function JobFace({
           />
         </div>
       )}
+      {/* 2026-11-25 用户：消耗 / 子代理 —— classic 作业坞早有对应面，这里收进详情页签。 */}
+      {tab === 'usage' && (
+        <div data-testid="cockpit-job-usage-pane" className={frameOf('min-h-0 overflow-y-auto')}>
+          <CockpitJobUsage
+            taskId={job.kind === 'task' ? job.ref_id : null}
+            sessionId={agentsSessionId}
+            what={job.kind === 'task' ? '任务' : '作业'}
+          />
+        </div>
+      )}
+      {tab === 'agents' && (
+        <div data-testid="cockpit-job-agents-pane" className={frameOf('min-h-0')}>
+          <CockpitJobAgents
+            sessionId={agentsSessionId}
+            activity={agentsActivity}
+            what={job.kind === 'task' ? '任务' : '作业'}
+          />
+        </div>
+      )}
     </>
   )
 
@@ -1235,7 +1261,12 @@ export function JobFace({
         />
         <div className="ck12-face-body" data-testid="cockpit-face-job">
           {/* 原型 .dtabs 在滚动正文里（.pb）—— 页签跟着内容滚走，不是常驻条。 */}
-          <CockpitJobTabs tab={tab} onTabChange={changeTab} tabs={jobTabs} />
+          <CockpitJobTabs
+            tab={tab}
+            onTabChange={changeTab}
+            tabs={jobTabs}
+            badges={agentsActivity.total > 0 ? { agents: agentsActivity.total } : undefined}
+          />
           {panes}
         </div>
       </>
@@ -1282,6 +1313,9 @@ export function JobFace({
             )}
           >
             {COCKPIT_TAB_LABELS[key]}
+            {key === 'agents' && agentsActivity.total > 0 && (
+              <span className="ml-1 text-[9px] tabular-nums text-pop-dim">{agentsActivity.total}</span>
+            )}
           </button>
         ))}
       </div>

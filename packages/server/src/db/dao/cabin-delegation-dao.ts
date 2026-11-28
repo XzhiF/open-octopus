@@ -18,12 +18,12 @@ export class CabinDelegationDAO extends BaseDAO {
     this.stmt(`
       INSERT INTO cabin_delegations
         (id, cabin_id, title, intent_text, brief, autonomy, state,
-         doer_session_id, result_summary, created_at, updated_at, ended_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+         origin, doer_session_id, result_summary, created_at, updated_at, ended_at, archived_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `).run(
       row.id, row.cabin_id, row.title, row.intent_text, row.brief, row.autonomy,
-      row.state, row.doer_session_id, row.result_summary,
-      row.created_at, row.updated_at, row.ended_at,
+      row.state, row.origin, row.doer_session_id, row.result_summary,
+      row.created_at, row.updated_at, row.ended_at, row.archived_at,
     )
   }
 
@@ -49,12 +49,14 @@ export class CabinDelegationDAO extends BaseDAO {
     result_summary?: string | null
     ended_at?: string | null
     doer_session_id?: string | null
+    archived_at?: string | null
   } = {}, now = new Date().toISOString()): void {
     const sets = ["state = ?", "updated_at = ?"]
     const params: unknown[] = [state, now]
     if (fields.result_summary !== undefined) { sets.push("result_summary = ?"); params.push(fields.result_summary) }
     if (fields.ended_at !== undefined) { sets.push("ended_at = ?"); params.push(fields.ended_at) }
     if (fields.doer_session_id !== undefined) { sets.push("doer_session_id = ?"); params.push(fields.doer_session_id) }
+    if (fields.archived_at !== undefined) { sets.push("archived_at = ?"); params.push(fields.archived_at) }
     params.push(id)
     this.stmt(`UPDATE cabin_delegations SET ${sets.join(", ")} WHERE id = ?`).run(...params)
   }

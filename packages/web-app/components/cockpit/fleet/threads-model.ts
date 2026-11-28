@@ -7,6 +7,7 @@
 
 import type { CockpitRef } from '../state/cockpit-state'
 import { groupOf, sortRows, type CockpitRow } from './fleet-model'
+import { accentOfRow, MAIN_ACCENT } from './project-accent'
 
 export type CockpitThreadState = 'run' | 'wait' | 'blocked' | 'queue' | 'done'
 
@@ -40,8 +41,11 @@ export interface CockpitThread {
   /** 独立 chat 窗里「跟谁说话」的身份标签（v22 #5 用户：身份要对应）——
    *  与 ChatPane 的任务身份派生同口径，只读、不可切。 */
   identity: string
-  /** ▦ 详情目标；delegation 没有 cockpit ref → null（不画 ▦）。 */
+  /** ▦ 详情目标；2026-11-25 起会话（delegation）也有详情面（六页签）。 */
   ref: CockpitRef | null
+  /** v22（2026-11-27）：本线程的项目色 —— 独立 chat 窗边框 / 头带 / 输入行 /
+   *  WINDOWS chip 共用；主对话固定薄荷青。与编队行同一锚点算法。 */
+  accent: string
 }
 
 export const MAIN_THREAD_KEY = 'main'
@@ -88,6 +92,7 @@ function threadOfRow(row: CockpitRow): CockpitThread | null {
       state: threadStateOf(row),
       identity: identityOfStatus(row.job.status),
       ref: { kind: 'job', cabinId: row.cabinId, id: row.job.id },
+      accent: accentOfRow(row),
     }
   }
   if (row.kind === 'task') {
@@ -103,6 +108,7 @@ function threadOfRow(row: CockpitRow): CockpitThread | null {
       state: threadStateOf(row),
       identity: identityOfStatus(row.task.status),
       ref: { kind: 'task', cabinId: row.cabinId, id: row.task.id },
+      accent: accentOfRow(row),
     }
   }
   if (row.kind === 'delegation') {
@@ -115,8 +121,10 @@ function threadOfRow(row: CockpitRow): CockpitThread | null {
       title: row.delegation.title,
       short: shortOf(row.delegation.handle ?? row.delegation.title),
       state: threadStateOf(row),
-      identity: '执行者 · task-doer',
-      ref: null,
+      // 人自开的会话：窗里就是本人直接对话；汐音委派才是「执行者」。
+      identity: row.delegation.origin === 'user' ? '本人 · 直接对话' : '执行者 · task-doer',
+      ref: { kind: 'delegation', cabinId: row.cabinId, id: row.delegation.id },
+      accent: accentOfRow(row),
     }
   }
   return null
@@ -137,6 +145,7 @@ export function threadsFromRows(
     state: 'queue',
     identity: '汐音',
     ref: null,
+    accent: MAIN_ACCENT,
   }
   const seen = new Set<string>()
   if (mainSessionId) seen.add(mainSessionId)
@@ -188,7 +197,7 @@ export function isThreadVisible(
   key: string,
   view: {
     chatWindow: { open: boolean; mini: boolean; docked: boolean }
-    windows: readonly { threadKey: string; min: boolean }[]
+    windows: readonly { threadKey: string | null; min: boolean }[]
   },
 ): boolean {
   if (key === MAIN_THREAD_KEY && view.chatWindow.open && !view.chatWindow.mini && !view.chatWindow.docked) {

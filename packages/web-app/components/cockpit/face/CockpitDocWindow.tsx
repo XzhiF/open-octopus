@@ -12,25 +12,21 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import { toast } from 'sonner'
 import { cabinDocRawUrl, getCabinDoc, type CabinDocResult } from '@/lib/cabin-api'
+import { OPEN_DOC_EVENT, openDoc, type OpenDocDetail } from '@/lib/open-doc'
 import { useCockpitState } from '../state/CockpitStateProvider'
 import { CockpitFaceHead } from './CockpitFaceHead'
-import { MarkdownView } from './MarkdownView'
+import { MarkdownView } from '@/components/ui/markdown-view'
 
 const DOC_LAYER_ID = 'cockpit-doc-win'
 /** 高于目录窗（68）：Esc 先收文档窗；低于问答窗（75）。 */
 const DOC_LAYER_PRIORITY = 69
 
-export const OPEN_DOC_EVENT = 'octopus:open-doc'
-
-export interface OpenDocDetail {
-  /** 文档绝对路径（盘符 / POSIX 根开头）。 */
-  path: string
-}
+export { OPEN_DOC_EVENT } from '@/lib/open-doc'
+export type { OpenDocDetail } from '@/lib/open-doc'
 
 /** 任意宿主（聊天 chip / 后续其他入口）→ 打开文档窗。 */
 export function openCockpitDoc(path: string): void {
-  if (!path) return
-  window.dispatchEvent(new CustomEvent<OpenDocDetail>(OPEN_DOC_EVENT, { detail: { path } }))
+  openDoc(path)
 }
 
 function formatBytes(n: number): string {

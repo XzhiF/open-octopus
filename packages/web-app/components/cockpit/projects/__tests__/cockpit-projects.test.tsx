@@ -364,7 +364,7 @@ describe('CockpitProjectsPopover · HUD 读数', () => {
     fireEvent.click(btn)
     expect(await screen.findByTestId('cockpit-projects-pop')).toBeInTheDocument()
     expect(screen.getByText(/ORG 注册项目/)).toBeInTheDocument()
-    expect(screen.getByText(/本地 \/ 外部/)).toBeInTheDocument()
+    expect(screen.getByText(/本地 Git 仓库/)).toBeInTheDocument()
   })
 
   it('0 项目 → 读数写「＋ 绑定项目」；浮层空态', async () => {

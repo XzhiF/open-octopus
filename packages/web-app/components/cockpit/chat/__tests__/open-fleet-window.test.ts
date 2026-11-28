@@ -10,7 +10,7 @@ import { openFleetChat } from '../open-fleet-window'
 function makeWins(existing: { threadKey: string; rect: CockpitRect }[] = []) {
   const openWindow = vi.fn<(threadKey: string, rect: CockpitRect) => boolean>(() => true)
   const wins = {
-    windows: existing.map((w, i) => ({ id: `w${i + 1}`, threadKey: w.threadKey, rect: w.rect, min: false })),
+    windows: existing.map((w, i) => ({ id: `w${i + 1}`, threadKey: w.threadKey, sessionId: null, title: '', rect: w.rect, min: false })),
     openWindow,
   } as unknown as CockpitWindowsApi
   return { wins, openWindow }

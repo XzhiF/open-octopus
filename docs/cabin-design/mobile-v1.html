@@ -1,0 +1,2259 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>手机端 · v1 · 全舱素材 · 圆角版</title>
+<style>
+  :root{
+    --sun:#FF8A3D; --pink:#FF6FB5; --violet:#7B4DFF; --sky:#35C7F0; --teal:#2EE6D6;
+    --metal:#B9B3D9; --metal2:#8D86B8; --ink:#EDEBFA; --ink2:#A9A3C8; --dim:#8D86B8;
+    --indigo:#0d0a1e; --indigo2:#1B1638;
+    --green:#3DDC97; --amber:#FFB020; --red:#FF3B5C; --purple:#C9BFFF; --gold:#F5C542;
+    --glass:rgba(16,13,40,.46); --glass2:rgba(20,16,48,.56); --edge:rgba(46,230,214,.28);
+    --r-s:10px; --r-m:14px; --r-l:18px; --r-xl:22px;
+    --ui:-apple-system,BlinkMacSystemFont,'SF Pro Text','PingFang SC','Microsoft YaHei',sans-serif;
+    --mono:'SF Mono','JetBrains Mono',Consolas,ui-monospace,monospace;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0;padding:30px 28px 80px;color:var(--ink);font-family:var(--ui);font-size:13px;
+    background:
+      radial-gradient(90% 50% at 50% 0%,rgba(46,230,214,.07),transparent 62%),
+      linear-gradient(180deg,#0d0a1e,#070611 70%);
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1740px;margin:0 auto}
+  h1{font-size:19px;margin:0 0 6px;color:#fff;letter-spacing:.2px}
+  h1 .v{font:800 10px/1 var(--mono);letter-spacing:.16em;color:var(--teal);border:1px solid rgba(46,230,214,.45);
+        padding:4px 9px;margin-left:10px;vertical-align:3px;border-radius:999px}
+  .sub{font-size:12px;color:var(--dim);margin:0 0 16px;line-height:1.85;max-width:1000px}
+  .sub code{font-family:var(--mono);color:var(--teal);font-size:11.5px}
+  .rule{border-left:2px solid var(--teal);border-radius:0 var(--r-m) var(--r-m) 0;padding:8px 14px 8px 13px;margin:0 0 26px;font-size:12.5px;line-height:1.8;color:var(--metal);max-width:1000px;
+        background:linear-gradient(90deg,rgba(46,230,214,.08),rgba(46,230,214,.01) 70%)}
+  .rule b{color:var(--teal)}
+
+  .top{display:grid;grid-template-columns:1.25fr 1fr;gap:16px;margin:0 0 32px}
+  @media (max-width:1100px){.top{grid-template-columns:1fr}}
+  .panel{border:1px solid var(--edge);background:linear-gradient(180deg,rgba(16,13,40,.55),rgba(16,13,40,.22));padding:15px 17px;border-radius:var(--r-l)}
+  .panel h3{margin:0 0 11px;font:800 9.5px/1 var(--mono);letter-spacing:.16em;color:var(--teal)}
+  .flow{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-family:var(--mono);font-size:11.5px;color:var(--metal)}
+  .flow b{color:#fff;font-weight:600}
+  .flow .ar{color:rgba(46,230,214,.6)}
+  .flow .pill{border:1px solid rgba(185,179,217,.22);padding:4px 10px;border-radius:999px}
+  .dots{display:flex;flex-direction:column;gap:8px;font-size:11.5px;color:var(--metal);font-family:var(--mono);line-height:1.6}
+  .dots div{display:flex;gap:9px;align-items:baseline}
+  .dot{width:6px;height:6px;border-radius:50%;flex:none;margin-top:5px}
+  .d-ok{background:var(--green);box-shadow:0 0 8px rgba(61,220,151,.7)}
+  .d-warn{background:var(--amber);box-shadow:0 0 8px rgba(255,176,32,.6)}
+  .d-off{background:#5b5678}
+
+  .grp{margin:0 0 36px}
+  .grp>h2{font:800 11px/1 var(--mono);letter-spacing:.16em;color:var(--teal);margin:0 0 4px;display:flex;align-items:center;gap:10px}
+  .grp>h2::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,rgba(46,230,214,.3),transparent 70%)}
+  .grp>.gd{font-size:11.5px;color:var(--dim);margin:0 0 16px;font-family:var(--mono)}
+  .row{display:flex;gap:26px;flex-wrap:wrap;align-items:flex-start}
+
+  /* ═══ 手机壳 ═══ */
+  figure{margin:0;width:390px;flex:none}
+  .frame{
+    width:390px;height:844px;border-radius:46px;padding:10px;position:relative;
+    background:linear-gradient(160deg,#2b2748,#141126 45%,#0a0817);
+    box-shadow:0 26px 60px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,255,255,.09);
+  }
+  .frame::after{content:"";position:absolute;right:-2px;top:210px;width:2px;height:86px;border-radius:2px;
+    background:linear-gradient(180deg,rgba(185,179,217,.5),rgba(185,179,217,.15))}
+  .screen{
+    position:relative;width:100%;height:100%;border-radius:38px;overflow:hidden;
+    display:flex;flex-direction:column;background:#08060f;
+  }
+  .island{position:absolute;top:12px;left:50%;transform:translateX(-50%);width:118px;height:29px;
+    border-radius:16px;background:#05040c;z-index:9}
+
+  /* ═══ 底景：全舱模式素材（scene-*.png + v22 星流 canvas） ═══ */
+  .scene{position:absolute;inset:-10px;z-index:0;overflow:hidden;background:#07050f}
+  .scene img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:50% 42%;
+    animation:breath 24s ease-in-out infinite}
+  @keyframes breath{0%,100%{transform:scale(1.02)}50%{transform:scale(1.06)}}
+  canvas.warp{position:absolute;inset:0;z-index:1;width:100%;height:100%;pointer-events:none}
+  .grade{position:absolute;inset:0;z-index:2;pointer-events:none;
+    background:linear-gradient(180deg,rgba(10,8,24,.66),rgba(10,8,24,.18) 24%,rgba(10,8,24,.4) 62%,rgba(8,6,18,.9)),
+               radial-gradient(120% 80% at 50% 45%,transparent 40%,rgba(10,8,24,.52))}
+  .grain{position:absolute;inset:0;z-index:2;pointer-events:none;opacity:.04;mix-blend-mode:overlay;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)'/%3E%3C/svg%3E")}
+
+  /* 状态栏 */
+  .sbar{position:relative;z-index:3;height:52px;flex:none;display:flex;align-items:flex-end;justify-content:space-between;
+    padding:0 30px 6px;font:600 12px/1 var(--mono);color:rgba(237,235,250,.9)}
+  .sbar .r{display:flex;align-items:center;gap:7px;font-size:10.5px;color:rgba(237,235,250,.72)}
+  .ts{display:inline-flex;align-items:center;gap:4px;color:var(--teal);letter-spacing:.08em}
+  .ts i{width:5px;height:5px;border-radius:50%;background:var(--teal);box-shadow:0 0 7px var(--teal);display:block}
+  .bat{width:20px;height:10px;border:1px solid rgba(237,235,250,.5);border-radius:3px;position:relative}
+  .bat::before{content:"";position:absolute;inset:1.5px;width:62%;background:var(--ink);border-radius:1.5px;opacity:.85}
+  .bat::after{content:"";position:absolute;right:-3px;top:3px;width:2px;height:4px;background:rgba(237,235,250,.5);border-radius:0 1px 1px 0}
+
+  /* 顶栏：圆角铭牌 */
+  .bar{position:relative;z-index:3;flex:none;display:flex;align-items:center;gap:11px;padding:4px 18px 13px;}
+  .bar .back{width:30px;height:30px;border-radius:10px;display:grid;place-items:center;color:var(--metal2);
+    font-size:16px;line-height:1;background:rgba(255,255,255,.05);border:1px solid rgba(185,179,217,.14)}
+  .bar .t{font:600 15px/1.3 var(--ui);letter-spacing:.01em;color:#fff}
+  .bar .t .num{font:800 8.5px/1 var(--mono);letter-spacing:.16em;color:var(--teal);margin-left:7px;vertical-align:2px}
+  .bar .s{display:flex;align-items:center;gap:6px;min-width:0;
+           font:10px/1.4 var(--mono);color:var(--dim);letter-spacing:.04em;margin-top:3px}
+  .bar .s .dt{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  /* 身份＋角色小像：她不再站在聊天面板后面，收进顶栏副标题（2026-11-28） */
+  .bar .idp{display:inline-flex;align-items:center;gap:4px;flex:none;height:24px;padding:0 7px 0 4px;
+            border-radius:999px;border:1px solid rgba(201,191,255,.44);
+            background:rgba(123,77,255,.16);
+            font:800 8.5px/1 var(--mono);letter-spacing:.03em;color:var(--purple);white-space:nowrap}
+  .bar .idp .cid{width:17px;height:17px;flex:none;border-radius:50%;overflow:hidden;display:block;
+                 border:1px solid rgba(201,191,255,.55);background:#151034;
+                 box-shadow:0 0 6px rgba(123,77,255,.35)}
+  .bar .idp .cid img{width:100%;height:100%;object-fit:cover;object-position:50% 2%}
+  .bar .idp .ar{font-size:7px;opacity:.75}
+  .bar .idp .dot{width:4px;height:4px;border-radius:50%;background:var(--purple);box-shadow:0 0 6px var(--purple)}
+  .bar .sp{flex:1}
+  .bar .act{font:800 10px/1 var(--mono);letter-spacing:.1em;color:var(--teal);
+            border:1px solid rgba(46,230,214,.4);background:rgba(46,230,214,.08);
+            padding:8px 12px;border-radius:999px;white-space:nowrap}
+  .ava{width:36px;height:36px;flex:none;border-radius:12px;overflow:hidden;
+       border:1px solid rgba(46,230,214,.4);background:linear-gradient(160deg,rgba(46,230,214,.16),rgba(123,77,255,.18));
+       box-shadow:0 0 0 3px rgba(46,230,214,.06)}
+  .ava img{width:100%;height:100%;object-fit:cover;object-position:50% 6%}
+
+  /* 内容 */
+  .body{position:relative;z-index:3;flex:1;min-height:0;overflow:hidden;padding:14px 16px 0;
+        display:flex;flex-direction:column;gap:11px;
+        background:linear-gradient(180deg,rgba(8,6,18,.06),rgba(8,6,18,.32))}
+  .homebar{position:relative;z-index:3;flex:none;height:26px;display:flex;align-items:center;justify-content:center}
+  .homebar i{width:128px;height:4px;border-radius:3px;background:rgba(237,235,250,.3);display:block}
+  .rail{position:relative;z-index:3;flex:none;display:flex;align-items:center;gap:10px;margin:0 16px;
+        padding:8px 0 6px;
+        font:9px/1 var(--mono);letter-spacing:.08em;color:rgba(141,134,184,.85)}
+  .rail .sp{flex:1}
+  .rail .on{color:var(--teal)}
+
+  /* 通用面板（圆角） */
+  .pnl{position:relative;border-radius:var(--r-l);border:1px solid rgba(185,179,217,.15);
+       background:linear-gradient(180deg,rgba(18,15,42,.7),rgba(14,11,34,.52));
+       backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+       box-shadow:0 8px 24px rgba(0,0,0,.18)}
+  .sec{position:relative;z-index:3;font:600 11px/1 var(--ui);letter-spacing:.06em;color:rgba(46,230,214,.85);
+       display:flex;align-items:center;gap:9px;margin:5px 2px 0}
+  .sec::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,rgba(46,230,214,.26),transparent)}
+
+  /* 设备卡 */
+  .dev{display:flex;align-items:center;gap:12px;padding:14px 15px;border-radius:var(--r-l);
+       border:1px solid rgba(185,179,217,.14);
+       background:linear-gradient(120deg,rgba(255,255,255,.07),rgba(16,13,40,.6));
+       backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+       box-shadow:0 8px 22px rgba(0,0,0,.16)}
+  .dev .dot{width:8px;height:8px;border-radius:50%;flex:none;background:var(--c,#5b5678);box-shadow:0 0 10px var(--c,#5b5678)}
+  .dev.ok{--c:var(--green);border-color:rgba(61,220,151,.24)}
+  .dev.warn{--c:var(--amber);border-color:rgba(255,176,32,.26)}
+  .dev.off{--c:#5b5678;opacity:.82}
+  .dev .meta{flex:1;min-width:0}
+  .dev .nm{font-size:14.5px;font-weight:600;color:#fff}
+  .dev .sb{font:10.5px/1.5 var(--mono);color:var(--dim);margin-top:5px;letter-spacing:.03em}
+  .dev .st{font:800 9px/1 var(--mono);padding:5px 9px;letter-spacing:.07em;border-radius:999px;white-space:nowrap}
+  .dev.ok .st{color:var(--green);background:rgba(61,220,151,.12);border:1px solid rgba(61,220,151,.28)}
+  .dev.warn .st{color:var(--amber);background:rgba(255,176,32,.12);border:1px solid rgba(255,176,32,.3)}
+  .dev.off .st{color:#8f8aad;background:rgba(143,138,173,.12);border:1px solid rgba(143,138,173,.24)}
+  .dev .go{color:var(--metal2);font-size:17px;flex:none}
+  .dev .mini{font:700 11px/1 var(--ui);letter-spacing:.04em;color:#06131a;
+             background:linear-gradient(180deg,#5ff0e2,#22d9c8);padding:9px 15px;border-radius:999px;
+             box-shadow:0 4px 16px rgba(46,230,214,.3);white-space:nowrap;flex:none}
+  .dev.off .mini{background:rgba(255,255,255,.05);color:var(--dim);box-shadow:none;border:1px solid rgba(185,179,217,.18)}
+
+  /* 按钮 */
+  .primary{display:block;width:100%;text-align:center;font:800 13px/1 var(--mono);letter-spacing:.12em;color:#06131a;
+           background:linear-gradient(180deg,#69f2e4,#22d9c8);padding:17px;border-radius:var(--r-l);
+           box-shadow:0 10px 26px rgba(46,230,214,.26)}
+  .ghost{display:block;width:100%;text-align:center;font:600 12px/1 var(--ui);letter-spacing:.03em;color:var(--teal);
+         border:1px dashed rgba(46,230,214,.4);padding:15px;border-radius:var(--r-l);background:rgba(46,230,214,.04)}
+
+  /* 舱行 */
+  .cabin{display:flex;align-items:center;gap:11px;padding:13px 14px;border-radius:var(--r-l);
+         border:1px solid rgba(185,179,217,.14);
+         background:linear-gradient(120deg,rgba(255,255,255,.06),rgba(16,13,40,.5))}
+  .cabin .ic{width:34px;height:34px;flex:none;border-radius:11px;display:grid;place-items:center;
+             border:1px solid rgba(46,230,214,.3);color:var(--teal);font-size:15px;
+             background:linear-gradient(160deg,rgba(46,230,214,.14),rgba(123,77,255,.16))}
+  .cabin .m{flex:1;min-width:0}
+  .cabin .n{font-size:14px;color:#fff;font-weight:600}
+  .cabin .p{font:10px/1.5 var(--mono);color:var(--dim);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .bdg{font:800 9.5px/1 var(--mono);padding:6px 9px;letter-spacing:.05em;border-radius:999px;white-space:nowrap}
+  .bdg.wait{color:var(--amber);background:rgba(255,176,32,.12);border:1px solid rgba(255,176,32,.28)}
+  .bdg.run{color:var(--teal);background:rgba(46,230,214,.1);border:1px solid rgba(46,230,214,.28)}
+  .bdg.rev{color:var(--pink);background:rgba(255,111,181,.12);border:1px solid rgba(255,111,181,.28)}
+
+  /* 分段控件 */
+  .seg{position:relative;z-index:3;display:flex;gap:4px;background:rgba(10,8,24,.66);
+       border:1px solid rgba(185,179,217,.14);padding:4px;flex:none;margin:12px 16px;border-radius:16px;
+       backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+  .seg span{flex:1;text-align:center;font:600 12px/1 var(--ui);letter-spacing:.02em;color:var(--dim);
+            padding:10px 0;border-radius:12px}
+  .seg span.on{color:#06131a;background:linear-gradient(180deg,#69f2e4,#22d9c8);font-weight:700}
+  .seg b{font-size:9px;opacity:.8;margin-left:4px}
+
+  /* 待办卡 */
+  .todo{padding:13px 14px;border-radius:var(--r-l);border:1px solid rgba(185,179,217,.15);
+        border-left:3px solid var(--c,var(--amber));
+        background:linear-gradient(120deg,rgba(255,255,255,.06),rgba(16,13,40,.55));
+        backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+  .todo.rev{--c:var(--pink)}
+  .todo .hd{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+  .todo .src{font:9.5px/1 var(--mono);color:var(--dim);letter-spacing:.03em}
+  .todo .tt{font-size:13px;color:#fff;font-weight:600;line-height:1.5}
+  .todo .ds{font:10.5px/1.65 var(--mono);color:var(--dim);margin-top:6px}
+  .todo .foot{margin-top:11px;display:flex;justify-content:flex-end;font:700 11px/1 var(--ui);letter-spacing:.02em;color:var(--teal)}
+
+  /* 引用条 */
+  .quote{margin:12px 16px 10px;flex:none;position:relative;z-index:3;border-radius:var(--r-l);
+         border:1px solid rgba(255,111,181,.22);border-left:3px solid var(--pink);
+         background:linear-gradient(120deg,rgba(255,111,181,.1),rgba(16,13,40,.6));padding:11px 13px;
+         backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+  .quote .qh{font:800 8.5px/1 var(--mono);letter-spacing:.18em;color:var(--pink)}
+  .quote .qt{font-size:12.5px;color:#fff;line-height:1.5;margin:8px 0 6px;font-weight:600}
+  .quote .qs{font:9.5px/1.4 var(--mono);color:var(--dim);display:flex;gap:9px;align-items:baseline;letter-spacing:.03em}
+  .quote .qs .more{color:var(--teal);border-bottom:1px dotted rgba(46,230,214,.55)}
+
+  /* 聊天流（沿用桌面 TUI 语法） */
+  .stream{flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-end;
+          gap:13px;padding:13px 12px;font-family:var(--mono);font-size:11.5px;border-radius:var(--r-l);
+          border:1px solid rgba(46,230,214,.14);
+          background:linear-gradient(180deg,rgba(10,8,24,.42),rgba(10,8,24,.64));
+          backdrop-filter:blur(9px);-webkit-backdrop-filter:blur(9px);
+          -webkit-mask-image:linear-gradient(180deg,transparent 0,#000 16%);
+          mask-image:linear-gradient(180deg,transparent 0,#000 16%)}
+  /* 我的消息（2026-11-28）：保留原来的细金线 + ❯，只加一层淡琥珀底 —— 不加标签块 */
+  .m .me{display:flex;align-items:flex-start;gap:6px;padding:6px 10px;border-radius:10px;
+         border-left:3px solid rgba(255,176,32,.7);
+         background:linear-gradient(100deg,rgba(255,176,32,.11),rgba(255,176,32,.035) 64%,rgba(16,13,40,.12));
+         color:#fff;line-height:1.65}
+  .m .me .p{flex:none;color:var(--amber);font-weight:800;margin-right:0}
+  .m .me .tx{flex:1;min-width:0;white-space:pre-wrap}
+  .m .head{display:flex;flex-wrap:wrap;align-items:baseline;gap:0 5px;color:var(--dim);font-size:10.5px;line-height:1.7}
+  .tag{font-weight:800;color:var(--purple);text-shadow:0 0 10px rgba(201,191,255,.5);white-space:nowrap}
+  .ok{color:var(--green);font-weight:700}
+  .pk{color:var(--pink)} .nt{color:var(--ink);opacity:.85;font-weight:600}
+  .tl{color:var(--teal)} .gr{color:var(--green)} .am{color:#F0A93B}
+  .think{color:var(--dim);font-size:10.5px;border-left:1px solid rgba(141,134,184,.28);padding-left:8px;margin:4px 0 0 2px}
+  .tool{display:flex;align-items:center;gap:6px;color:var(--dim);font-size:10.5px;line-height:1.6}
+  .tool .ar{color:var(--teal)} .tool .nm{color:#7FB7FF;font-weight:700}
+  .tool .st{margin-left:auto;flex:none;color:var(--green);font-weight:700;font-size:9.5px}
+  .tool .st.wait{color:var(--amber)}
+
+  /* ── 运行态（2026-11-28）：与全舱 TUI 同一条工作行 —— 转字 + 修仙短语 + 计时 ── */
+  .work{display:flex;align-items:center;gap:7px;margin:6px 0 0 2px;padding:7px 9px;border-radius:10px;
+        border:1px solid rgba(46,230,214,.2);
+        background:linear-gradient(90deg,rgba(46,230,214,.1),rgba(16,13,40,.48));
+        font:10.5px/1 var(--mono);color:var(--metal)}
+  .work .sp{flex:none;min-width:12px;text-align:center;color:var(--teal);font-size:12px;letter-spacing:0}
+  .work .ph{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:rgba(237,235,250,.9)}
+  .work .tm{flex:none;color:var(--teal);font-variant-numeric:tabular-nums;letter-spacing:.04em}
+  .live-dot{width:5px;height:5px;flex:none;border-radius:50%;background:var(--teal);
+            box-shadow:0 0 8px var(--teal);display:inline-block;animation:lpulse 1.4s ease-in-out infinite}
+  @keyframes lpulse{0%,100%{opacity:.35;transform:scale(.85)}50%{opacity:1;transform:scale(1.15)}}
+  .m .head.run{color:rgba(141,134,184,.9)}
+  .m .head.run .tag{color:rgba(201,191,255,.9)}
+  .m .head.run .run{color:var(--teal);font-weight:700}
+
+  /* 思考活窗口：只露最新两行，上缘渐隐；点开看全文 */
+  .thinkwin{margin:6px 0 0 2px;padding:6px 9px 7px;border-radius:10px;
+            border:1px solid rgba(185,179,217,.14);background:rgba(10,8,24,.46);
+            display:flex;flex-direction:column;gap:1px;position:relative;overflow:hidden}
+  .thinkwin .tw-h{display:flex;align-items:center;gap:6px;margin-bottom:3px;
+                  font:800 8px/1 var(--mono);letter-spacing:.14em;color:rgba(201,191,255,.9)}
+  .thinkwin .tw-h .r{margin-left:auto;color:var(--dim);font-weight:700;letter-spacing:.04em}
+  .thinkwin .tw-l{font:10px/1.65 var(--mono);color:rgba(141,134,184,.9);white-space:nowrap;
+                  overflow:hidden;text-overflow:ellipsis}
+  .thinkwin .tw-l.old{opacity:.55;-webkit-mask-image:linear-gradient(180deg,transparent,#000 75%);
+                      mask-image:linear-gradient(180deg,transparent,#000 75%)}
+  .thinkwin .tw-l.now{color:rgba(237,235,250,.92)}
+  .thinkwin .tw-l .cur{display:inline-block;width:5px;height:10px;margin-left:2px;
+                       background:rgba(46,230,214,.8);vertical-align:-1px;animation:caret 1s steps(1) infinite}
+  .thinkwin.full .tw-l{white-space:pre-wrap;overflow:visible;text-overflow:clip;line-height:1.7}
+  @keyframes caret{50%{opacity:0}}
+  .tooldetail{margin:3px 0 6px 16px;padding:7px 9px;border-radius:8px;
+              border:1px solid rgba(185,179,217,.14);background:rgba(10,8,24,.6);
+              font:9px/1.7 var(--mono);color:var(--metal);white-space:pre-wrap}
+  .bodyx{line-height:1.65;white-space:pre-wrap;margin-top:3px}
+  .bodyx .mk{color:rgba(255,111,181,.85);font-weight:700;margin-right:6px}
+
+  /* 输入区 */
+  .composer{position:relative;z-index:3;flex:none;padding:9px 12px 2px;
+            background:linear-gradient(180deg,rgba(8,6,18,.4),rgba(8,6,18,.72))}
+  .ctrlrow{display:flex;align-items:center;gap:6px;padding:0 2px 8px}
+  .ctrlrow .sp{flex:1}
+  .inputrow{display:flex;align-items:flex-end;gap:8px;padding-bottom:6px}
+  .inputrow .box{flex:1;min-height:44px;border:1px solid rgba(185,179,217,.18);border-radius:16px;
+                 background:rgba(16,13,40,.68);padding:13px;font:11.5px/1.4 var(--mono);color:var(--dim);
+                 backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+  .send{width:44px;height:44px;flex:none;display:grid;place-items:center;border-radius:50%;
+        background:linear-gradient(180deg,#69f2e4,#22d9c8);color:#06131a;font-size:15px;font-weight:800;
+        transition:background .18s ease,box-shadow .18s ease,border-color .18s ease}
+  /* 空输入：暗色未激活 */
+  .send.off{background:rgba(16,13,40,.72);border:1px solid rgba(185,179,217,.22);
+            color:rgba(141,134,184,.55);box-shadow:none}
+  /* 跑动中：不再在亮青圆钮里塞转圈 —— 换成暗底 + 琥珀停止键；转字只在工作行出现一次 */
+  .send.busy{background:rgba(10,8,24,.92);border:1px solid rgba(255,176,32,.55);
+             box-shadow:0 0 0 3px rgba(255,176,32,.07),0 0 16px rgba(255,176,32,.14);
+             animation:btnbreathe 1.9s ease-in-out infinite}
+  .send.busy::before{content:"";width:12px;height:12px;border-radius:3px;background:var(--amber);display:block}
+  @keyframes btnbreathe{
+    0%,100%{box-shadow:0 0 0 3px rgba(255,176,32,.06),0 0 14px rgba(255,176,32,.12)}
+    50%{box-shadow:0 0 0 4px rgba(255,176,32,.12),0 0 24px rgba(255,176,32,.26)}}
+  .send-demo{display:flex;gap:14px;margin:14px 2px 4px}
+  .send-demo .col{flex:1;text-align:center;font:8.5px/1.7 var(--mono);color:var(--dim)}
+  .send-demo .col b{display:block;color:var(--metal);font-weight:700;margin-bottom:7px;letter-spacing:.06em}
+  .send-demo .big{width:58px;height:58px;border-radius:50%;display:grid;place-items:center;
+                  margin:0 auto 8px;font-size:20px;font-weight:800}
+  .send-demo .big.live{background:linear-gradient(180deg,#69f2e4,#22d9c8);color:#06131a;
+                       box-shadow:0 6px 18px rgba(46,230,214,.28)}
+  .send-demo .big.off{background:rgba(16,13,40,.72);border:1px solid rgba(185,179,217,.22);color:rgba(141,134,184,.55)}
+  .send-demo .big.stop{background:rgba(10,8,24,.92);border:1px solid rgba(255,176,32,.55);color:var(--amber);
+                       box-shadow:0 0 0 3px rgba(255,176,32,.08),0 0 18px rgba(255,176,32,.18)}
+  .send-demo .big.stop i{width:15px;height:15px;border-radius:4px;background:var(--amber);display:block}
+
+  /* ── 通讯台头（2026-11-27）：星核 + 模型 / ctx / tok + 身份 + 轮次 ── */
+  .console{position:relative;z-index:3;flex:none;display:flex;align-items:center;gap:6px;
+           padding:7px 12px 0;overflow:hidden}
+  .core{width:28px;height:28px;flex:none;border-radius:50%;display:grid;place-items:center;
+        font-size:12px;line-height:1;color:var(--teal);
+        border:1px solid rgba(46,230,214,.4);
+        background:radial-gradient(60% 60% at 50% 40%,rgba(46,230,214,.18),rgba(10,8,24,.62));
+        box-shadow:0 0 12px rgba(46,230,214,.2),inset 0 0 8px rgba(46,230,214,.12)}
+  .console .sp{flex:1;min-width:2px}
+  .console .cchips{display:flex;align-items:center;gap:6px;min-width:0;overflow-x:auto;scrollbar-width:none}
+  .console .cchips::-webkit-scrollbar{display:none}
+  .console .cchips > *{flex:none}
+  .cchip{display:inline-flex;align-items:center;gap:4px;height:24px;flex:none;white-space:nowrap;
+         border-radius:999px;border:1px solid rgba(185,179,217,.18);
+         background:rgba(16,13,40,.66);padding:0 8px;
+         font:10.5px/1 var(--mono);letter-spacing:.02em;color:var(--dim)}
+  .cchip b{font-weight:700}
+  .cchip .tip{font-size:8px;color:rgba(141,134,184,.7)}
+  .cchip.model b{color:var(--green)}
+  .cchip.ctx{position:relative;overflow:hidden}
+  .cchip.ctx .fill{position:absolute;inset:0;width:6.2%;background:rgba(46,230,214,.14)}
+  .cchip.ctx .bar{position:absolute;left:0;right:0;bottom:0;height:2px;background:rgba(185,179,217,.16)}
+  .cchip.ctx .bar i{display:block;height:100%;width:6.2%;background:var(--teal)}
+  .cchip.ctx b{color:var(--teal)}
+  .cchip.tok b{color:var(--teal)}
+  .cchip.identity{border-color:rgba(201,191,255,.45);background:rgba(123,77,255,.16);color:var(--purple)}
+  .cchip.turn{margin-left:auto;border-color:rgba(46,230,214,.38);color:var(--teal);font-weight:700}
+
+  /* ── 折叠过程 meta：一行摘要；点开是左侧细线的步骤列表 ── */
+  .m .head{cursor:pointer}
+  .m .head .fold{color:var(--teal);font-size:8.5px;margin-left:1px}
+  .m .head.run{color:var(--dim)}
+  .m .head.run .run{color:var(--amber);font-weight:700}
+  .metabody{margin:3px 0 0 3px;padding-left:9px;border-left:1px solid rgba(141,134,184,.28);
+            display:flex;flex-direction:column;gap:2px}
+  .metabody .tool,.metabody .think{margin:0}
+  /* 展开态整块共用一条 rail：内层 think 不再自己画线 */
+  .metabody .think{border-left:0;padding-left:0}
+
+  /* ── 弹出层：底部抽屉（轮次 / 星核 / 模型 / ctx / tok） ── */
+  .scrim{position:absolute;inset:0;z-index:6;background:rgba(4,3,10,.58)}
+  .sheet{position:absolute;left:0;right:0;bottom:0;z-index:7;padding:9px 14px 16px;
+         border-radius:24px 24px 0 0;border:1px solid rgba(185,179,217,.16);border-bottom:0;
+         background:linear-gradient(180deg,rgba(21,17,50,.985),rgba(10,8,24,.99));
+         box-shadow:0 -20px 54px rgba(0,0,0,.6)}
+  .sheet .grab{width:38px;height:4px;border-radius:3px;background:rgba(185,179,217,.32);margin:0 auto 10px}
+  .sheet .sh{display:flex;align-items:baseline;gap:8px;margin:0 1px 10px}
+  .sheet .sh b{font:700 14px/1.2 var(--ui);color:#fff}
+  .sheet .sh .n{font:800 8.5px/1 var(--mono);letter-spacing:.16em;color:var(--teal)}
+  .sheet .sh .r{margin-left:auto;font:9.5px/1 var(--mono);color:var(--dim)}
+  .stabs{display:flex;gap:4px;background:rgba(10,8,24,.7);border:1px solid rgba(185,179,217,.14);
+         border-radius:999px;padding:3px;margin-bottom:10px}
+  .stabs span{flex:1;text-align:center;font:600 11.5px/1 var(--ui);color:var(--dim);padding:8px 0;border-radius:999px}
+  .stabs span.on{color:#06131a;background:linear-gradient(180deg,#69f2e4,#22d9c8);font-weight:700}
+  .sfield{display:flex;align-items:center;gap:7px;margin-bottom:9px;padding:9px 11px;border-radius:12px;
+          border:1px solid rgba(185,179,217,.16);background:rgba(16,13,40,.62);
+          font:11px/1 var(--mono);color:var(--dim)}
+  .ssec{font:800 8.5px/1 var(--mono);letter-spacing:.14em;color:rgba(46,230,214,.8);margin:9px 2px 6px}
+  .srow{display:flex;align-items:center;gap:10px;padding:9px 11px;margin-bottom:6px;border-radius:13px;
+        border:1px solid rgba(185,179,217,.12);background:rgba(255,255,255,.03)}
+  .srow .ic{width:26px;height:26px;flex:none;border-radius:8px;display:grid;place-items:center;font-size:12px;
+            color:var(--teal);border:1px solid rgba(46,230,214,.28);background:rgba(46,230,214,.08)}
+  .srow .m{flex:1;min-width:0}
+  .srow .n{font:600 12.5px/1.35 var(--ui);color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .srow .d{font:9.5px/1.55 var(--mono);color:var(--dim);margin-top:3px}
+  .srow .r{font:9.5px/1 var(--mono);color:var(--dim);flex:none}
+  .srow .ck{width:19px;height:19px;flex:none;border-radius:50%;border:1px solid rgba(185,179,217,.3)}
+  .srow.on{border-color:rgba(46,230,214,.4);background:rgba(46,230,214,.06)}
+  .srow.on .ck{display:grid;place-items:center;background:var(--teal);border-color:var(--teal);
+               color:#06131a;font-size:11px;font-weight:800}
+  .srow.lock .ic{color:var(--purple);border-color:rgba(201,191,255,.35);background:rgba(123,77,255,.12)}
+  .srow.danger .ic{color:var(--red);border-color:rgba(255,59,92,.35);background:rgba(255,59,92,.08)}
+  .srow .btn{flex:none;font:800 10px/1 var(--mono);letter-spacing:.06em;color:#06131a;
+             background:linear-gradient(180deg,#69f2e4,#22d9c8);padding:7px 11px;border-radius:999px}
+  .srow .btn.ghost{display:inline-flex;align-items:center;justify-content:center;width:auto;
+                   background:rgba(46,230,214,.07);border:1px solid rgba(46,230,214,.4);color:var(--teal)}
+  .srow .btn.red{background:rgba(255,59,92,.12);border:1px solid rgba(255,59,92,.42);color:var(--red)}
+  .srow .sw{width:34px;height:20px;flex:none;border-radius:999px;background:rgba(46,230,214,.16);
+            border:1px solid rgba(46,230,214,.4);position:relative}
+  .srow .sw::after{content:"";position:absolute;right:2px;top:2px;width:14px;height:14px;border-radius:50%;
+                   background:var(--teal);box-shadow:0 0 8px rgba(46,230,214,.5)}
+  .sfoot{font:9.5px/1.7 var(--mono);color:rgba(141,134,184,.85);margin-top:9px;text-align:left}
+
+  /* 轮次索引 */
+  .trow{display:flex;align-items:baseline;gap:9px;padding:8px 9px;border-radius:11px;margin-bottom:3px}
+  .trow .no{width:20px;flex:none;text-align:right;font:800 9.5px/1 var(--mono);color:var(--dim)}
+  .trow .tx{flex:1;min-width:0;font:11px/1.5 var(--mono);color:var(--metal);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .trow .tm{flex:none;font:8.5px/1 var(--mono);color:rgba(141,134,184,.7)}
+  .trow.cur{border:1px solid rgba(46,230,214,.28);background:rgba(46,230,214,.07)}
+  .trow.cur .no{color:var(--teal)}
+  .trow.sel{border:1px solid rgba(255,111,181,.3);background:rgba(255,111,181,.08)}
+  .trow.sel .no{color:var(--pink)}
+  .m.flash .me{border-left-color:var(--pink);background:rgba(255,111,181,.1);border-radius:10px}
+
+  /* 明细面板（ctx / tok / 模型 / 工具） */
+  .kv{display:flex;align-items:baseline;gap:10px;padding:5px 2px;font:10.5px/1.5 var(--mono);color:var(--metal)}
+  .kv .k{flex:none;width:86px;color:var(--dim)}
+  .kv .v{flex:1;min-width:0;text-align:right;color:var(--ink)}
+  .bar2{height:6px;border-radius:999px;background:rgba(185,179,217,.14);overflow:hidden;margin:4px 0 10px}
+  .bar2 i{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,#2EE6D6,#7B4DFF)}
+  .sseg{display:flex;gap:4px;margin-bottom:6px}
+  .sseg span{flex:1;text-align:center;font:600 11px/1 var(--ui);color:var(--dim);padding:8px 0;border-radius:9px;
+            border:1px solid rgba(185,179,217,.14);background:rgba(16,13,40,.6)}
+  .sseg span.on{color:var(--teal);border-color:rgba(46,230,214,.4);background:rgba(46,230,214,.08);font-weight:700}
+  .code{font:10px/1.7 var(--mono);color:var(--metal);background:rgba(10,8,24,.72);
+        border:1px solid rgba(185,179,217,.14);border-radius:10px;padding:8px 10px;white-space:pre-wrap}
+
+  /* ── 提问卡（ask_user_question）：不折进工具行，直接长在转录里 ── */
+  .qcard{border:1px solid rgba(46,230,214,.3);border-radius:var(--r-l);overflow:hidden;
+         background:linear-gradient(160deg,rgba(46,230,214,.09),rgba(16,13,40,.86));
+         box-shadow:0 12px 30px rgba(0,0,0,.3)}
+  .qhead{display:flex;align-items:center;gap:8px;padding:9px 11px;
+         border-bottom:1px solid rgba(46,230,214,.14);
+         font:800 8.5px/1 var(--mono);letter-spacing:.14em;color:var(--teal)}
+  .qhead .qg{width:18px;height:18px;flex:none;border-radius:50%;display:grid;place-items:center;
+             font:800 10px/1 var(--mono);color:var(--teal);
+             border:1px solid rgba(46,230,214,.45);background:rgba(46,230,214,.14)}
+  .qhead .qc{margin-left:auto;color:var(--dim);font-weight:700;letter-spacing:.06em}
+  .qblock{padding:9px 10px 2px;border-top:1px solid rgba(46,230,214,.12)}
+  .qblock:first-of-type{border-top:0}
+  .qtag{display:flex;align-items:center;gap:6px;margin:0 2px 5px;
+        font:800 8.5px/1 var(--mono);letter-spacing:.12em;color:var(--teal)}
+  .qtag b{width:16px;height:16px;flex:none;border-radius:50%;display:grid;place-items:center;
+          font:800 9px/1 var(--mono);color:var(--teal);
+          border:1px solid rgba(46,230,214,.4);background:rgba(46,230,214,.1)}
+  .qq{padding:0 2px 2px;font:600 12.5px/1.6 var(--ui);color:#fff}
+  .qopts{display:flex;flex-direction:column;gap:5px;padding:7px 0 0}
+  .qopt{display:flex;align-items:flex-start;gap:9px;padding:9px 10px;border-radius:11px;
+        border:1px solid rgba(185,179,217,.16);background:rgba(255,255,255,.03)}
+  .qopt .rk{width:15px;height:15px;flex:none;margin-top:1px;border-radius:50%;
+            border:1px solid rgba(185,179,217,.42);background:rgba(10,8,24,.5)}
+  .qopt.on{border-color:rgba(46,230,214,.5);background:rgba(46,230,214,.09)}
+  .qopt.on .rk{border-color:var(--teal);background:var(--teal);box-shadow:inset 0 0 0 3px #0d1024}
+  .qopt .m{flex:1;min-width:0}
+  .qopt .ol{font:600 12px/1.35 var(--ui);color:#fff}
+  .qopt .od{font:9.5px/1.55 var(--mono);color:var(--dim);margin-top:2px}
+  .qopt.multi .rk{border-radius:5px}
+  .qopt.multi.on .rk{position:relative;border-radius:5px;box-shadow:none}
+  .qopt.multi.on .rk::after{content:"✓";position:absolute;inset:0;display:grid;place-items:center;
+                            font:800 10px/1 var(--mono);color:#06131a}
+  .qinput{margin:6px 10px 2px;display:flex;align-items:center;gap:7px;padding:9px 11px;border-radius:11px;
+          border:1px solid rgba(46,230,214,.36);background:rgba(10,8,24,.62);
+          font:10.5px/1.45 var(--mono);color:var(--ink)}
+  .qinput .p{flex:none;color:var(--teal);font-weight:800}
+  .qfoot{display:flex;align-items:center;gap:8px;padding:10px 10px 11px}
+  .qbtn{flex:1;text-align:center;padding:10px 0;border-radius:11px;
+        font:800 11px/1 var(--mono);letter-spacing:.08em}
+  .qbtn.ghostbtn{flex:none;padding:10px 13px;font-weight:700;color:var(--metal);
+                 border:1px solid rgba(185,179,217,.22);background:rgba(255,255,255,.03)}
+  .qbtn.go{color:#06131a;background:linear-gradient(180deg,#69f2e4,#22d9c8);
+           box-shadow:0 6px 18px rgba(46,230,214,.24)}
+  .qbtn.off{color:rgba(6,19,26,.5);background:linear-gradient(180deg,rgba(105,242,228,.42),rgba(34,217,200,.42));
+            box-shadow:none}
+  /* 已答：整卡收成一行（详情仍可展开） */
+  .qdone{display:flex;align-items:center;gap:9px;padding:9px 11px;border-radius:13px;
+         border:1px solid rgba(61,220,151,.24);background:rgba(61,220,151,.06)}
+  .qdone .qg{width:18px;height:18px;flex:none;border-radius:50%;display:grid;place-items:center;
+             font:800 10px/1 var(--mono);color:var(--green);
+             border:1px solid rgba(61,220,151,.4);background:rgba(61,220,151,.12)}
+  .qdone .m{flex:1;min-width:0}
+  .qdone .n{font:700 11px/1.3 var(--ui);color:var(--green)}
+  .qdone .d{font:9.5px/1.5 var(--mono);color:var(--metal);margin-top:2px;
+            white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .qdone .r{flex:none;font:9.5px/1 var(--mono);color:var(--dim)}
+
+  /* ── 产物：图片缩略图 + 文件 chip（默认态，都长在正文下面） ── */
+  .thumbs{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+  .thumb{position:relative;width:138px;height:96px;flex:none;border-radius:10px;overflow:hidden;
+         border:1px solid rgba(46,230,214,.3);background:#0b0920}
+  .thumb img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+  .thumb .sm{position:absolute;left:0;right:0;bottom:0;display:flex;align-items:center;gap:5px;
+             padding:7px 7px 4px;background:linear-gradient(0deg,rgba(4,3,10,.92),rgba(4,3,10,0));
+             font:8.5px/1 var(--mono);color:var(--metal)}
+  .thumb .sm b{font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .thumb .sm .ex{margin-left:auto;flex:none;color:var(--teal);font-size:9px}
+  .files{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+  .fchip{display:inline-flex;align-items:center;gap:7px;max-width:100%;padding:6px 7px 6px 9px;
+         border-radius:10px;border:1px solid rgba(185,179,217,.2);background:rgba(16,13,40,.7)}
+  .fchip .fi{flex:none;color:var(--teal);font-size:11px}
+  .fchip .fn{font:600 10px/1.3 var(--mono);color:var(--ink);max-width:176px;
+             white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .fchip .fe{flex:none;font:8.5px/1 var(--mono);color:var(--dim);letter-spacing:.04em}
+  .fchip .cp{flex:none;width:21px;height:21px;display:grid;place-items:center;border-radius:7px;
+             border:1px solid rgba(185,179,217,.22);color:var(--metal);font:600 9.5px/1 var(--mono)}
+
+  /* ── 灯箱 / 文档窗：盖在当前 chat 上，不跳页 ── */
+  .lbx{position:absolute;inset:52px 0 0;z-index:8;display:flex;flex-direction:column;
+       background:rgba(4,3,10,.92);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+  .lbx .lh{display:flex;align-items:center;gap:9px;padding:10px 14px;
+           border-bottom:1px solid rgba(255,255,255,.08)}
+  .lbx .lh .m{flex:1;min-width:0}
+  .lbx .lh .n{font:600 12px/1.3 var(--ui);color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .lbx .lh .s{font:8.5px/1.4 var(--mono);color:var(--dim);margin-top:2px}
+  .lbx .lx{flex:none;width:28px;height:28px;display:grid;place-items:center;border-radius:9px;
+           border:1px solid rgba(185,179,217,.24);color:var(--metal);font-size:12px;background:rgba(255,255,255,.04)}
+  .lbx .lp{display:flex;align-items:center;gap:8px;padding:8px 14px;
+           border-bottom:1px solid rgba(255,255,255,.06);
+           font:8.5px/1.5 var(--mono);color:var(--dim)}
+  .lbx .lp .t{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .lbx .lp .cp{flex:none;color:var(--teal);border:1px solid rgba(46,230,214,.4);border-radius:999px;
+               padding:4px 8px;font-weight:700;letter-spacing:.04em}
+  .lbx .lb{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:12px}
+  .lbx .lb img{max-width:100%;max-height:100%;object-fit:contain;border-radius:10px;
+               border:1px solid rgba(255,255,255,.1);background:#0b0920}
+  .lbx .lf{padding:0 14px 16px;text-align:center;font:9px/1.6 var(--mono);color:rgba(141,134,184,.8)}
+
+  .docwin{position:absolute;inset:54px 10px 10px;z-index:8;display:flex;flex-direction:column;
+          border-radius:20px;border:1px solid rgba(46,230,214,.26);overflow:hidden;
+          background:linear-gradient(180deg,rgba(21,17,50,.99),rgba(10,8,24,.99));
+          box-shadow:0 24px 60px rgba(0,0,0,.72)}
+  .docwin .dh{display:flex;align-items:center;gap:9px;padding:11px 12px;
+              border-bottom:1px solid rgba(185,179,217,.14)}
+  .docwin .dh .g{width:28px;height:28px;flex:none;display:grid;place-items:center;border-radius:9px;
+                 font-size:12px;color:var(--teal);border:1px solid rgba(46,230,214,.3);background:rgba(46,230,214,.08)}
+  .docwin .dh .m{flex:1;min-width:0}
+  .docwin .dh .n{font:600 12.5px/1.3 var(--ui);color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .docwin .dh .s{font:8.5px/1.4 var(--mono);color:var(--dim);margin-top:2px}
+  .docwin .dh .x{flex:none;width:26px;height:26px;display:grid;place-items:center;border-radius:8px;
+                 border:1px solid rgba(185,179,217,.22);color:var(--metal);font-size:11px}
+  .docwin .dp{display:flex;align-items:center;gap:8px;padding:8px 12px;
+              border-bottom:1px solid rgba(185,179,217,.1);font:8.5px/1.5 var(--mono);color:var(--dim)}
+  .docwin .dp .t{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;direction:rtl;text-align:left}
+  .docwin .dp .cp{flex:none;color:var(--teal);font-weight:700;letter-spacing:.03em;
+                  border:1px solid rgba(46,230,214,.4);border-radius:999px;padding:4px 8px}
+  .docwin .db{flex:1;min-height:0;overflow:hidden;padding:10px 12px}
+  .docwin .code{font:9px/1.75 var(--mono);height:100%;overflow:hidden}
+  .docwin .df{display:flex;align-items:center;gap:8px;padding:0 12px 12px;
+              font:8.5px/1.5 var(--mono);color:rgba(141,134,184,.85)}
+  .docwin .df .sp{flex:1}
+
+  /* 空态 */
+  .empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:0 22px;text-align:center}
+  .empty .t{font:700 15px/1.3 var(--ui);letter-spacing:.02em;color:#fff}
+  .empty .d{font:11px/1.8 var(--mono);color:var(--dim)}
+
+  /* 立绘（透明 WebP 动画；点一下换下一支） */
+  .crewvid{display:block;aspect-ratio:2/3;object-fit:contain;pointer-events:auto;cursor:pointer;
+           filter:drop-shadow(0 18px 38px rgba(123,77,255,.38))}
+  .stage{position:relative;flex:1;min-height:212px;margin-top:-2px}
+  .stage .crewvid{position:absolute;right:-10px;bottom:0;height:100%;max-height:270px;z-index:4}
+  .stage .floor{position:absolute;right:2px;bottom:10px;width:196px;height:32px;border-radius:50%;z-index:3;
+    background:radial-gradient(50% 50% at 50% 50%,rgba(46,230,214,.22),transparent 72%);filter:blur(3px)}
+  .solo{position:relative;padding:4px 0 0}
+  .solo::after{content:"";position:absolute;left:50%;bottom:0;transform:translateX(-50%);
+    width:160px;height:32px;border-radius:50%;
+    background:radial-gradient(50% 50% at 50% 50%,rgba(46,230,214,.2),transparent 72%);filter:blur(2px)}
+  .solo .crewvid{height:214px;width:auto;margin:0 auto;position:relative;z-index:1}
+
+  .field{border:1px solid rgba(185,179,217,.18);border-radius:var(--r-m);background:rgba(16,13,40,.7);
+         padding:13px;font:11px/1.4 var(--mono);color:var(--dim);letter-spacing:.03em}
+  .hint{font:10px/1.7 var(--mono);color:#6f6a8f;text-align:center;margin-top:2px}
+
+  /* 进度 */
+  .prog{height:5px;background:rgba(185,179,217,.16);overflow:hidden;margin-top:12px;border-radius:999px}
+  .prog i{display:block;height:100%;width:46%;border-radius:999px;background:linear-gradient(90deg,#22d9c8,#7B4DFF);
+          box-shadow:0 0 10px rgba(46,230,214,.6)}
+
+  figcaption{margin-top:12px;font:11px/1.9 var(--mono);color:var(--dim);letter-spacing:.02em}
+  figcaption b{color:var(--metal);font-weight:800}
+  figcaption em{color:var(--teal);font-style:normal}
+
+  /* 侧栏：动作库缩略 */
+  .clips{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px}
+  .clips figure{margin:0;width:auto;border-radius:12px;overflow:hidden;border:1px solid rgba(185,179,217,.14);
+                background:radial-gradient(80% 60% at 50% 88%,rgba(123,77,255,.2),rgba(10,8,24,.5))}
+  .clips img{display:block;width:100%;aspect-ratio:2/3;object-fit:contain}
+  .clips figcaption{margin:0;padding:5px 2px;text-align:center;font:700 8.5px/1 var(--mono);letter-spacing:.1em;color:var(--metal2)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>手机端 · V1 定版<span class="v">定稿 · 2026-11-26 · 2026-11-28 提问与产物 / 运行态</span></h1>
+<p class="sub">
+  目标：<b>人在外面，能把家里那台机器上的活推进一格。</b>
+  结构按调研稿 §5.6–5.7：设备 →（作业舱 | 新建单独会话）。
+  视觉直接用<strong>全舱模式那套素材</strong>：12 幕 <code>assets/scene-*.png</code> 底景 ·
+  v22 的星流 canvas · 3 支透明 WebP 立绘动画 <code>assets/v22/*.webp</code>（其余 10 支按需再加）；
+  但壳子改成<strong>圆角矩形</strong> —— 比桌面舰桥柔一档，不再是切角 + 六边形那套硬边。
+  会话内容仍是桌面 TUI 语法 <code>❯ / ✦ 汐音 / ◌ / ▸ tool[✓] / ✳</code>；
+  <strong>工具与 think 默认折叠</strong>，点开才看步骤；跑动中给全舱 TUI 同款工作行
+  （转字 + 修仙短语 + 计时），thinking 只露最新两行。
+  主 chat 的通讯台头一行放 <code>model / ctx / tok / ≡ 轮次</code>；
+  <strong>身份挪到顶栏副标题</strong>（主 CHAT 下面那个带汐音小像的 <code>◉ 舱调度者</code>；
+  她不再站在聊天面板后面），点开就是星核 · 分身。
+  星核抽屉收纳技能 · 分身 · MCP，会话级动作（压缩 / 清空 …）单独一栏。
+  输入框上方<strong>不放预设快捷词</strong> —— 没有常驻控制行，只有输入行；
+  挂了技能 / 委派时才临时冒一行。
+  agent 停下来问的 <code>ask_user_question</code> 直接长成提问卡；
+  正文里的图片走缩略图 + 灯箱，产物文件走 chip + 只读文档窗，全程不离开这次 chat。
+  应用图标与 PC 现用 exe 图标同源；落地计划见 <code>design/35-mobile-dev-plan.md</code>。
+</p>
+<p class="rule">
+  <b>一条硬规则：界面上不出现「改状态」的按钮。</b>
+  待你定 / 待验收 只是索引 —— 点开就回到对应的会话，把那个问题引用进输入框，你用人话说，agent 去改。
+  唯一例外是「启动这台机器上的 Octopus」：按下那一刻机器上没有 agent 能替你按。
+</p>
+
+<div class="top">
+  <div class="panel">
+    <h3>FLOW</h3>
+    <div class="flow">
+      <span class="pill">设备列表</span><span class="ar">→</span>
+      <b>选中设备</b><span class="ar">→</span>
+      <span class="pill">作业舱列表</span><span class="ar">|</span><span class="pill">新建单独会话</span>
+      <span class="ar">→</span><span class="pill">主 chat</span><span class="ar">→</span><span class="pill">☰ 编队</span><span class="ar">→</span><span class="pill">待你定 / 会话 / 任务</span>
+    </div>
+    <div class="flow" style="margin-top:13px">
+      <span class="pill">通讯台头</span><span class="ar">=</span>
+      <span class="pill">✦ 星核</span><span class="pill">model</span><span class="pill">ctx</span><span class="pill">tok</span><span class="pill">≡ 轮次</span>
+      <span class="ar">|</span><span class="pill">身份在顶栏</span>
+    </div>
+    <div class="flow" style="margin-top:13px">
+      <span class="pill">聊天里的块</span><span class="ar">=</span>
+      <span class="pill">❯ 你</span><span class="pill">✦ 汐音 + 折叠</span><span class="pill">? 提问卡</span><span class="pill">▣ 图片缩略图</span><span class="pill">▤ 文件 chip</span>
+    </div>
+    <div class="flow" style="margin-top:13px">
+      <span class="pill">设备状态</span><span class="ar">=</span>
+      <span class="dot d-ok"></span><b>运行中</b>
+      <span class="dot d-warn" style="margin-left:12px"></span><b>在线 · 未启动</b>
+      <span class="dot d-off" style="margin-left:12px"></span><b>离线</b>
+    </div>
+  </div>
+  <div class="panel">
+    <h3>本轮没做的（有意识地留白）</h3>
+    <div class="dots">
+      <div><span class="dot d-off"></span><span>推送：先不做（Android 自建 = 前台常驻服务 1–2 天；兜底走自建 ntfy）</span></div>
+      <div><span class="dot d-off"></span><span>VPN：不做。手机系统上已有 Tailscale App</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════ 1 · 选设备 ══════ -->
+<section class="grp">
+  <h2>1 · 选设备</h2>
+  <div class="gd">一台电脑一张卡，状态一眼可见；未启动的当场能拉起来。</div>
+  <div class="row">
+
+    <figure>
+      <div class="frame"><div class="island"></div><div class="screen">
+        <div class="scene"><img src="assets/scene-cruise.png" alt=""></div>
+        <canvas class="warp"></canvas>
+        <div class="grade"></div><div class="grain"></div>
+
+        <div class="sbar"><span>9:41</span><span class="r"><span class="ts"><i></i>TAILNET</span><span class="bat"></span></span></div>
+        <div class="bar">
+          <span class="ava"><img src="crew/xiyin-idle.png" alt="汐音"></span>
+          <div><div class="t">Octopus<span class="num">LINK 01</span></div><div class="s">3 台设备 · TAILNET 已连</div></div>
+          <div class="sp"></div>
+          <div class="act">＋ 添加</div>
+        </div>
+        <div class="body">
+          <div class="sec">设备</div>
+          <div class="dev ok">
+            <span class="dot"></span>
+            <div class="meta"><div class="nm">书房 PC</div><div class="sb">WINDOWS · 2 个舱有动静</div></div>
+            <span class="st">运行中</span>
+            <span class="go">›</span>
+          </div>
+          <div class="dev warn">
+            <span class="dot"></span>
+            <div class="meta"><div class="nm">家用 Mac</div><div class="sb">MACOS · 上次 5 小时前</div></div>
+            <span class="st">在线·未启动</span>
+            <div class="mini">启动</div>
+          </div>
+          <div class="dev off">
+            <span class="dot"></span>
+            <div class="meta"><div class="nm">工作室 PC</div><div class="sb">WINDOWS · 3 天前</div></div>
+            <span class="st">离线</span>
+            <div class="mini">未接入</div>
+          </div>
+          <div class="ghost">＋ 添加设备</div>
+          <div class="stage">
+            <div class="floor"></div>
+            <img id="crewA" class="crewvid" src="assets/v22/07-idle.webp" alt="汐音">
+          </div>
+        </div>
+        <div class="rail"><span>⬡ TAILNET</span><span class="on">已连接</span><span class="sp"></span><span>SYNC 09:41</span></div>
+        <div class="homebar"><i></i></div>
+      </div></div>
+      <figcaption><b>A · 设备列表</b><br>顶栏是圆角铭牌：头像 + 编号 + 链路。卡片圆角 18px，状态用点和药丸。<em>右下角站着汐音</em>——3 支透明 WebP 动画（默认开），<em>点她按 3 支循环换下一支</em>。</figcaption>
+    </figure>
+
+    <figure>
+      <div class="frame"><div class="island"></div><div class="screen">
+        <div class="scene"><img src="assets/scene-deepspace.png" alt=""></div>
+        <canvas class="warp"></canvas>
+        <div class="grade"></div><div class="grain"></div>
+
+        <div class="sbar"><span>9:41</span><span class="r"><span class="ts"><i></i>TAILNET</span><span class="bat"></span></span></div>
+        <div class="bar"><div class="back">‹</div><div><div class="t">添加设备<span class="num">PAIRING</span></div></div></div>
+        <div class="body">
+          <div class="pnl" style="padding:13px 14px;font:10.5px/1.75 var(--mono);color:var(--dim);letter-spacing:.03em">
+            在电脑上打开 <span style="color:#fff">Octopus → 设置 → 手机配对</span>，生成 6 位配对码<br>（2 分钟有效、一次性；也可以直接粘贴设备令牌）
+          </div>
+          <div class="sec">手动填</div>
+          <div class="field">https://shufang-pc.tailxxxx.ts.net</div>
+          <div class="field">名字（可留空，默认取域名第一段）</div>
+          <div class="field">配对码 · 6 位</div>
+          <div class="primary" style="margin-top:4px">连 接</div>
+          <div class="hint">手机和电脑要在同一个 Tailscale 网络里</div>
+        </div>
+        <div class="homebar"><i></i></div>
+      </div></div>
+      <figcaption><b>B · 添加设备</b><br>手填 Tailscale 域名 + 名字 + 6 位配对码（或直接粘贴设备令牌）。<em>名字自己写</em>，列表卡片就用它。<em>不经过任何云端</em>。</figcaption>
+    </figure>
+
+    <figure>
+      <div class="frame"><div class="island"></div><div class="screen">
+        <div class="scene"><img src="assets/scene-deepspace.png" alt=""></div>
+        <canvas class="warp"></canvas>
+        <div class="grade"></div><div class="grain"></div>
+
+        <div class="sbar"><span>9:41</span><span class="r"><span class="ts"><i></i>TAILNET</span><span class="bat"></span></span></div>
+        <div class="bar"><div class="back">‹</div><div><div class="t">家用 Mac<span class="num">ONLINE</span></div><div class="s">MACOS · 在线 · 未启动</div></div></div>
+        <div class="body" style="align-items:center;text-align:center;justify-content:center;gap:0">
+          <div class="solo"><img class="crewvid" src="assets/v22/05-concerned.webp" alt="汐音 · 担忧"></div>
+          <div style="font:700 14.5px/1.5 var(--ui);letter-spacing:.01em;color:#fff;margin-top:6px">这台电脑上的 Octopus 没在运行</div>
+          <div style="font:10.5px/1.8 var(--mono);color:var(--dim);margin:9px 0 22px;letter-spacing:.03em">
+            拉起来之后它会在托盘里待着<br>手机这边直接进来就行
+          </div>
+          <div class="primary" style="width:100%">启动 Octopus</div>
+          <div class="pnl" style="width:100%;margin-top:16px;padding:13px 14px;text-align:left">
+            <div style="display:flex;justify-content:space-between;font:9.5px/1 var(--mono);letter-spacing:.08em;color:var(--dim)">
+              <span>正在拉起进程</span><span style="color:var(--teal)">37s</span>
+            </div>
+            <div class="prog"><i></i></div>
+            <div style="font:9px/1.7 var(--mono);color:#6f6a8f;margin-top:9px;letter-spacing:.04em">冷启动 40–75 秒 · 好了自动进舱</div>
+          </div>
+        </div>
+        <div class="homebar"><i></i></div>
+      </div></div>
+      <figcaption><b>C · 远程拉起</b><br>「没在运行」时她切到 <code>05-concerned</code> 那支。按下启动 = 那台机器上跑 <code>Octopus.exe --tray</code>，不是开新服务。</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- ══════ 2 · 进设备之后 ══════ -->
+<section class="grp">
+  <h2>2 · 进入设备之后</h2>
+  <div class="gd">两件事：进某个舱（落主 chat），或者开一个不归属任何舱的一次性会话。</div>
+  <div class="row">
+
+    <figure>
+      <div class="frame"><div class="island"></div><div class="screen">
+        <div class="scene"><img src="assets/scene-cruise.png" alt=""></div>
+        <canvas class="warp"></canvas>
+        <div class="grade"></div><div class="grain"></div>
+
+        <div class="sbar"><span>9:41</span><span class="r"><span class="ts"><i></i>TAILNET</span><span class="bat"></span></span></div>
+        <div class="bar">
+          <div class="back">‹</div>
+          <div><div class="t">书房 PC<span class="num">LINK 12MS</span></div><div class="s">运行中</div></div>
+          <div class="sp"></div><div class="act">⋯</div>
+        </div>
+        <div class="body">
+          <div class="pnl" style="display:flex;align-items:center;gap:12px;padding:14px;
+               border-color:rgba(46,230,214,.3);background:linear-gradient(120deg,rgba(46,230,214,.15),rgba(123,77,255,.13))">
+            <div style="width:34px;height:34px;flex:none;border-radius:12px;display:grid;place-items:center;
+                 font-size:18px;color:#06131a;background:linear-gradient(180deg,#69f2e4,#22d9c8)">＋</div>
+            <div style="flex:1;min-width:0">
+              <div style="font-size:14px;color:#fff;font-weight:600">新建单独会话</div>
+              <div style="font:10px/1.5 var(--mono);color:var(--dim);margin-top:4px;letter-spacing:.03em">不归属任何舱的一次性对话</div>
+            </div>
+            <div style="color:var(--teal);font-size:17px">›</div>
+          </div>
+
+          <div class="sec">作业舱 · 4</div>
+          <div class="cabin">
+            <div class="ic">⌂</div>
+            <div class="m"><div class="n">octopus-web</div><div class="p">C:\xzf\ai\open-octopus</div></div>
+            <div class="bdg wait">待你定 2</div>
+          </div>
+          <div class="cabin">
+            <div class="ic">⌂</div>
+            <div class="m"><div class="n">品牌站改版</div><div class="p">C:\work\brand-site</div></div>
+            <div class="bdg run">进行中 1</div>
+          </div>
+          <div class="cabin">
+            <div class="ic">⌂</div>
+            <div class="m"><div class="n">数据导出</div><div class="p">C:\work\etl</div></div>
+            <div class="bdg rev">待验收 1</div>
+          </div>
+          <div class="cabin">
+            <div class="ic">⌂</div>
+            <div class="m"><div class="n">试验场</div><div class="p">D:\lab</div></div>
+          </div>
+        </div>
+        <div class="rail"><span>⬡ 书房 PC</span><span class="on">LINK 12ms</span><span class="sp"></span><span>DECK 4</span></div>
+        <div class="homebar"><i></i></div>
+      </div></div>
+      <figcaption><b>D · 舱列表</b><br>顶部点「书房 PC」回设备列表换机器。<em>角标是这一舱里等你动手的条数</em>，不是任务数。</figcaption>
+    </figure>
+
+    <figure>
+      <div class="frame"><div class="island"></div><div class="screen">
+        <div class="scene"><img src="assets/scene-deepspace.png" alt=""></div>
+        <canvas class="warp"></canvas>
+        <div class="grade"></div><div class="grain"></div>
+
+        <div class="sbar"><span>9:41</span><span class="r"><span class="ts"><i></i>TAILNET</span><span class="bat"></span></span></div>
+        <div class="bar"><div class="back">‹</div><div><div class="t">octopus-web<span class="num">主 CHAT</span></div><div class="s"><span class="idp"><span class="cid"><img src="../../packages/mobile/assets/crew/xiyin-idle.png" alt=""></span>舱调度者 <span class="ar">▾</span></span><span class="dt">书房 PC · 运行中</span></div></div><div class="sp"></div><div class="act">☰ 编队</div></div>
+
+        <div class="console">
+          <span class="core">✦</span>
+          <span class="cchips">
+          <span class="cchip model">model <b>pro</b> <span class="tip">▾</span></span>
+          <span class="cchip ctx"><span class="fill"></span><span class="bar"><i></i></span>ctx <b>6.2%</b> <span class="tip">▾</span></span>
+          <span class="cchip tok">tok <b>1.2K</b> <span class="tip">▾</span></span>
+          </span>
+          <span class="sp"></span>
+          <span class="cchip turn">≡ 12轮</span>
+        </div>
+
+        <div class="body" style="padding:12px 12px 0">
+          <div class="stream">
+            <div class="m">
+              <div class="head"><span class="tag">✦ 汐音</span><span class="ok">已完成</span><span>·</span><span class="pk">15s</span><span>·</span><span class="nt">4 步</span><span>·</span><span class="tl">工具 2</span><span>·</span><span class="gr">1.2K tok</span><span>·</span><span class="am">¥0.06</span><span class="fold">▸</span></div>
+              <div class="bodyx"><span class="mk">✳</span>三处 spec 引用 + 两行验收清单都还在。要清就说一声，我删完给你 diff 摘要。</div>
+            </div>
+            <div class="m"><div class="me"><span class="p">❯</span><div class="tx">好，一起清掉</div></div></div>
+            <div class="m">
+              <div class="head"><span class="tag">✦ 汐音</span><span class="ok">已完成</span><span>·</span><span class="pk">8s</span><span>·</span><span class="nt">2 步</span><span>·</span><span class="tl">工具 1</span><span class="fold">▾</span></div>
+              <div class="metabody">
+                <div class="think">◌ 先核对 manifest 里的引用，再一起改 spec 和验收清单</div>
+                <div class="tool"><span class="ar">▸ </span><span class="nm">Edit</span> spec/phase-1.md <span class="st">[✓]</span></div>
+              </div>
+              <div class="bodyx"><span class="mk">✳</span>清完了。任务停在<span style="color:var(--pink);font-weight:700">待验收</span>，编队里那两条留着等你点头。</div>
+            </div>
+            <div class="m">
+              <div class="head run"><span class="tag">✦ 汐音</span><span class="run">运行中</span><span>·</span><span class="nt">2 步</span><span>·</span><span class="tl">工具 1</span><span class="fold">▸</span></div>
+            </div>
+            <div class="hint" style="text-align:left;padding:2px 2px 0;line-height:1.6">待你定 / 会话 / 任务 → 右上角「☰ 编队」</div>
+          </div>
+        </div>
+
+        <div class="composer">
+          <div class="inputrow">
+            <div class="box">说点什么…</div>
+            <div class="send off">↑</div>
+          </div>
+        </div>
+        <div class="homebar"><i></i></div>
+      </div></div>
+      <figcaption><b>E · 舱内主 chat</b><br><em>点进舱先落到这</em>：直接跟汐音说话，消息列满宽不打折。<em>她的立绘从面板后面收进了顶栏小像</em>（跟「◉ 舱调度者」同一枚，点开星核 · 分身），聊天区不再有个孤零零站着的人。通讯台头一行：<em>星核 / model / ctx / tok / ≡ 轮次</em>；输入区上方不再单占一行。工具与 think 默认折成一行，<b>点开才看步骤</b>；跑动中给同款工作行。待你定 / 会话 / 任务走右上角「☰ 编队」。</figcaption>
+    </figure>
+
+    <figure>
+      <div class="frame"><div class="island"></div><div class="screen">
+        <div class="scene"><img src="assets/scene-cruise.png" alt=""></div>
+        <canvas class="warp"></canvas>
+        <div class="grade"></div><div class="grain"></div>
+
+        <div class="sbar"><span>9:41</span><span class="r"><span class="ts"><i></i>TAILNET</span><span class="bat"></span></span></div>
+        <div class="bar"><div class="back">‹</div><div><div class="t">编队<span class="num">FLEET</span></div><div class="s">octopus-web · 书房 PC</div></div></div>
+        <div class="seg"><span class="on">待你定<b>2</b></span><span>会话</span><span>任务<b>3</b></span></div>
+        <div class="body" style="padding-top:0">
+          <div class="todo rev">
+            <div class="hd"><span class="bdg rev">待验收</span><span class="src">任务 · phase-2 产物清理</span></div>
+            <div class="tt">第 2 轮产物已清理，看下能不能过</div>
+            <div class="ds">3 个 phase 全绿 · 变更窗 12 个 commit</div>
+            <div class="foot">去会话里说 ›</div>
+          </div>
+          <div class="todo">
+            <div class="hd"><span class="bdg wait">待你定</span><span class="src">事项 · 1 小时前</span></div>
+            <div class="tt">phase 2 的 spec 引用要不要一起清掉？</div>
+            <div class="ds">汐音：三处都在，等你点头我就删</div>
+            <div class="foot">去会话里说 ›</div>
+          </div>
+          <div class="hint" style="text-align:left;padding:0 4px;line-height:1.6">
+            点任意一条 = 回到主 chat，把这个问题引用进输入框
+          </div>
+          <div class="pnl" style="opacity:.72;padding:13px 14px">
+            <div style="font:600 10px/1 var(--ui);letter-spacing:.06em;color:var(--dim);margin-bottom:8px">最近会话</div>
+            <div style="font:10.5px/1.8 var(--mono);color:var(--metal)">✦ 汐音 · 三处都在，验收清单里也有两行</div>
+            <div style="font:10.5px/1.8 var(--mono);color:var(--dim)">❯ 好</div>
+          </div>
+        </div>
+        <div class="homebar"><i></i></div>
+      </div></div>
+      <figcaption><b>E2 · 编队（右上角菜单）</b><br>主 chat 的「☰ 编队」进这里：<em>待你定 / 会话 / 任务</em>。待你定只列「谁在等你说话」，<b>没有动作按钮</b>——点开就是回主 chat 引用那一问。</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- ══════ 3 · chat 内场 ══════ -->
+<section class="grp">
+  <h2>3 · chat 内场（轮次 · 星核 · 遥测）</h2>
+  <div class="gd">桌面通讯台的三件事搬进手机：过程折叠、轮次索引、遥测与星核。全部走底部抽屉 —— 拇指够得着，也不挡消息。</div>
+  <div class="row">
+
+    <figure>
+      <div class="frame"><div class="island"></div><div class="screen">
+        <div class="scene"><img src="assets/scene-deepspace.png" alt=""></div>
+        <canvas class="warp"></canvas>
+        <div class="grade"></div><div class="grain"></div>
+
+        <div class="sbar"><span>9:41</span><span class="r"><span class="ts"><i></i>TAILNET</span><span class="bat"></span></span></div>
+        <div class="bar"><div class="back">‹</div><div><div class="t">octopus-web<span class="num">主 CHAT</span></div><div class="s"><span class="idp"><span class="cid"><img src="../../packages/mobile/assets/crew/xiyin-idle.png" alt=""></span>舱调度者 <span class="ar">▾</span></span><span class="dt">书房 PC · 运行中</span></div></div><div class="sp"></div><div class="act">☰ 编队</div></div>
+
+        <div class="console">
+          <span class="core">✦</span>
+          <span class="cchips">
+          <span class="cchip model">model <b>pro</b> <span class="tip">▾</span></span>
+          <span class="cchip ctx"><span class="fill"></span><span class="bar"><i></i></span>ctx <b>6.2%</b> <span class="tip">▾</span></span>
+          <span class="cchip tok">tok <b>1.2K</b> <span class="tip">▾</span></span>
+          </span>
+          <span class="sp"></span>
+          <span class="cchip turn" style="background:rgba(46,230,214,.12)">≡ 12轮</span>
+        </div>
+
+        <div class="body" style="padding:12px 12px 0">
+          <div class="stream">
+            <div class="m"><div class="me"><span class="p">❯</span><div class="tx">刚才那个 diff 里，验收清单是不是也被改到了？</div></div></div>
+            <div class="m">
+              <div class="head"><span class="tag">✦ 汐音</span><span class="ok">已完成</span><span>·</span><span class="pk">9s</span><span>·</span><span class="nt">3 步</span><span>·</span><span class="tl">工具 1</span><span class="fold">▸</span></div>
+              <div class="bodyx"><span class="mk">✳</span>动了：`acceptance-plan-r2.json` 里两行跟着 phase 2 一起删了，diff 在下面。</div>
+            </div>
+            <div class="m flash"><div class="me"><span class="p">❯</span><div class="tx">好，一起清掉</div></div></div>
+          </div>
+        </div>
+
+        <div class="scrim"></div>
+        <div class="sheet">
+          <div class="grab"></div>
+          <div class="sh"><b>轮次</b><span class="n">TURNS</span><span class="r">12 轮 · 新的在上</span></div>
+          <div class="trow cur"><span class="no">12</span><span class="tx">好，一起清掉</span><span class="tm">刚刚</span></div>
+          <div class="trow"><span class="no">11</span><span class="tx">刚才那个 diff 里，验收清单是不是也被改到了？</span><span class="tm">2 分钟</span></div>
+          <div class="trow sel"><span class="no">10</span><span class="tx">phase 1 的 spec 里还有三处把 phase 2 当后续写…</span><span class="tm">8 分钟</span></div>
+          <div class="trow"><span class="no">9</span><span class="tx">phase-2 如果不做的话，任务把相关产物也删除了</span><span class="tm">12 分钟</span></div>
+          <div class="trow"><span class="no">8</span><span class="tx">先看下现在任务停在哪一步</span><span class="tm">26 分钟</span></div>
+          <div class="trow"><span class="no">7</span><span class="tx">把 api 那几个接口的返回补上 items</span><span class="tm">40 分钟</span></div>
+          <div class="sfoot">点一条 = 抽屉收起，消息滚到那一行并闪一下（粉）。当前轮青色，跳转目标粉色。</div>
+        </div>
+        <div class="homebar"><i></i></div>
+      </div></div>
+      <figcaption><b>E3 · 轮次索引</b><br>通讯台头「≡ 12轮」点开：<em>一条 = 你的一句话</em>，新的在上。点任意一条就<em>定位到聊天里那一行</em>，抽屉同时收起；不用再翻回去找。</figcaption>
+    </figure>
+
+    <figure>
+      <div class="frame"><div class="island"></div><div class="screen">
+        <div class="scene"><img src="assets/scene-deepspace.png" alt=""></div>
+        <canvas class="warp"></canvas>
+        <div class="grade"></div><div class="grain"></div>
+
+        <div class="sbar"><span>9:41</span><span class="r"><span class="ts"><i></i>TAILNET</span><span class="bat"></span></span></div>
+        <div class="bar"><div class="back">‹</div><div><div class="t">octopus-web<span class="num">主 CHAT</span></div><div class="s"><span class="idp"><span class="cid"><img src="../../packages/mobile/assets/crew/xiyin-idle.png" alt=""></span>舱调度者 <span class="ar">▾</span></span><span class="dt">书房 PC · 运行中</span></div></div><div class="sp"></div><div class="act">☰ 编队</div></div>
+
+        <div class="console">
+          <span class="core" style="border-color:rgba(46,230,214,.75);box-shadow:0 0 16px rgba(46,230,214,.4)">✦</span>
+          <span class="cchips">
+          <span class="cchip model">model <b>pro</b> <span class="tip">▾</span></span>
+          <span class="cchip ctx"><span class="fill"></span><span class="bar"><i></i></span>ctx <b>6.2%</b> <span class="tip">▾</span></span>
+          <span class="cchip tok">tok <b>1.2K</b> <span class="tip">▾</span></span>
+          </span>
+          <span class="sp"></span>
+          <span class="cchip turn">≡ 12轮</span>
+        </div>
+
+        <div class="body" style="padding:12px 12px 0">
+          <div class="stream">
+            <div class="m"><div class="me"><span class="p">❯</span><div class="tx">好，一起清掉</div></div></div>
+            <div class="m">
+              <div class="head"><span class="tag">✦ 汐音</span><span class="ok">已完成</span><span>·</span><span class="pk">8s</span><span>·</span><span class="nt">2 步</span><span>·</span><span class="tl">工具 1</span><span class="fold">▸</span></div>
+              <div class="bodyx"><span class="mk">✳</span>清完了。任务停在待验收，编队里那两条留着等你点头。</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="scrim"></div>
+        <div class="sheet">
+          <div class="grab"></div>
+          <div class="sh"><b>星核</b><span class="n">CORE</span><span class="r">✦ 技能 · 分身 · MCP · 会话</span></div>
+          <div class="stabs"><span class="on">技能</span><span>分身</span><span>MCP</span><span>会话</span></div>
+          <div class="sfield"><span style="color:var(--teal)">⌕</span> 搜技能名，如 octo-wiki</div>
+          <div class="ssec">当前身份自带 · 只读</div>
+          <div class="srow lock">
+            <span class="ic">✦</span>
+            <div class="m"><div class="n">octo-dev-copilot</div><div class="d">随「舱调度者」生效 · 不能摘</div></div>
+            <span class="r">🔒</span>
+          </div>
+          <div class="ssec">全部技能</div>
+          <div class="srow on">
+            <span class="ic">⌘</span>
+            <div class="m"><div class="n">octo-wiki</div><div class="d">内置 · 查 ~/.octopus/knowledge/wiki</div></div>
+            <span class="r">1.2K tok</span>
+            <span class="ck">✓</span>
+          </div>
+          <div class="srow">
+            <span class="ic">⌘</span>
+            <div class="m"><div class="n">matt-spec-dev</div><div class="d">内置 · 规格共建 / 逐票开发</div></div>
+            <span class="r">3.4K tok</span>
+            <span class="ck"></span>
+          </div>
+          <div class="srow">
+            <span class="ic">⌘</span>
+            <div class="m"><div class="n">octo-guide</div><div class="d">内置 · 上手与操作向导</div></div>
+            <span class="r">0.8K tok</span>
+            <span class="ck"></span>
+          </div>
+          <div class="srow">
+            <span class="ic" style="color:var(--purple);border-color:rgba(201,191,255,.3);background:rgba(123,77,255,.1)">✎</span>
+            <div class="m"><div class="n">api-review-evolve</div><div class="d">本地进化 · 上次用是 5 天前</div></div>
+            <span class="r">0.4K tok</span>
+            <span class="ck"></span>
+          </div>
+          <div class="sfoot">选中 = 挂到下一条消息（发送后自动摘掉）。技能 ↔ 会话操作分成两栏，见「会话」。</div>
+        </div>
+        <div class="homebar"><i></i></div>
+      </div></div>
+      <figcaption><b>E4 · 星核 · 技能</b><br>通讯台头左侧的<em>星环</em>点开：技能 / 分身 / MCP / 会话四栏。<em>当前身份自带的 SKILL 只读置顶</em>，下面是可挂载的技能；每行带来源与 token 量级。</figcaption>
+    </figure>
+
+    <figure>
+      <div class="frame"><div class="island"></div><div class="screen">
+        <div class="scene"><img src="assets/scene-deepspace.png" alt=""></div>
+        <canvas class="warp"></canvas>
+        <div class="grade"></div><div class="grain"></div>
+
+        <div class="sbar"><span>9:41</span><span class="r"><span class="ts"><i></i>TAILNET</span><span class="bat"></span></span></div>
+        <div class="bar"><div class="back">‹</div><div><div class="t">octopus-web<span class="num">主 CHAT</span></div><div class="s"><span class="idp"><span class="cid"><img src="../../packages/mobile/assets/crew/xiyin-idle.png" alt=""></span>舱调度者 <span class="ar">▾</span></span><span class="dt">书房 PC · 运行中</span></div></div><div class="sp"></div><div class="act">☰ 编队</div></div>
+
+        <div class="console">
+          <span class="core">✦</span>
+          <span class="cchips">
+          <span class="cchip model">model <b>pro</b> <span class="tip">▾</span></span>
+          <span class="cchip ctx"><span class="fill"></span><span class="bar"><i></i></span>ctx <b>6.2%</b> <span class="tip">▾</span></span>
+          <span class="cchip tok">tok <b>1.2K</b> <span class="tip">▾</span></span>
+          </span>
+          <span class="sp"></span>
+          <span class="cchip turn">≡ 12轮</span>
+        </div>
+
+        <div class="body" style="padding:12px 12px 0">
+          <div class="stream">
+            <div class="m"><div class="me"><span class="p">❯</span><div class="tx">好，一起清掉</div></div></div>
+          </div>
+        </div>
+
+        <div class="scrim"></div>
+        <div class="sheet">
+          <div class="grab"></div>
+          <div class="sh"><b>星核</b><span class="n">CORE</span><span class="r">✦ 技能 · 分身 · MCP · 会话</span></div>
+          <div class="stabs"><span>技能</span><span class="on">分身</span><span>MCP</span><span>会话</span></div>
+          <div class="ssec">当前身份 · 紫幽兰</div>
+          <div class="srow on">
+            <span class="ic" style="color:var(--purple);border-color:rgba(201,191,255,.4);background:rgba(123,77,255,.14)">◉</span>
+            <div class="m"><div class="n">舱调度者 · 汐音</div><div class="d">octo-dev-copilot 分身担任 · 下一条消息生效</div></div>
+            <span class="r" style="color:var(--purple)">当前</span>
+            <span class="ck">✓</span>
+          </div>
+          <div class="srow">
+            <span class="ic" style="color:var(--dim);border-color:rgba(185,179,217,.25);background:rgba(255,255,255,.04)">○</span>
+            <div class="m"><div class="n">主 Agent</div><div class="d">基础身份 · 平台默认</div></div>
+            <span class="btn ghost">切回</span>
+          </div>
+          <div class="ssec">委派 · 一次性，随下一条消息消费</div>
+          <div class="srow">
+            <span class="ic">⚙</span>
+            <div class="m"><div class="n">matt-dev-runner</div><div class="d">单票实现 · 只改一个包</div></div>
+            <span class="btn">委派</span>
+          </div>
+          <div class="srow">
+            <span class="ic">⚙</span>
+            <div class="m"><div class="n">author-verified 写规格</div><div class="d">规格作者 · 只产 spec 与票</div></div>
+            <span class="btn">委派</span>
+          </div>
+          <div class="srow">
+            <span class="ic">⚙</span>
+            <div class="m"><div class="n">matt-e2e-tester</div><div class="d">验收跑真机 · 出证据表</div></div>
+            <span class="btn">委派</span>
+          </div>
+          <div class="sfoot">身份切换不改历史；顶栏那个 <code>◉ 舱调度者</code> 点开就是这页，切回主身份也在这里。</div>
+        </div>
+        <div class="homebar"><i></i></div>
+      </div></div>
+      <figcaption><b>E5 · 星核 · 分身</b><br>「当前身份」<em>挪到顶栏副标题</em>（主 CHAT 下面），点开切回主身份或换成别的分身（<em>下一条消息生效</em>）。委派是一次性的：选中后随下一条消息发出，像桌面端一样；只有挂了技能 / 委派时，输入区上方才临时冒一行。</figcaption>
+    </figure>
+
+    <figure>
+      <div class="frame"><div class="island"></div><div class="screen">
+        <div class="scene"><img src="assets/scene-deepspace.png" alt=""></div>
+        <canvas class="warp"></canvas>
+        <div class="grade"></div><div class="grain"></div>
+
+        <div class="sbar"><span>9:41</span><span class="r"><span class="ts"><i></i>TAILNET</span><span class="bat"></span></span></div>
+        <div class="bar"><div class="back">‹</div><div><div class="t">octopus-web<span class="num">主 CHAT</span></div><div class="s"><span class="idp"><span class="cid"><img src="../../packages/mobile/assets/crew/xiyin-idle.png" alt=""></span>舱调度者 <span class="ar">▾</span></span><span class="dt">书房 PC · 运行中</span></div></div><div class="sp"></div><div class="act">☰ 编队</div></div>
+
+        <div class="console">
+          <span class="core">✦</span>
+          <span class="cchips">
+          <span class="cchip model">model <b>pro</b> <span class="tip">▾</span></span>
+          <span class="cchip ctx"><span class="fill"></span><span class="bar"><i></i></span>ctx <b>6.2%</b> <span class="tip">▾</span></span>
+          <span class="cchip tok">tok <b>1.2K</b> <span class="tip">▾</span></span>
+          </span>
+          <span class="sp"></span>
+          <span class="cchip turn">≡ 12轮</span>
+        </div>
+
+        <div class="body" style="padding:12px 12px 0">
+          <div class="stream">
+            <div class="m"><div class="me"><span class="p">❯</span><div class="tx">好，一起清掉</div></div></div>
+          </div>
+        </div>
+
+        <div class="scrim"></div>
+        <div class="sheet">
+          <div class="grab"></div>
+          <div class="sh"><b>星核</b><span class="n">CORE</span><span class="r">✦ 与内置命令同源</span></div>
+          <div class="stabs"><span>技能</span><span>分身</span><span>MCP</span><span class="on">会话</span></div>
+          <div class="ssec">上下文</div>
+          <div class="srow">
+            <span class="ic">⚡</span>
+            <div class="m"><div class="n">压缩上下文</div><div class="d">12.3K → 摘要，保留关键事实（/compact）</div></div>
+            <span class="btn">压缩</span>
+          </div>
+          <div class="srow danger">
+            <span class="ic">⌫</span>
+            <div class="m"><div class="n">清空上下文</div><div class="d">清掉 SDK 上下文，聊天记录保留（/clear）</div></div>
+            <span class="btn red">清空</span>
+          </div>
+          <div class="srow">
+            <span class="ic">↻</span>
+            <div class="m"><div class="n">自动压缩</div><div class="d">到 85% 自动压，压完提示一句（/autocompact）</div></div>
+            <span class="sw"></span>
+          </div>
+          <div class="ssec">会话</div>
+          <div class="srow">
+            <span class="ic">✎</span>
+            <div class="m"><div class="n">重命名会话</div><div class="d">现在叫「octopus-web 主 chat」（/rename）</div></div>
+            <span class="btn ghost">改名</span>
+          </div>
+          <div class="srow">
+            <span class="ic">⇥</span>
+            <div class="m"><div class="n">导出最近 20 轮</div><div class="d">纯文本，走系统分享（只读，不改会话）</div></div>
+            <span class="btn ghost">导出</span>
+          </div>
+          <div class="sfoot">这些是「对这次会话动手」的开关 —— 与技能 / 分身 / MCP 分清；清空要二次确认，压完在转录里留一条系统行。</div>
+        </div>
+        <div class="homebar"><i></i></div>
+      </div></div>
+      <figcaption><b>E6 · 星核 · 会话（单独打开）</b><br>压缩 / 清空 / 自动压缩这类<em>会话级动作单独一栏</em>，不和技能混在一个列表里。危险动作红色 + 二次确认；跑动中禁用与「打断」相关的项。</figcaption>
+    </figure>
+
+    <figure>
+      <div class="frame"><div class="island"></div><div class="screen">
+        <div class="scene"><img src="assets/scene-deepspace.png" alt=""></div>
+        <canvas class="warp"></canvas>
+        <div class="grade"></div><div class="grain"></div>
+
+        <div class="sbar"><span>9:41</span><span class="r"><span class="ts"><i></i>TAILNET</span><span class="bat"></span></span></div>
+        <div class="bar"><div class="back">‹</div><div><div class="t">octopus-web<span class="num">主 CHAT</span></div><div class="s"><span class="idp"><span class="cid"><img src="../../packages/mobile/assets/crew/xiyin-idle.png" alt=""></span>舱调度者 <span class="ar">▾</span></span><span class="dt">书房 PC · 运行中</span></div></div><div class="sp"></div><div class="act">☰ 编队</div></div>
+
+        <div class="console">
+          <span class="core">✦</span>
+          <span class="cchips">
+          <span class="cchip model" style="border-color:rgba(61,220,151,.5)">model <b>pro</b> <span class="tip">▾</span></span>
+          <span class="cchip ctx"><span class="fill"></span><span class="bar"><i></i></span>ctx <b>6.2%</b> <span class="tip">▾</span></span>
+          <span class="cchip tok">tok <b>1.2K</b> <span class="tip">▾</span></span>
+          </span>
+          <span class="sp"></span>
+          <span class="cchip turn">≡ 12轮</span>
+        </div>
+
+        <div class="body" style="padding:12px 12px 0">
+          <div class="stream">
+            <div class="m"><div class="me"><span class="p">❯</span><div class="tx">好，一起清掉</div></div></div>
+          </div>
+        </div>
+
+        <div class="scrim"></div>
+        <div class="sheet">
+          <div class="grab"></div>
+          <div class="sh"><b>模型设置</b><span class="n">MODEL</span><span class="r">每个模型独立预设</span></div>
+          <div class="srow on">
+            <span class="ic">◆</span>
+            <div class="m"><div class="n">pro-max</div><div class="d">最强 · 复杂重构与 Spec 共建</div></div>
+            <span class="r">极高 · 1M</span>
+            <span class="ck">✓</span>
+          </div>
+          <div class="srow">
+            <span class="ic">◆</span>
+            <div class="m"><div class="n">pro</div><div class="d">均衡 · 日常执行</div></div>
+            <span class="r">标准 · 200K</span>
+            <span class="ck"></span>
+          </div>
+          <div class="srow">
+            <span class="ic">◆</span>
+            <div class="m"><div class="n">se</div><div class="d">轻量 · 快，走查与轻任务</div></div>
+            <span class="r">低 · 200K</span>
+            <span class="ck"></span>
+          </div>
+          <div class="ssec">思考强度</div>
+          <div class="sseg"><span>低</span><span class="on">标准</span><span>高</span><span>极深</span></div>
+          <div class="ssec">上下文窗口</div>
+          <div class="sseg"><span class="on">200K</span><span>1M · 长上下文</span></div>
+          <div class="sfoot">只影响本轮及之后；跑动中换模型要等这一轮跑完。实际运行模型与别名不同时，在 ctx 明细里标注。</div>
+        </div>
+        <div class="homebar"><i></i></div>
+      </div></div>
+      <figcaption><b>E7 · 模型设置</b><br>通讯台头的 <code>model pro ▾</code> 点开：<em>选模型 + 它自己的思考强度 / 上下文窗口</em>。预设跟随模型记住，和桌面端同一套。</figcaption>
+    </figure>
+
+    <figure>
+      <div class="frame"><div class="island"></div><div class="screen">
+        <div class="scene"><img src="assets/scene-deepspace.png" alt=""></div>
+        <canvas class="warp"></canvas>
+        <div class="grade"></div><div class="grain"></div>
+
+        <div class="sbar"><span>9:41</span><span class="r"><span class="ts"><i></i>TAILNET</span><span class="bat"></span></span></div>
+        <div class="bar"><div class="back">‹</div><div><div class="t">octopus-web<span class="num">主 CHAT</span></div><div class="s"><span class="idp"><span class="cid"><img src="../../packages/mobile/assets/crew/xiyin-idle.png" alt=""></span>舱调度者 <span class="ar">▾</span></span><span class="dt">书房 PC · 运行中</span></div></div><div class="sp"></div><div class="act">☰ 编队</div></div>
+
+        <div class="console">
+          <span class="core">✦</span>
+          <span class="cchips">
+          <span class="cchip model">model <b>pro</b> <span class="tip">▾</span></span>
+          <span class="cchip ctx" style="border-color:rgba(46,230,214,.6)"><span class="fill"></span><span class="bar"><i></i></span>ctx <b>6.2%</b> <span class="tip">▾</span></span>
+          <span class="cchip tok">tok <b>1.2K</b> <span class="tip">▾</span></span>
+          </span>
+          <span class="sp"></span>
+          <span class="cchip turn">≡ 12轮</span>
+        </div>
+
+        <div class="body" style="padding:12px 12px 0">
+          <div class="stream">
+            <div class="m"><div class="me"><span class="p">❯</span><div class="tx">好，一起清掉</div></div></div>
+          </div>
+        </div>
+
+        <div class="scrim"></div>
+        <div class="sheet">
+          <div class="grab"></div>
+          <div class="sh"><b>上下文</b><span class="n">CTX</span><span class="r">12.3K / 200K · 6.2%</span></div>
+          <div class="bar2" style="margin-top:2px"><i style="width:6.2%"></i></div>
+          <div class="kv"><span class="k">系统提示</span><span class="v">3.1K</span></div>
+          <div class="kv"><span class="k">工具定义</span><span class="v">2.4K</span></div>
+          <div class="kv"><span class="k">消息</span><span class="v">5.6K</span></div>
+          <div class="kv"><span class="k">缓存命中</span><span class="v">62.4%</span></div>
+          <div class="kv"><span class="k">可用</span><span class="v">187.7K</span></div>
+          <div class="sfoot">数字来自 SDK context_usage；估算值前面带 ~。60% 起转琥珀，85% 转红。</div>
+          <div class="srow" style="margin-top:9px">
+            <span class="ic">⚡</span>
+            <div class="m"><div class="n">现在压一下</div><div class="d">保留关键事实，丢冗余（/compact）</div></div>
+            <span class="btn">压缩</span>
+          </div>
+        </div>
+        <div class="homebar"><i></i></div>
+      </div></div>
+      <figcaption><b>E8 · ctx 明细</b><br>通讯台头的 <code>ctx 6.2% ▾</code> 点开：<em>窗口占用 + 构成</em>，并可直接压缩。占用色随档位走，红之前就该压。</figcaption>
+    </figure>
+
+    <figure>
+      <div class="frame"><div class="island"></div><div class="screen">
+        <div class="scene"><img src="assets/scene-deepspace.png" alt=""></div>
+        <canvas class="warp"></canvas>
+        <div class="grade"></div><div class="grain"></div>
+
+        <div class="sbar"><span>9:41</span><span class="r"><span class="ts"><i></i>TAILNET</span><span class="bat"></span></span></div>
+        <div class="bar"><div class="back">‹</div><div><div class="t">octopus-web<span class="num">主 CHAT</span></div><div class="s"><span class="idp"><span class="cid"><img src="../../packages/mobile/assets/crew/xiyin-idle.png" alt=""></span>舱调度者 <span class="ar">▾</span></span><span class="dt">书房 PC · 运行中</span></div></div><div class="sp"></div><div class="act">☰ 编队</div></div>
+
+        <div class="console">
+          <span class="core">✦</span>
+          <span class="cchips">
+          <span class="cchip model">model <b>pro</b> <span class="tip">▾</span></span>
+          <span class="cchip ctx"><span class="fill"></span><span class="bar"><i></i></span>ctx <b>6.2%</b> <span class="tip">▾</span></span>
+          <span class="cchip tok" style="border-color:rgba(46,230,214,.6)">tok <b>1.2K</b> <span class="tip">▾</span></span>
+          </span>
+          <span class="sp"></span>
+          <span class="cchip turn">≡ 12轮</span>
+        </div>
+
+        <div class="body" style="padding:12px 12px 0">
+          <div class="stream">
+            <div class="m"><div class="me"><span class="p">❯</span><div class="tx">好，一起清掉</div></div></div>
+          </div>
+        </div>
+
+        <div class="scrim"></div>
+        <div class="sheet">
+          <div class="grab"></div>
+          <div class="sh"><b>本会话 TOKEN</b><span class="n">TOK</span><span class="r">1.2K tok · ¥0.06</span></div>
+          <div class="kv"><span class="k">调用</span><span class="v">18 次</span></div>
+          <div class="kv"><span class="k">tokens</span><span class="v">1.2K（入 980 · 出 240）</span></div>
+          <div class="kv"><span class="k">缓存命中</span><span class="v">62.4%</span></div>
+          <div class="kv"><span class="k">费用</span><span class="v">¥0.06</span></div>
+          <div class="ssec">按模型</div>
+          <div class="srow">
+            <span class="ic">◆</span>
+            <div class="m"><div class="n">pro</div><div class="d">14 次 · 入 820 · 出 200</div></div>
+            <span class="r">¥0.05</span>
+          </div>
+          <div class="srow">
+            <span class="ic">◆</span>
+            <div class="m"><div class="n">se</div><div class="d">4 次 · 入 160 · 出 40</div></div>
+            <span class="r">¥0.01</span>
+          </div>
+          <div class="srow">
+            <span class="ic">▤</span>
+            <div class="m"><div class="n">本舱账本</div><div class="d">全域累计 · 只读（任务 / 会话分开记）</div></div>
+            <span class="btn ghost">去看看 ›</span>
+          </div>
+          <div class="sfoot">本会话账来自 llm_calls；缓存命中率是复用率，和 ctx 占用不是一回事。未定价的模型费用显示「—」。</div>
+        </div>
+        <div class="homebar"><i></i></div>
+      </div></div>
+      <figcaption><b>E9 · token 明细</b><br>通讯台头的 <code>tok 1.2K ▾</code> 点开：<em>本会话账</em>（调用 / 入出 / 缓存 / 费用，按模型拆）。本舱全域账本只读，另开一页。</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- ══════ 4 · 我的消息 · 运行态 ══════ -->
+<section class="grp">
+  <h2>4 · 我的消息 · 运行态（你说的 · 它干的）</h2>
+  <div class="gd">两件事先对齐：你说的话要一眼认出来；它干活时要像全舱 TUI 一样有动静 —— 转字、修仙短语、计时，think 只露最新两行，工具一条条打勾。</div>
+  <div class="row">
+
+    <figure>
+      <div class="frame"><div class="island"></div><div class="screen">
+        <div class="scene"><img src="assets/scene-deepspace.png" alt=""></div>
+        <canvas class="warp"></canvas>
+        <div class="grade"></div><div class="grain"></div>
+
+        <div class="sbar"><span>9:41</span><span class="r"><span class="ts"><i></i>TAILNET</span><span class="bat"></span></span></div>
+        <div class="bar"><div class="back">‹</div><div><div class="t">octopus-web<span class="num">主 CHAT</span></div><div class="s"><span class="idp"><span class="cid"><img src="../../packages/mobile/assets/crew/xiyin-idle.png" alt=""></span>舱调度者 <span class="ar">▾</span></span><span class="dt">书房 PC · 运行中</span></div></div><div class="sp"></div><div class="act">☰ 编队</div></div>
+
+        <div class="console">
+          <span class="core">✦</span>
+          <span class="cchips">
+          <span class="cchip model">model <b>pro</b> <span class="tip">▾</span></span>
+          <span class="cchip ctx"><span class="fill"></span><span class="bar"><i></i></span>ctx <b>6.2%</b> <span class="tip">▾</span></span>
+          <span class="cchip tok">tok <b>1.2K</b> <span class="tip">▾</span></span>
+          </span>
+          <span class="sp"></span>
+          <span class="cchip turn">≡ 12轮</span>
+        </div>
+
+        <div class="body" style="padding:12px 12px 0">
+          <div class="stream">
+            <div class="m"><div class="me"><span class="p">❯</span><div class="tx">刚才那个 diff 里，验收清单是不是也被改到了？</div></div></div>
+            <div class="m">
+              <div class="head"><span class="tag">✦ 汐音</span><span class="ok">已完成</span><span>·</span><span class="pk">9s</span><span>·</span><span class="nt">3 步</span><span>·</span><span class="tl">工具 1</span><span class="fold">▸</span></div>
+              <div class="bodyx"><span class="mk">✳</span>动了：`acceptance-plan-r2.json` 里两行跟着 phase 2 一起删了，diff 在下面。</div>
+            </div>
+            <div class="m"><div class="me"><span class="p">❯</span><div class="tx">好，一起清掉。顺便把 phase 1 spec 里那三处引用也去掉了？</div></div></div>
+            <div class="m">
+              <div class="head"><span class="tag">✦ 汐音</span><span class="ok">已完成</span><span>·</span><span class="pk">15s</span><span>·</span><span class="nt">4 步</span><span>·</span><span class="tl">工具 2</span><span class="fold">▸</span></div>
+              <div class="bodyx"><span class="mk">✳</span>三处都在，验收清单里也有两行 —— 按你说的只清 spec，清单没动。</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="composer">
+          <div class="inputrow"><div class="box">说点什么…</div><div class="send off">↑</div></div>
+        </div>
+        <div class="homebar"><i></i></div>
+      </div></div>
+      <figcaption><b>E10 · 我的消息</b><br>没有改结构：还是原来那条 <code>❯</code> + 细金线，只在下面垫了一层<em>淡琥珀底</em>、左侧加粗到 3px —— 扫一眼就知道哪几句是自己说的。长句换行只让出 <code>❯</code> 那一点宽度，不会因为标签块留出一大截空。`m.flash` 定位到某一轮时仍然闪粉。</figcaption>
+    </figure>
+
+    <div class="panel" style="width:300px;flex:none;align-self:flex-start">
+      <h3>我的消息 · 旧 → 新</h3>
+      <div class="dots">
+        <div><span class="dot d-off"></span><span><b style="color:#fff">旧</b>：左侧一条细金线 + <code>❯</code>，和 agent 正文几乎同一灰度，长对话里要眯眼找。</span></div>
+        <div><span class="dot d-ok"></span><span><b style="color:#fff">新</b>：<em>原样式不动</em>，只加一层淡琥珀底 + 3px 亮边；不贴标签块，长句换行也不会在左边留大空。</span></div>
+      </div>
+      <div style="margin-top:12px;font:8.5px/1 var(--mono);color:var(--dim);letter-spacing:.12em">旧</div>
+      <div style="margin:6px 0 13px;border-left:2px solid rgba(245,197,66,.5);padding:1px 9px;color:#fff;font:11.5px/1.65 var(--mono)">
+        <span style="color:var(--pink);font-weight:800;margin-right:6px">❯</span>好，一起清掉
+      </div>
+      <div style="font:8.5px/1 var(--mono);color:var(--dim);letter-spacing:.12em">新</div>
+      <div style="margin-top:6px;display:flex;align-items:flex-start;gap:6px;padding:6px 10px;border-radius:10px;
+                  border-left:3px solid rgba(255,176,32,.7);
+                  background:linear-gradient(100deg,rgba(255,176,32,.11),rgba(255,176,32,.035) 64%,rgba(16,13,40,.12))">
+        <span style="flex:none;color:var(--amber);font:800 11.5px/1.65 var(--mono)">❯</span>
+        <span style="flex:1;min-width:0;font:11.5px/1.65 var(--mono);color:#fff">好，一起清掉。顺便把 phase 1 spec 里那三处引用也去掉了？</span>
+      </div>
+    </div>
+
+    <figure>
+      <div class="frame"><div class="island"></div><div class="screen">
+        <div class="scene"><img src="assets/scene-deepspace.png" alt=""></div>
+        <canvas class="warp"></canvas>
+        <div class="grade"></div><div class="grain"></div>
+
+        <div class="sbar"><span>9:41</span><span class="r"><span class="ts"><i></i>TAILNET</span><span class="bat"></span></span></div>
+        <div class="bar"><div class="back">‹</div><div><div class="t">octopus-web<span class="num">主 CHAT</span></div><div class="s"><span class="idp"><span class="cid"><img src="../../packages/mobile/assets/crew/xiyin-idle.png" alt=""></span>舱调度者 <span class="ar">▾</span></span><span class="dt">书房 PC · 运行中</span></div></div><div class="sp"></div><div class="act">☰ 编队</div></div>
+
+        <div class="console">
+          <span class="core">✦</span>
+          <span class="cchips">
+          <span class="cchip model">model <b>pro</b> <span class="tip">▾</span></span>
+          <span class="cchip ctx"><span class="fill"></span><span class="bar"><i></i></span>ctx <b>6.2%</b> <span class="tip">▾</span></span>
+          <span class="cchip tok">tok <b>1.2K</b> <span class="tip">▾</span></span>
+          </span>
+          <span class="sp"></span>
+          <span class="cchip turn">≡ 12轮</span>
+        </div>
+
+        <div class="body" style="padding:12px 12px 0">
+          <div class="stream">
+            <div class="m"><div class="me"><span class="p">❯</span><div class="tx">刚才那个 diff 里，验收清单是不是也被改到了？</div></div></div>
+            <div class="m">
+              <div class="head run"><span class="tag">✦ 汐音</span><span class="live-dot"></span><span class="run">进行中</span><span>·</span><span class="pk" data-live-clock>0:12</span><span class="fold">▸</span></div>
+              <div class="thinkwin">
+                <div class="tw-h">◌ thinking<span class="r">最新 2 行 · 点开全文</span></div>
+                <div class="tw-l old">先确认 acceptance-plan-r2.json 里那两行是不是跟着 phase 2…</div>
+                <div class="tw-l now">删掉后要跑一遍引用检查，别留下悬空 spec 路径<span class="cur"></span></div>
+              </div>
+              <div class="metabody" style="margin-top:7px">
+                <div class="tool"><span class="ar">▸</span><span class="nm">Read</span><span>acceptance-plan-r2.json</span><span class="st">✓ 完成</span></div>
+                <div class="tool"><span class="ar">▸</span><span class="nm">Bash</span><span>rg "phase 2" docs/</span><span class="st">✓ 完成</span></div>
+                <div class="tool"><span class="ar">▸</span><span class="nm">Edit</span><span>acceptance-plan-r2.json</span><span class="st wait">运行中…</span></div>
+              </div>
+            </div>
+            <!-- 工作行钉在面板底部、输入框上面：不跟着消息流滚，跑多久都看得见 -->
+            <div class="work" data-live-work data-phase="exec" data-start="12">
+              <span class="sp">⠹</span><span class="ph">御剑去改文件…</span><span class="tm">0:12</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="composer">
+          <div class="inputrow"><div class="box">正在跑…（点 ■ 停）</div><div class="send busy"></div></div>
+        </div>
+        <div class="homebar"><i></i></div>
+      </div></div>
+      <figcaption><b>E11 · 运行中（工作行 · 思考两行 · 工具打勾）</b><br>跟全舱 TUI 同一条<em>工作行</em>：转字（⠋⠙⠹…）+ 修仙短语 + 真实计时，每 6 秒换一句、按回合起点洗牌；短语永远短，右侧计时不跳。<b>工作行钉在面板底部、输入框上沿</b>，不跟着消息流滚 —— 往上翻历史也一直看得见它此刻在干什么。thinking 默认<em>只露最新两行</em>（上缘渐隐），工具每完成一条就把「运行中…」换成 <code>✓ 完成</code>。发送键同时变成停止键。</figcaption>
+    </figure>
+
+    <figure>
+      <div class="frame"><div class="island"></div><div class="screen">
+        <div class="scene"><img src="assets/scene-deepspace.png" alt=""></div>
+        <canvas class="warp"></canvas>
+        <div class="grade"></div><div class="grain"></div>
+
+        <div class="sbar"><span>9:41</span><span class="r"><span class="ts"><i></i>TAILNET</span><span class="bat"></span></span></div>
+        <div class="bar"><div class="back">‹</div><div><div class="t">octopus-web<span class="num">主 CHAT</span></div><div class="s"><span class="idp"><span class="cid"><img src="../../packages/mobile/assets/crew/xiyin-idle.png" alt=""></span>舱调度者 <span class="ar">▾</span></span><span class="dt">书房 PC · 运行中</span></div></div><div class="sp"></div><div class="act">☰ 编队</div></div>
+
+        <div class="console">
+          <span class="core">✦</span>
+          <span class="cchips">
+          <span class="cchip model">model <b>pro</b> <span class="tip">▾</span></span>
+          <span class="cchip ctx"><span class="fill"></span><span class="bar"><i></i></span>ctx <b>6.2%</b> <span class="tip">▾</span></span>
+          <span class="cchip tok">tok <b>1.2K</b> <span class="tip">▾</span></span>
+          </span>
+          <span class="sp"></span>
+          <span class="cchip turn">≡ 12轮</span>
+        </div>
+
+        <div class="body" style="padding:12px 12px 0">
+          <div class="stream">
+            <div class="m"><div class="me"><span class="p">❯</span><div class="tx">好，一起清掉。顺便把 phase 1 spec 里那三处引用也去掉了？</div></div></div>
+            <div class="m">
+              <div class="head"><span class="tag">✦ 汐音</span><span class="ok">已完成</span><span>·</span><span class="pk">14s</span><span>·</span><span class="nt">3 步</span><span>·</span><span class="tl">工具 2</span><span>·</span><span class="tl">思考 1</span><span class="fold">▸</span></div>
+              <div class="bodyx" style="margin-top:3px"><span class="mk">✳</span>三处引用清完了，验收清单没动。任务仍停在待验收。</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="composer">
+          <div class="inputrow"><div class="box">说点什么…</div><div class="send off">↑</div></div>
+        </div>
+        <div class="homebar"><i></i></div>
+      </div></div>
+      <figcaption><b>E12 · 回合结束（收进行头）</b><br>两行 thinking 只在<em>跑动中</em>出现；出结果的那一刻，思考与工具调用<em>一起收进这一行摘要</em>（同全仓 TUI 的 <code>TuiMeta</code>），正文照常露出 —— 长对话里不被过程淹没。<b>点行头 ▸ = 展开全部</b>：按时间序复原那段思考与每条工具，再点收起。断流 / 中断的回合也一样，行头写「已截断」。</figcaption>
+    </figure>
+
+    <figure>
+      <div class="frame"><div class="island"></div><div class="screen">
+        <div class="scene"><img src="assets/scene-deepspace.png" alt=""></div>
+        <canvas class="warp"></canvas>
+        <div class="grade"></div><div class="grain"></div>
+
+        <div class="sbar"><span>9:41</span><span class="r"><span class="ts"><i></i>TAILNET</span><span class="bat"></span></span></div>
+        <div class="bar"><div class="back">‹</div><div><div class="t">octopus-web<span class="num">主 CHAT</span></div><div class="s"><span class="idp"><span class="cid"><img src="../../packages/mobile/assets/crew/xiyin-idle.png" alt=""></span>舱调度者 <span class="ar">▾</span></span><span class="dt">书房 PC · 运行中</span></div></div><div class="sp"></div><div class="act">☰ 编队</div></div>
+
+        <div class="console">
+          <span class="core">✦</span>
+          <span class="cchips">
+          <span class="cchip model">model <b>pro</b> <span class="tip">▾</span></span>
+          <span class="cchip ctx"><span class="fill"></span><span class="bar"><i></i></span>ctx <b>6.2%</b> <span class="tip">▾</span></span>
+          <span class="cchip tok">tok <b>1.2K</b> <span class="tip">▾</span></span>
+          </span>
+          <span class="sp"></span>
+          <span class="cchip turn">≡ 12轮</span>
+        </div>
+
+        <div class="body" style="padding:12px 12px 0">
+          <div class="stream">
+            <div class="m"><div class="me"><span class="p">❯</span><div class="tx">好，一起清掉。顺便把 phase 1 spec 里那三处引用也去掉了？</div></div></div>
+            <div class="m">
+              <div class="head"><span class="tag">✦ 汐音</span><span class="ok">已完成</span><span>·</span><span class="pk">14s</span><span>·</span><span class="nt">3 步</span><span>·</span><span class="tl">工具 2</span><span class="fold">▾</span></div>
+              <div class="metabody" style="margin-top:7px">
+                <div class="think">◌ 先定位引用：spec 里把 phase 2 写成后续工作的地方有三处，都在 phase 5 段落。</div>
+                <div class="think">◌ 验收清单那两行是人工验收场景，按「只清 spec」的要求不动。</div>
+                <div class="think">◌ 改完跑一遍 rg，确认没有悬空路径，再把 diff 摘要贴回去。</div>
+                <div class="tool"><span class="ar">▾</span><span class="nm">Bash</span><span>rg "phase 2" docs/</span><span class="st">✓ 完成</span></div>
+                <div class="tooldetail">docs/phase-1-spec.md:42
+docs/phase-1-spec.md:57
+docs/phase-1-spec.md:88</div>
+                <div class="tool"><span class="ar">▸</span><span class="nm">Edit</span><span>phase-1-spec.md</span><span class="st">✓ 完成</span></div>
+                <div class="tool"><span class="ar">▸</span><span class="nm">Read</span><span>acceptance-plan-r2.json</span><span class="st">✓ 完成</span></div>
+              </div>
+              <div class="bodyx" style="margin-top:8px"><span class="mk">✳</span>三处引用清完了，验收清单没动。任务仍停在待验收。</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="composer">
+          <div class="inputrow"><div class="box">说点什么…</div><div class="send off">↑</div></div>
+        </div>
+        <div class="homebar"><i></i></div>
+      </div></div>
+      <figcaption><b>E13 · 展开（全部）</b><br>点开行头 = <em>本回合全部过程</em>：thinking 全文（换行、不截断）与工具<em>按落库顺序</em>排在同一条 rail 里，先想什么、再动哪一步一目了然。单条工具还能再点 <code>▸</code> 看 input / result 原文 —— 和桌面 <code>TuiMeta</code> 同一套「先折叠、再逐层展开」，不是另一套日志视图。</figcaption>
+    </figure>
+
+    <figure>
+      <div class="frame"><div class="island"></div><div class="screen">
+        <div class="scene"><img src="assets/scene-deepspace.png" alt=""></div>
+        <canvas class="warp"></canvas>
+        <div class="grade"></div><div class="grain"></div>
+
+        <div class="sbar"><span>9:41</span><span class="r"><span class="ts"><i></i>TAILNET</span><span class="bat"></span></span></div>
+        <div class="bar"><div class="back">‹</div><div><div class="t">octopus-web<span class="num">主 CHAT</span></div><div class="s"><span class="idp" style="box-shadow:0 0 0 3px rgba(123,77,255,.16),0 0 16px rgba(123,77,255,.28)"><span class="cid"><img src="../../packages/mobile/assets/crew/xiyin-idle.png" alt=""></span>舱调度者 <span class="ar">▾</span></span><span class="dt">书房 PC · 运行中</span></div></div><div class="sp"></div><div class="act">☰ 编队</div></div>
+
+        <div class="console">
+          <span class="core">✦</span>
+          <span class="cchips">
+          <span class="cchip model">model <b>pro</b> <span class="tip">▾</span></span>
+          <span class="cchip ctx"><span class="fill"></span><span class="bar"><i></i></span>ctx <b>6.2%</b> <span class="tip">▾</span></span>
+          <span class="cchip tok">tok <b>1.2K</b> <span class="tip">▾</span></span>
+          </span>
+          <span class="sp"></span>
+          <span class="cchip turn">≡ 12轮</span>
+        </div>
+
+        <div class="body" style="padding:12px 12px 0">
+          <div class="stream">
+            <div class="m"><div class="me"><span class="p">❯</span><div class="tx">好，一起清掉</div></div></div>
+            <div class="m">
+              <div class="head"><span class="tag">✦ 汐音</span><span class="ok">已完成</span><span>·</span><span class="pk">8s</span><span>·</span><span class="nt">2 步</span><span>·</span><span class="tl">工具 1</span><span class="fold">▸</span></div>
+              <div class="bodyx"><span class="mk">✳</span>清完了。任务停在待验收，编队里那两条留着等你点头。</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="composer">
+          <div class="inputrow"><div class="box">说点什么…</div><div class="send off">↑</div></div>
+        </div>
+        <div class="homebar"><i></i></div>
+      </div></div>
+      <figcaption><b>E14 · 身份上移</b><br>「◉ 舱调度者」不再在输入区上方孤零零占一行 —— 挪到<em>顶栏副标题</em>（主 CHAT 下面），并带上<em>汐音小像</em>；点开仍是星核 · 分身，切身份 / 回主 Agent 都在里面。聊天面板后面那支站着的大立绘同时收走，免得她在消息背后孤零零杵着。输入区恢复成<em>只有输入行</em>；只有挂了技能或一次性委派时，才临时冒一行贴纸。</figcaption>
+    </figure>
+
+    <div class="panel" style="width:330px;flex:none;align-self:flex-start">
+      <h3>发送键 · 三个状态</h3>
+      <div class="send-demo">
+        <div class="col"><div class="big off">↑</div><b>空输入</b>暗色 · 不可按</div>
+        <div class="col"><div class="big live">↑</div><b>可发送</b>亮青 · 唯一实心钮</div>
+        <div class="col"><div class="big stop"><i></i></div><b>跑动中</b>点一下停</div>
+      </div>
+      <div class="dots" style="margin-top:10px">
+        <div><span class="dot d-ok"></span><span>跑动时<em>不再把转圈塞进亮青圆钮</em> —— 暗底 + 琥珀方键，语义从「加载中」变成「停止」。</span></div>
+        <div><span class="dot d-ok"></span><span>转字只在聊天里的<em>工作行</em>出现一次（⠋⠙⠹…），按钮上不重复第二处动效；工作行钉在输入框上沿，往上翻历史也一直在。</span></div>
+      </div>
+      <h3 style="margin-top:16px">滚动 · 锚点</h3>
+      <div class="dots">
+        <div><span class="dot d-ok"></span><span><b style="color:#fff">贴底</b>：停在最新（离底 &lt; 80px）时，新消息来了就跟着走 —— 聊天的默认。</span></div>
+        <div><span class="dot d-ok"></span><span><b style="color:#fff">脱手</b>：往上翻，或自己摊开思考 / 工具小票，锚点就留在当前 —— agent 再吐多少字也不把你拽回底部。</span></div>
+        <div><span class="dot d-ok"></span><span><b style="color:#fff">回去</b>：把滚动条拉回最新，自动贴底立刻恢复；摊开只往下长，行头不带着整页乱跳。</span></div>
+      </div>
+      <h3 style="margin-top:16px">工作行文案 · 与全舱同源</h3>
+      <div class="dots">
+        <div><span class="dot d-ok"></span><span><b style="color:#fff">思考</b> · <code>脑内推演中…</code> <code>掐指一算，掐空了…</code> <code>元神出窍查资料…</code></span></div>
+        <div><span class="dot d-ok"></span><span><b style="color:#fff">执行</b> · <code>御剑去改文件…</code> <code>开炉炼器…</code> <code>引雷淬体…</code></span></div>
+        <div><span class="dot d-ok"></span><span><b style="color:#fff">落笔</b> · <code>以文入道…</code> <code>刻录玉简…</code> <code>给答案开个光…</code></span></div>
+        <div><span class="dot d-warn"></span><span>每阶段 18 句，6 秒轮换；按回合起点洗牌 —— 同一轮稳定，下一轮换开头；右侧永远跟真实计时。</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════ 5 · 提问与产物 ══════ -->
+<section class="grp">
+  <h2>5 · 提问与产物（ask_user_question · 图片 · 文件）</h2>
+  <div class="gd">agent 停下来问你、或把生成的东西给你看：都在这次 chat 里完成 —— 不跳页、不切应用。</div>
+  <div class="row">
+
+    <figure>
+      <div class="frame"><div class="island"></div><div class="screen">
+        <div class="scene"><img src="assets/scene-deepspace.png" alt=""></div>
+        <canvas class="warp"></canvas>
+        <div class="grade"></div><div class="grain"></div>
+
+        <div class="sbar"><span>9:41</span><span class="r"><span class="ts"><i></i>TAILNET</span><span class="bat"></span></span></div>
+        <div class="bar"><div class="back">‹</div><div><div class="t">octopus-web<span class="num">主 CHAT</span></div><div class="s"><span class="idp"><span class="cid"><img src="../../packages/mobile/assets/crew/xiyin-idle.png" alt=""></span>舱调度者 <span class="ar">▾</span></span><span class="dt">书房 PC · 运行中</span></div></div><div class="sp"></div><div class="act">☰ 编队</div></div>
+
+        <div class="console">
+          <span class="core">✦</span>
+          <span class="cchips">
+          <span class="cchip model">model <b>pro</b> <span class="tip">▾</span></span>
+          <span class="cchip ctx"><span class="fill"></span><span class="bar"><i></i></span>ctx <b>6.2%</b> <span class="tip">▾</span></span>
+          <span class="cchip tok">tok <b>1.2K</b> <span class="tip">▾</span></span>
+          </span>
+          <span class="sp"></span>
+          <span class="cchip turn">≡ 12轮</span>
+        </div>
+
+        <div class="body" style="padding:12px 12px 0">
+          <div class="stream">
+            <div class="m"><div class="me"><span class="p">❯</span><div class="tx">把 phase 2 的残留引用处理掉</div></div></div>
+            <div class="m">
+              <div class="head"><span class="tag">✦ 汐音</span><span class="ok">已完成</span><span>·</span><span class="pk">8s</span><span>·</span><span class="nt">2 步</span><span>·</span><span class="tl">工具 1</span><span class="fold">▸</span></div>
+              <div class="bodyx"><span class="mk">✳</span>动手前先定一件事 —— 删到什么程度：</div>
+            </div>
+            <div class="m">
+              <div class="qcard">
+                <div class="qhead"><span class="qg">?</span><span>要你定</span><span class="qc">1 个问题</span></div>
+                <div class="qblock">
+                  <div class="qtag"><b>1</b> 删除范围</div>
+                  <div class="qq">phase 2 删掉后，spec 与验收清单里的 5 处引用怎么处理？</div>
+                  <div class="qopts">
+                    <div class="qopt on">
+                      <span class="rk"></span>
+                      <div class="m"><div class="ol">一起清掉</div><div class="od">spec + 验收清单（5 处）全删</div></div>
+                    </div>
+                    <div class="qopt">
+                      <span class="rk"></span>
+                      <div class="m"><div class="ol">只删 spec</div><div class="od">验收清单留着，下一轮再收</div></div>
+                    </div>
+                    <div class="qopt">
+                      <span class="rk"></span>
+                      <div class="m"><div class="ol">先别动</div><div class="od">保留引用，等 phase 2 的决定</div></div>
+                    </div>
+                    <div class="qopt">
+                      <span class="rk"></span>
+                      <div class="m"><div class="ol">其他</div><div class="od">自己写一句（选中后出输入框）</div></div>
+                    </div>
+                  </div>
+                </div>
+                <div class="qfoot">
+                  <span class="qbtn ghostbtn">先讨论</span>
+                  <span class="qbtn go">提交回答</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="composer">
+          <div class="inputrow">
+            <div class="box">也可以直接说，不走选项…</div>
+            <div class="send off">↑</div>
+          </div>
+        </div>
+        <div class="homebar"><i></i></div>
+      </div></div>
+      <figcaption><b>E15 · 提问卡（单选）</b><br><code>AskUserQuestion</code> 不再折成一行工具调用，直接长成一张卡：<em>所有问题平铺、整段随转录滚</em>，单选是圆点，「其他」选中后出输入框。答完所有问题才能提交；「先讨论」= 不回答，让 agent 先解释。提交后整卡收成一行「✓ 已回答」，回答正文落进转录。</figcaption>
+    </figure>
+
+    <figure>
+      <div class="frame"><div class="island"></div><div class="screen">
+        <div class="scene"><img src="assets/scene-deepspace.png" alt=""></div>
+        <canvas class="warp"></canvas>
+        <div class="grade"></div><div class="grain"></div>
+
+        <div class="sbar"><span>9:41</span><span class="r"><span class="ts"><i></i>TAILNET</span><span class="bat"></span></span></div>
+        <div class="bar"><div class="back">‹</div><div><div class="t">octopus-web<span class="num">主 CHAT</span></div><div class="s"><span class="idp"><span class="cid"><img src="../../packages/mobile/assets/crew/xiyin-idle.png" alt=""></span>舱调度者 <span class="ar">▾</span></span><span class="dt">书房 PC · 运行中</span></div></div><div class="sp"></div><div class="act">☰ 编队</div></div>
+
+        <div class="console">
+          <span class="core">✦</span>
+          <span class="cchips">
+          <span class="cchip model">model <b>pro</b> <span class="tip">▾</span></span>
+          <span class="cchip ctx"><span class="fill"></span><span class="bar"><i></i></span>ctx <b>6.2%</b> <span class="tip">▾</span></span>
+          <span class="cchip tok">tok <b>1.2K</b> <span class="tip">▾</span></span>
+          </span>
+          <span class="sp"></span>
+          <span class="cchip turn">≡ 12轮</span>
+        </div>
+
+        <div class="body" style="padding:12px 12px 0">
+          <div class="stream">
+            <div class="m">
+              <div class="qcard">
+                <div class="qhead"><span class="qg">?</span><span>要你定</span><span class="qc">2 个问题 · 一次答完</span></div>
+                <div class="qblock">
+                  <div class="qtag"><b>1</b> 删除范围</div>
+                  <div class="qq">phase 2 删掉后，spec 与验收清单里的 5 处引用怎么处理？</div>
+                  <div class="qopts">
+                    <div class="qopt on">
+                      <span class="rk"></span>
+                      <div class="m"><div class="ol">一起清掉</div><div class="od">spec + 验收清单全删</div></div>
+                    </div>
+                    <div class="qopt">
+                      <span class="rk"></span>
+                      <div class="m"><div class="ol">只删 spec</div><div class="od">验收清单下一轮再收</div></div>
+                    </div>
+                  </div>
+                </div>
+                <div class="qblock">
+                  <div class="qtag"><b>2</b> 留档</div>
+                  <div class="qq">这批产物要留哪些档？</div>
+                  <div class="qopts">
+                    <div class="qopt multi on">
+                      <span class="rk"></span>
+                      <div class="m"><div class="ol">diff 摘要</div><div class="od">12 个 commit 的要点</div></div>
+                    </div>
+                    <div class="qopt multi on">
+                      <span class="rk"></span>
+                      <div class="m"><div class="ol">证据截图</div><div class="od">3 张跑动截图</div></div>
+                    </div>
+                    <div class="qopt multi">
+                      <span class="rk"></span>
+                      <div class="m"><div class="ol">测试日志</div><div class="od">验收表里已有</div></div>
+                    </div>
+                  </div>
+                </div>
+                <div class="qfoot">
+                  <span class="qbtn ghostbtn">先讨论</span>
+                  <span class="qbtn go">提交回答</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="composer">
+          <div class="inputrow">
+            <div class="box">也可以直接说，不走选项…</div>
+            <div class="send off">↑</div>
+          </div>
+        </div>
+        <div class="homebar"><i></i></div>
+      </div></div>
+      <figcaption><b>E16 · 提问卡（多题 · 多选）</b><br>多题<em>平铺在同一张卡里</em>，一次滚完、一次提交；多选是方框，可同时勾多项。题号 + <code>header</code> 来自工具参数，不另造标题；提交正文与桌面同一份（<code>用户回答了以下问题…</code>）。</figcaption>
+    </figure>
+
+    <figure>
+      <div class="frame"><div class="island"></div><div class="screen">
+        <div class="scene"><img src="assets/scene-deepspace.png" alt=""></div>
+        <canvas class="warp"></canvas>
+        <div class="grade"></div><div class="grain"></div>
+
+        <div class="sbar"><span>9:41</span><span class="r"><span class="ts"><i></i>TAILNET</span><span class="bat"></span></span></div>
+        <div class="bar"><div class="back">‹</div><div><div class="t">octopus-web<span class="num">主 CHAT</span></div><div class="s"><span class="idp"><span class="cid"><img src="../../packages/mobile/assets/crew/xiyin-idle.png" alt=""></span>舱调度者 <span class="ar">▾</span></span><span class="dt">书房 PC · 运行中</span></div></div><div class="sp"></div><div class="act">☰ 编队</div></div>
+
+        <div class="console">
+          <span class="core">✦</span>
+          <span class="cchips">
+          <span class="cchip model">model <b>pro</b> <span class="tip">▾</span></span>
+          <span class="cchip ctx"><span class="fill"></span><span class="bar"><i></i></span>ctx <b>6.2%</b> <span class="tip">▾</span></span>
+          <span class="cchip tok">tok <b>1.2K</b> <span class="tip">▾</span></span>
+          </span>
+          <span class="sp"></span>
+          <span class="cchip turn">≡ 12轮</span>
+        </div>
+
+        <div class="body" style="padding:12px 12px 0">
+          <div class="stream">
+            <div class="m"><div class="me"><span class="p">❯</span><div class="tx">跑完给我看下截图和验收表</div></div></div>
+            <div class="m">
+              <div class="head"><span class="tag">✦ 汐音</span><span class="ok">已完成</span><span>·</span><span class="pk">15s</span><span>·</span><span class="nt">4 步</span><span>·</span><span class="tl">工具 2</span><span>·</span><span class="gr">1.2K tok</span><span class="fold">▸</span></div>
+              <div class="bodyx"><span class="mk">✳</span>截了一张总览，验收表也按 phase 2 的删除更新了：</div>
+              <div class="thumbs">
+                <div class="thumb"><img src="assets/scene-cruise.png" alt="cabin-overview"><div class="sm"><b>cabin-overview.png</b><span class="ex">放大</span></div></div>
+                <div class="thumb"><img src="assets/scene-deepspace.png" alt="diff-stat"><div class="sm"><b>diff-stat.png</b><span class="ex">放大</span></div></div>
+              </div>
+              <div class="files">
+                <div class="fchip"><span class="fi">▤</span><span class="fn">acceptance-plan-r2.json</span><span class="fe">json · 3.2KB</span><span class="cp">⧉</span></div>
+                <div class="fchip"><span class="fi">▤</span><span class="fn">round-report-2.md</span><span class="fe">md · 6.1KB</span><span class="cp">⧉</span></div>
+              </div>
+            </div>
+            <div class="hint" style="text-align:left;padding:0 2px;line-height:1.6">点图看大图 · 点文件看只读窗 · ⧉ 只复制文件名</div>
+          </div>
+        </div>
+
+        <div class="composer">
+          <div class="inputrow">
+            <div class="box">说点什么…</div>
+            <div class="send off">↑</div>
+          </div>
+        </div>
+        <div class="homebar"><i></i></div>
+      </div></div>
+      <figcaption><b>E17 · 产物（默认态）</b><br>助手正文里的图片绝对路径自动变成缩略图（每条最多 4 张），其他文件变成 <code>▤</code> chip；<em>加载失败就静默收起</em>，不占位不报错。chip 右侧 <code>⧉</code> 只复制文件名，点 chip 本身进只读窗。</figcaption>
+    </figure>
+
+    <figure>
+      <div class="frame"><div class="island"></div><div class="screen">
+        <div class="scene"><img src="assets/scene-deepspace.png" alt=""></div>
+        <canvas class="warp"></canvas>
+        <div class="grade"></div><div class="grain"></div>
+
+        <div class="sbar"><span>9:41</span><span class="r"><span class="ts"><i></i>TAILNET</span><span class="bat"></span></span></div>
+        <div class="bar"><div class="back">‹</div><div><div class="t">octopus-web<span class="num">主 CHAT</span></div><div class="s"><span class="idp"><span class="cid"><img src="../../packages/mobile/assets/crew/xiyin-idle.png" alt=""></span>舱调度者 <span class="ar">▾</span></span><span class="dt">书房 PC · 运行中</span></div></div><div class="sp"></div><div class="act">☰ 编队</div></div>
+
+        <div class="console">
+          <span class="core">✦</span>
+          <span class="cchips">
+          <span class="cchip model">model <b>pro</b> <span class="tip">▾</span></span>
+          <span class="cchip ctx"><span class="fill"></span><span class="bar"><i></i></span>ctx <b>6.2%</b> <span class="tip">▾</span></span>
+          <span class="cchip tok">tok <b>1.2K</b> <span class="tip">▾</span></span>
+          </span>
+          <span class="sp"></span>
+          <span class="cchip turn">≡ 12轮</span>
+        </div>
+
+        <div class="body" style="padding:12px 12px 0">
+          <div class="stream">
+            <div class="m"><div class="me"><span class="p">❯</span><div class="tx">跑完给我看下截图和验收表</div></div></div>
+            <div class="m">
+              <div class="head"><span class="tag">✦ 汐音</span><span class="ok">已完成</span><span>·</span><span class="pk">15s</span><span>·</span><span class="nt">4 步</span><span>·</span><span class="tl">工具 2</span><span class="fold">▸</span></div>
+              <div class="bodyx"><span class="mk">✳</span>截了一张总览，验收表也按 phase 2 的删除更新了：</div>
+              <div class="thumbs">
+                <div class="thumb"><img src="assets/scene-cruise.png" alt="cabin-overview"><div class="sm"><b>cabin-overview.png</b><span class="ex">放大</span></div></div>
+                <div class="thumb"><img src="assets/scene-deepspace.png" alt="diff-stat"><div class="sm"><b>diff-stat.png</b><span class="ex">放大</span></div></div>
+              </div>
+              <div class="files">
+                <div class="fchip"><span class="fi">▤</span><span class="fn">acceptance-plan-r2.json</span><span class="fe">json · 3.2KB</span><span class="cp">⧉</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="lbx">
+          <div class="lh">
+            <div class="m"><div class="n">cabin-overview.png</div><div class="s">图片 · 2880×1800 · 1.4MB</div></div>
+            <span class="lx">✕</span>
+          </div>
+          <div class="lp">
+            <span class="t">C:\work\octopus-web\artifacts\cabin-overview.png</span>
+            <span class="cp">⧉ 复制</span>
+          </div>
+          <div class="lb"><img src="assets/scene-cruise.png" alt="cabin-overview 放大"></div>
+          <div class="lf">双指缩放 · 点空白处 / 返回键关闭</div>
+        </div>
+        <div class="homebar"><i></i></div>
+      </div></div>
+      <figcaption><b>E18 · 图片灯箱</b><br>点缩略图 = 在当前 chat 上盖一层灯箱，<em>不跳系统相册</em>。图片走 <code>/api/chat-media/:sid/image</code>（服务端按会话白名单校验）；顶部保留路径与复制，关闭后回到原滚动位置。</figcaption>
+    </figure>
+
+    <figure>
+      <div class="frame"><div class="island"></div><div class="screen">
+        <div class="scene"><img src="assets/scene-deepspace.png" alt=""></div>
+        <canvas class="warp"></canvas>
+        <div class="grade"></div><div class="grain"></div>
+
+        <div class="sbar"><span>9:41</span><span class="r"><span class="ts"><i></i>TAILNET</span><span class="bat"></span></span></div>
+        <div class="bar"><div class="back">‹</div><div><div class="t">octopus-web<span class="num">主 CHAT</span></div><div class="s"><span class="idp"><span class="cid"><img src="../../packages/mobile/assets/crew/xiyin-idle.png" alt=""></span>舱调度者 <span class="ar">▾</span></span><span class="dt">书房 PC · 运行中</span></div></div><div class="sp"></div><div class="act">☰ 编队</div></div>
+
+        <div class="console">
+          <span class="core">✦</span>
+          <span class="cchips">
+          <span class="cchip model">model <b>pro</b> <span class="tip">▾</span></span>
+          <span class="cchip ctx"><span class="fill"></span><span class="bar"><i></i></span>ctx <b>6.2%</b> <span class="tip">▾</span></span>
+          <span class="cchip tok">tok <b>1.2K</b> <span class="tip">▾</span></span>
+          </span>
+          <span class="sp"></span>
+          <span class="cchip turn">≡ 12轮</span>
+        </div>
+
+        <div class="body" style="padding:12px 12px 0">
+          <div class="stream">
+            <div class="m"><div class="me"><span class="p">❯</span><div class="tx">跑完给我看下截图和验收表</div></div></div>
+            <div class="m">
+              <div class="head"><span class="tag">✦ 汐音</span><span class="ok">已完成</span><span>·</span><span class="pk">15s</span><span>·</span><span class="nt">4 步</span><span>·</span><span class="tl">工具 2</span><span class="fold">▸</span></div>
+              <div class="bodyx"><span class="mk">✳</span>截了一张总览，验收表也按 phase 2 的删除更新了：</div>
+              <div class="files">
+                <div class="fchip"><span class="fi">▤</span><span class="fn">acceptance-plan-r2.json</span><span class="fe">json · 3.2KB</span><span class="cp">⧉</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="scrim"></div>
+        <div class="docwin">
+          <div class="dh">
+            <span class="g">▤</span>
+            <div class="m"><div class="n">acceptance-plan-r2.json</div><div class="s">文档 · 只读 · json · 3.2KB</div></div>
+            <span class="x">✕</span>
+          </div>
+          <div class="dp">
+            <span class="t">C:\work\octopus-web\.scratch\2026-11-28\acceptance-plan-r2.json</span>
+            <span class="cp">⧉ 复制路径</span>
+          </div>
+          <div class="db">
+<div class="code">{
+  "round": 2,
+  "cases": [
+    {
+      "id": "c1",
+      "title": "phase 2 删掉后任务仍能过验收",
+      "steps": [
+        "打开任务详情",
+        "验收清单只剩 phase 1"
+      ]
+    }
+  ],
+  "checks": [
+    { "id": "tests", "ok": true, "detail": "81 passed" },
+    { "id": "diff", "ok": true, "detail": "12 commits" }
+  ]
+}</div>
+          </div>
+          <div class="df"><span>只读预览</span><span class="sp"></span><span>修改请回桌面</span></div>
+        </div>
+        <div class="homebar"><i></i></div>
+      </div></div>
+      <figcaption><b>E19 · 文件详情窗</b><br>点文件 chip 开只读窗，<em>仍盖在 chat 上</em>：文本 / md / json 原样（json 自动缩进），图片 / 视频 / 音频换成预览，二进制明说。路径栏可复制；手机只读，要改回桌面。</figcaption>
+    </figure>
+  </div>
+</section>
+
+
+<section class="grp">
+  <h2>6 · 会话与待你定</h2>
+  <div class="gd">主 chat 里直接聊；或者从「☰ 编队」的待你定里点进来——后者只是把问题引用到输入框上方。同一个 chat，两种入口。</div>
+  <div class="row">
+
+    <figure>
+      <div class="frame"><div class="island"></div><div class="screen">
+        <div class="scene"><img src="assets/scene-deepspace.png" alt=""></div>
+        <canvas class="warp"></canvas>
+        <div class="grade"></div><div class="grain"></div>
+
+        <div class="sbar"><span>9:41</span><span class="r"><span class="ts"><i></i>TAILNET</span><span class="bat"></span></span></div>
+        <div class="bar"><div class="back">‹</div><div><div class="t">phase-2 删产物<span class="num">CHAT</span></div><div class="s"><span class="idp"><span class="cid"><img src="../../packages/mobile/assets/crew/xiyin-idle.png" alt=""></span>舱调度者 <span class="ar">▾</span></span><span class="dt">octopus-web</span></div></div><div class="sp"></div><div class="act">⋯</div></div>
+
+        <div class="console">
+          <span class="core">✦</span>
+          <span class="cchips">
+          <span class="cchip model">model <b>pro-max</b> <span class="tip">▾</span></span>
+          <span class="cchip ctx"><span class="fill" style="width:31%"></span><span class="bar"><i style="width:31%"></i></span>ctx <b>31%</b> <span class="tip">▾</span></span>
+          <span class="cchip tok">tok <b>8.4K</b> <span class="tip">▾</span></span>
+          </span>
+          <span class="sp"></span>
+          <span class="cchip turn">≡ 7轮</span>
+        </div>
+
+        <div class="body" style="padding-right:12px;padding-top:12px">
+          <div class="stream">
+            <div class="m"><div class="me"><span class="p">❯</span><div class="tx">phase-2 如果不做的话，任务把相关产物也删除了</div></div></div>
+
+            <div class="m">
+              <div class="head">
+                <span class="tag">✦ 汐音</span><span class="ok">已完成</span><span>·</span>
+                <span class="pk">56s</span><span>·</span><span class="nt">20 步</span><span>·</span>
+                <span class="tl">工具 9</span><span>·</span><span class="gr">1.2M tok</span><span>·</span>
+                <span class="am">¥0.15</span><span class="fold">▸</span>
+              </div>
+              <div class="bodyx"><span class="mk">✳</span>phase 2 产物已删除完毕。删掉的 7 个文件、整个 app-address-selfservice/ 目录：</div>
+            </div>
+
+            <div class="m"><div class="me"><span class="p">❯</span><div class="tx">那 phase 1 的 spec 里还有三处把 phase 2 当成后续工作写的，是不是也要一起去掉？</div></div></div>
+
+            <div class="m">
+              <div class="head">
+                <span class="tag">✦ 汐音</span><span class="ok">已完成</span><span>·</span>
+                <span class="pk">15s</span><span>·</span><span class="nt">4 步</span><span>·</span>
+                <span class="tl">工具 2</span><span>·</span><span class="gr">2.1K tok</span><span class="fold">▸</span>
+              </div>
+              <div class="bodyx"><span class="mk">✳</span>三处都在，验收清单里也有两行 —— 一起删，删完给你 diff 摘要。</div>
+            </div>
+
+            <div class="m"><div class="me"><span class="p">❯</span><div class="tx">好</div></div></div>
+          </div>
+        </div>
+
+        <div class="composer">
+          <div class="inputrow">
+            <div class="box">说点什么…</div>
+            <div class="send off">↑</div>
+          </div>
+        </div>
+        <div class="homebar"><i></i></div>
+      </div></div>
+      <figcaption><b>F · 会话</b><br>与 E 同一套通讯台头与折叠 meta：<em>工具 / think 默认收起</em>，点开才看步骤；身份同样在顶栏。行头、步数 / tok / 花费与桌面同源。</figcaption>
+    </figure>
+
+    <figure>
+      <div class="frame"><div class="island"></div><div class="screen">
+        <div class="scene"><img src="assets/scene-deepspace.png" alt=""></div>
+        <canvas class="warp"></canvas>
+        <div class="grade"></div><div class="grain"></div>
+
+        <div class="sbar"><span>9:41</span><span class="r"><span class="ts"><i></i>TAILNET</span><span class="bat"></span></span></div>
+        <div class="bar"><div class="back">‹</div><div><div class="t">回复<span class="num">QUOTE</span></div><div class="s"><span class="idp"><span class="cid"><img src="../../packages/mobile/assets/crew/xiyin-idle.png" alt=""></span>舱调度者 <span class="ar">▾</span></span><span class="dt">octopus-web · 待你定</span></div></div></div>
+
+        <div class="console">
+          <span class="core">✦</span>
+          <span class="cchips">
+          <span class="cchip model">model <b>pro</b> <span class="tip">▾</span></span>
+          <span class="cchip ctx"><span class="fill" style="width:22%"></span><span class="bar"><i style="width:22%"></i></span>ctx <b>22%</b> <span class="tip">▾</span></span>
+          <span class="cchip tok">tok <b>3.6K</b> <span class="tip">▾</span></span>
+          </span>
+          <span class="sp"></span>
+          <span class="cchip turn">≡ 9轮</span>
+        </div>
+
+        <div class="quote">
+          <div class="qh">正在回复</div>
+          <div class="qt">spec 和验收清单里的 phase 2 引用，一起清掉吗？</div>
+          <div class="qs"><span>任务 · phase-2 产物清理 · 第 2 轮</span><span class="more">依据 2 条</span></div>
+        </div>
+
+        <div class="body" style="padding-right:12px;padding-top:2px">
+          <div class="stream">
+            <div class="m"><div class="me"><span class="p">❯</span><div class="tx">那 phase 1 的 spec 里还有三处把 phase 2 当成后续工作写的，是不是也要一起去掉？</div></div></div>
+            <div class="m">
+              <div class="head">
+                <span class="tag">✦ 汐音</span><span class="ok">已完成</span><span>·</span>
+                <span class="pk">15s</span><span>·</span><span class="nt">4 步</span><span>·</span>
+                <span class="tl">工具 2</span><span class="fold">▸</span>
+              </div>
+              <div class="bodyx"><span class="mk">✳</span>三处 spec 引用 + 两行验收清单都还在。删除不可逆，我停在这儿 —— 你说清就清。</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="composer">
+          <div class="hint" style="text-align:left;padding:0 4px 8px;line-height:1.5">
+            说清楚就行：清掉 / 先别动 / 只删 spec 不动验收清单
+          </div>
+          <div class="inputrow">
+            <div class="box">回复上面这个问题…</div>
+            <div class="send off">↑</div>
+          </div>
+        </div>
+        <div class="homebar"><i></i></div>
+      </div></div>
+      <figcaption><b>G · 回复（带引用）</b><br>没有「通过 / 退回」。<em>点待你定那一行，问题被挂到输入框上方</em>，你正常说话，状态由 agent 按你的话去改。依据在汐音那条消息里，不另做面板。</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- ══════ 7 · 单独会话 ══════ -->
+<section class="grp">
+  <h2>7 · 单独会话</h2>
+  <div class="gd">不进舱、不建任务，问完就走的场景。</div>
+  <div class="row">
+
+    <figure>
+      <div class="frame"><div class="island"></div><div class="screen">
+        <div class="scene"><img src="assets/scene-cruise.png" alt=""></div>
+        <canvas class="warp"></canvas>
+        <div class="grade"></div><div class="grain"></div>
+
+        <div class="sbar"><span>9:41</span><span class="r"><span class="ts"><i></i>TAILNET</span><span class="bat"></span></span></div>
+        <div class="bar"><div class="back">‹</div><div><div class="t">新会话<span class="num">FREE</span></div><div class="s"><span class="idp"><span class="dot"></span>主 Agent <span class="ar">▾</span></span><span class="dt">书房 PC · 不归属任何舱</span></div></div></div>
+        <div class="body">
+          <div class="empty">
+            <div class="solo"><img class="crewvid" style="height:250px" src="assets/v22/09-smile.webp" alt="汐音 · 愉悦"></div>
+            <div class="t">在这儿说点什么</div>
+            <div class="d">机器上的文件、舱里的状态都能问<br>说清楚要干什么，它自己找路</div>
+          </div>
+        </div>
+        <div class="composer">
+          <div class="inputrow">
+            <div class="box">说点什么…</div>
+            <div class="send off">↑</div>
+          </div>
+        </div>
+        <div class="homebar"><i></i></div>
+      </div></div>
+      <figcaption><b>H · 新建单独会话</b><br>对应 <code>POST /api/chat/global/sessions</code>。<em>空态用 <code>09-smile</code></em>，是这几屏里最大的一次立绘。<em>空态也不放预设快捷词</em>：第一句从空白开始，不替用户想问题。</figcaption>
+    </figure>
+
+    <div class="panel" style="width:340px;flex:none;align-self:flex-start">
+      <h3>立绘 · 动作（全舱模式同一套）</h3>
+      <div class="dots">
+        <div><span class="dot d-ok"></span><span><b style="color:#fff">随包 3 支透明 WebP 动画</b>：<code style="color:var(--teal);font-family:var(--mono)">assets/v22/*.webp</code>（07-idle / 05-concerned / 09-smile，480×720 · 12fps · 60 帧循环，3 支共 10.2 MB；其余 10 支按需再加）</span></div>
+        <div><span class="dot d-ok"></span><span><b style="color:#fff">为什么不是 webm</b>：Android 的 <code>video_player</code> 走 SurfaceTexture，<em>VP9 的透明通道会被丢掉</em> —— 真机就是一块黑底；同一份画稿转成 animated WebP 交给 <code>Image</code> 解码，alpha 正常</span></div>
+        <div><span class="dot d-ok"></span><span><b style="color:#fff">用法</b>：一屏最多 1 支 —— 设备列表 07-idle · 未启动 05-concerned · 空态 09-smile；<em>点立绘按 3 支循环换下一支</em>；不写动作文字标签</span></div>
+        <div><span class="dot d-ok"></span><span><b style="color:#fff">默认开、关掉就不画</b>：设置 →「立绘动画」默认开；关掉时立绘 / 地面光晕整块不显示（<em>没有静态兜底图</em> —— 那张深底画像贴在场景上就是一块黑方块）；静态 PNG 只做顶栏头像</span></div>
+        <div><span class="dot d-warn"></span><span><b style="color:#fff">移动端注意</b>：切后台暂停、减动效定格首帧；一屏别超 1–2 支，耗电和内存都在这</span></div>
+      </div>
+      <div class="clips">
+        <figure><img src="assets/v22/07-idle.webp" alt="待命"><figcaption>IDLE</figcaption></figure>
+        <figure><img src="assets/v22/05-concerned.webp" alt="担忧"><figcaption>WORRIED</figcaption></figure>
+        <figure><img src="assets/v22/09-smile.webp" alt="愉悦"><figcaption>SMILE</figcaption></figure>
+      </div>
+    </div>
+
+    <div class="panel" style="width:390px;flex:none;align-self:flex-start">
+      <h3>要你拍板的</h3>
+      <div class="dots">
+        <div><span class="dot d-ok"></span><span><b style="color:#fff">身份已上移</b>：<code>◉ 舱调度者</code> 从输入区上方挪到<em>顶栏副标题</em>，带汐音小像；面板后面那支大立绘同时收走。点开星核 · 分身；输入区只剩输入行。</span></div>
+        <div><span class="dot d-ok"></span><span><b style="color:#fff">我的消息已加强</b>：保留原来的 <code>❯</code> + 细金线，只垫一层淡琥珀底 + 3px 亮边；不加标签块，换行不留大空。</span></div>
+        <div><span class="dot d-ok"></span><span><b style="color:#fff">运行态已对齐 TUI</b>：转字 + 修仙短语 + 计时；<em>跑动中</em> thinking 只露最新两行、工具逐条 <code>✓ 完成</code>；出结果时思考与工具一起收进行头，点行头才展开全部。</span></div>
+        <div><span class="dot d-ok"></span><span><b style="color:#fff">发送键已重做</b>：跑动时暗底 + 琥珀停止键，不再在亮青圆钮里塞转圈。</span></div>
+        <div><span class="dot d-warn"></span><span><b style="color:#fff">星核分栏</b>：技能 / 分身 / MCP / 会话 四栏；压缩 / 清空 / 自动压缩<em>单独放「会话」</em>。这样分够不够？</span></div>
+        <div><span class="dot d-warn"></span><span><b style="color:#fff">设备切换入口</b>：现在放在舱列表顶栏（点机器名回列表）。要不要改成底部 tab「设备 / 我的」？</span></div>
+        <div><span class="dot d-warn"></span><span><b style="color:#fff">待你定列表的信息量</b>：现在给「来源 + 一句话 + 明细」。要不要压到只剩一句话？</span></div>
+        <div><span class="dot d-ok"></span><span><b style="color:#fff">提问卡已定</b>：所有问题<em>平铺一次滚完</em>，底部一次提交；「先讨论」保留，提交后整卡收成一行。</span></div>
+        <div><span class="dot d-ok"></span><span><b style="color:#fff">产物预览已定</b>：缩略图 + 灯箱、文件 chip + 只读窗，都不离开 chat。手机端<em>发</em>截图（上传）本轮不做。</span></div>
+        <div><span class="dot d-ok"></span><span><b style="color:#fff">预设快捷词已删</b>：E / F / H 三处输入框上方的 chips 全部拿掉；现在连身份行也不常驻，输入区只有输入行。</span></div>
+        <div><span class="dot d-warn"></span><span><b style="color:#fff">圆角尺度</b>：现在卡片 18px、按钮 16px / 药丸。要再圆一点（接近 iOS 大圆角）还是就这个手感？</span></div>
+      </div>
+    </div>
+
+    <div class="panel" style="width:320px;flex:none;align-self:flex-start">
+      <h3>定版 · 应用图标</h3>
+      <div style="display:flex;gap:18px;margin:12px 0 14px">
+        <div style="text-align:center;font:8.5px/1.7 var(--mono);color:var(--dim)">
+          <img src="../../packages/desktop/build/icon.png" alt="应用图标 · 圆角"
+               style="display:block;width:76px;height:76px;border-radius:20px;object-fit:cover;border:1px solid rgba(185,179,217,.2);box-shadow:0 10px 26px rgba(0,0,0,.4)">
+          圆角
+        </div>
+        <div style="text-align:center;font:8.5px/1.7 var(--mono);color:var(--dim)">
+          <img src="../../packages/desktop/build/icon.png" alt="应用图标 · 圆形"
+               style="display:block;width:76px;height:76px;border-radius:50%;object-fit:cover;border:1px solid rgba(185,179,217,.2)">
+          圆形
+        </div>
+      </div>
+      <div class="dots">
+        <div><span class="dot d-ok"></span><span><b style="color:#fff">与 PC 同一张</b>：<code style="color:var(--teal);font-family:var(--mono)">packages/desktop/build/icon.png</code>（512×512），<b style="color:#fff">不重绘</b></span></div>
+        <div><span class="dot d-ok"></span><span>手机端只做系统遮罩（Android 自适应 / iOS 圆角）；启动页同图</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+</div>
+
+<script>
+(() => {
+  'use strict'
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches
+
+  /* ── 星流：v22 #warp 的裁剪移植（每块手机画布一组星，30fps，切后台停） ── */
+  const items = [...document.querySelectorAll('canvas.warp')].map(cv => ({
+    cv, cx: cv.getContext('2d'), stars: [], W: 0, H: 0,
+  }))
+  const DPR = Math.min(devicePixelRatio || 1, 1.5)
+
+  function size(it) {
+    it.W = it.cv.clientWidth
+    it.H = it.cv.clientHeight
+    if (!it.W || !it.H) return
+    it.cv.width = Math.round(it.W * DPR)
+    it.cv.height = Math.round(it.H * DPR)
+    it.cx.setTransform(DPR, 0, 0, DPR, 0, 0)
+  }
+  function seed(it) {
+    const n = reduce ? 30 : 70
+    it.stars = Array.from({ length: n }, () => ({
+      x: (Math.random() - .5) * 2,
+      y: (Math.random() - .5) * 2,
+      z: Math.random() * .9 + .1,
+      pz: 0,
+    }))
+  }
+  items.forEach(it => { size(it); seed(it) })
+  addEventListener('resize', () => items.forEach(it => { size(it); seed(it) }))
+
+  let last = 0
+  const interval = 1000 / 30
+  let raf = 0
+  function frame(t) {
+    raf = requestAnimationFrame(frame)
+    if (t - last < interval) return
+    const dt = Math.min(50, t - last)
+    last = t
+    for (const it of items) {
+      const { cx, W, H, stars } = it
+      if (!W || !H) continue
+      cx.clearRect(0, 0, W, H)
+      const cxx = W / 2, cy = H * .46
+      const sp = reduce ? 0 : .00004 * dt
+      cx.strokeStyle = '#2EE6D6'
+      for (const s of stars) {
+        s.pz = s.z
+        s.z -= sp
+        if (s.z <= .02) { s.x = (Math.random() - .5) * 2; s.y = (Math.random() - .5) * 2; s.z = 1; s.pz = 1 }
+        const k = 1 / s.z, pk = 1 / s.pz
+        const x = cxx + s.x * cxx * k * .6, y = cy + s.y * cy * k * .6
+        const px = cxx + s.x * cxx * pk * .6, py = cy + s.y * cy * pk * .6
+        if (x < -30 || x > W + 30 || y < -30 || y > H + 30) continue
+        cx.globalAlpha = Math.min(.6, Math.max(.03, (1 - s.z) * .16))
+        cx.lineWidth = Math.min(1.6, Math.max(.3, (1 - s.z) * .9))
+        cx.beginPath(); cx.moveTo(px, py); cx.lineTo(x, y); cx.stroke()
+      }
+      cx.globalAlpha = 1
+    }
+  }
+  function start() { if (!raf) { last = performance.now(); raf = requestAnimationFrame(frame) } }
+  function stop() { if (raf) { cancelAnimationFrame(raf); raf = 0 } }
+  if (!document.hidden) start()
+
+  /* ── 立绘：点一下换下一支（随包 3 支；不显示动作文字标签） ── */
+  const CLIPS = ['07-idle', '05-concerned', '09-smile']
+  const crewA = document.getElementById('crewA')
+  let clip = 0
+  if (crewA) {
+    crewA.addEventListener('click', () => {
+      clip = (clip + 1) % CLIPS.length
+      crewA.src = 'assets/v22/' + CLIPS[clip] + '.webp'
+    })
+  }
+
+  /* ── 运行态演示：转字 + 修仙短语 + 计时（与全舱 work-phrases 同一批） ── */
+  const SPIN = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+  const PHRASES = {
+    thinking: ['脑内推演中…', '掐指一算，掐空了…', '元神出窍查资料…', '正在跟需求对视…', '灵台推演天机…', '入定，勿扰…', '琢磨着呢…', '神识扫描中…', '内视周天中…', '挠头中…', '打坐参悟需求…', '翻开无字天书…', '让想象力跑一会儿…', '向祖师爷借个思路…', '灵气不足，硬想…', '这题有点意思…', '渡劫般梳理逻辑…', '和心魔辩论中…'],
+    exec: ['动手了…', '催动法器…', '开炉炼器…', '正在敲敲打打…', '引雷淬体…', '搬运灵气中…', '跟终端商量中…', '施展袖里乾坤…', '给天道打个补丁…', '正在翻箱倒柜…', '御剑去改文件…', '炼丹炉火正旺…', '和文件较劲中…', '布阵中，别踩线…', '和法宝谈条件…', '真没摸鱼，在干活…', '渡劫式跑测试…', '搬砖，哦不，搬山…'],
+    writing: ['落笔中…', '以文入道…', '刻录玉简…', '码字中…', '笔下生莲…', '心法吐真言…', '正在组织语言…', '灵气化墨…', '大道至简，先写…', '把想法翻译成人话…', '写篇大道真解…', '落笔惊动雷劫…', '键盘都要冒烟了…', '正在凝聚道韵…', '字字带修为…', '别催，在写了…', '写不好就重修…', '给答案开个光…'],
+  }
+  const workEls = [...document.querySelectorAll('[data-live-work]')]
+  if (workEls.length && !reduce) {
+    const started = performance.now()
+    setInterval(() => {
+      const el = workEls[0]
+      const phase = el.dataset.phase || 'exec'
+      const list = PHRASES[phase] || PHRASES.exec
+      const sec = Math.floor((performance.now() - started) / 1000) + Number(el.dataset.start || 0)
+      const sp = el.querySelector('.sp')
+      const ph = el.querySelector('.ph')
+      const tm = el.querySelector('.tm')
+      const clock = document.querySelector('[data-live-clock]')
+      if (sp) sp.textContent = SPIN[Math.floor(sec * 10) % SPIN.length]
+      if (ph) ph.textContent = list[Math.floor(sec / 6) % list.length]
+      if (tm) tm.textContent = '0:' + String(sec).padStart(2, '0')
+      if (clock) clock.textContent = '0:' + String(sec).padStart(2, '0')
+    }, 120)
+  }
+
+  /* ── 播放策略：静音自动播；切后台统一暂停；首次点按兜底 play ── */
+  const vids = [...document.querySelectorAll('video')]
+  const syncVideos = () => vids.forEach(v => {
+    if (document.hidden) v.pause()
+    else v.play().catch(() => {})
+  })
+  addEventListener('pointerdown', syncVideos, { once: true })
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { stop(); vids.forEach(v => v.pause()) }
+    else { start(); syncVideos() }
+  })
+  syncVideos()
+})()
+</script>
+</body>
+</html>

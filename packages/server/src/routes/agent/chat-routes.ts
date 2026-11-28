@@ -43,6 +43,7 @@ import { createMemoryToolServer, resolveLongTermConsent } from '../../services/c
 import { createCabinToolServer, createCabinDelegationToolServer, getCabinToolsProvider, buildCabinSummaryReminder } from '../../services/chat/cabin-tools'
 import { parseDecisionEnvelope } from '../../services/cabin/cabin-brief'
 import { CabinItemService } from '../../services/cabin/cabin-item-service'
+import { expandItemDelivery } from '../../services/cabin/cabin-item-delivery'
 import { getSlashCommands, rememberSlashCommands } from '../../services/chat/slash-commands'
 import type { TokenUsageDAO } from '../../db/dao/token-usage-dao'
 import type { EffortLevel } from '@octopus/shared'
@@ -373,6 +374,21 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
       )
     }
 
+    // 事项投递的服务端兜底（2026-11-26 用户）：正文才是需求。客户端现在会
+    // 带正文，但旧客户端 / 缓存过期 / 编辑竞态都可能只发标题 —— 按 cabin_items
+    // 真源校一遍，缺的正文补在消息末尾，再落库并交给模型。事项表不可用时
+    // 退回客户端原文（不能因为小待办把整轮对话打挂）。
+    let itemDelivery: ReturnType<typeof expandItemDelivery> | null = null
+    if (viaItems && session.cabin_id) {
+      try {
+        itemDelivery = expandItemDelivery(
+          body.message!,
+          new CabinItemService(sessionDao.getDb()).getMany(session.cabin_id, itemIds),
+        )
+      } catch { /* 事项表不可用不影响对话本身 */ }
+    }
+    const userContent = itemDelivery?.content ?? body.message!
+
     // Store user message. Ephemeral wakes (task-thread event cards) reach the
     // model but are NOT persisted — the bridge already wrote the card.
     const userMsgId = crypto.randomUUID()
@@ -387,7 +403,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
           : null
       sessionDao.insertMessage({
         id: userMsgId, session_id: id, role: 'user',
-        content: body.message, created_at: now,
+        content: userContent, created_at: now,
         ...(userMeta ? { metadata: JSON.stringify(userMeta) } : {}),
       })
       sessionDao.updateLastMessageAt(id, now)
@@ -415,11 +431,11 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     // ── Safety: detect dangerous commands in user message (B5 fix) ────
     try {
       const interceptor = getSafetyInterceptor()
-      if (interceptor.isDangerousCommand(body.message)) {
-        const reason = interceptor.getDangerReason(body.message)
+      if (interceptor.isDangerousCommand(userContent)) {
+        const reason = interceptor.getDangerReason(userContent)
         safetyDAO.insertSafetyEvent({
           type: 'dangerous_command',
-          operation: body.message.slice(0, 200),
+          operation: userContent.slice(0, 200),
           decision: 'intercept',
           actor: 'user',
           context: JSON.stringify({ reason, session_id: id }),
@@ -504,7 +520,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     const roleCard = pendingRoleCard(roleState)
     const self = session.clone_name ?? null
     const consults = [
-      ...parseCloneMentions(body.message!),
+      ...parseCloneMentions(userContent),
       ...(body.subagents ?? []).map((ref) => ({ name: ref.id, displayName: ref.label ?? ref.id })),
     ].filter((c, i, all) => c.name !== self && all.findIndex((x) => x.name === c.name) === i)
     const roster = resolveSessionExpertRoster(cacheCtx, {
@@ -529,12 +545,15 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
       ? buildCabinSummaryReminder(cabinProvider.service, session.cabin_id, cabinProvider.decisions)
       : null
     // 事项投递（2026-11-24 用户）：告诉模型这是舱内小待办，按条目汇报；
-    // 关项由人在回执卡上确认 —— 模型不要自行标记完成。
+    // 关项默认由人在回执卡确认；用户在本轮明确说「关掉 / 完成」时，模型可用
+    // cabin_set_item_status 直接关（2026-11-26 用户：不能再让模型去猜 HTTP 接口）。
     const itemReminder = viaItems
-      ? `本轮消息是从舱内「事项」窗投递的 ${itemIds.length} 条小待办。请逐条处理，并在最后按条目汇报（做了什么 / 证据）；不要自行标记完成，关项由人在回执卡上确认。`
+      ? `本轮消息是从舱内「事项」窗投递的 ${itemIds.length} 条小待办（原文逐条附在本轮消息里）。`
+        + `请逐条处理，并在最后按条目汇报（做了什么 / 证据）；正文若被截断，可用 cabin_list_items / cabin_get_item 读取完整原文。`
+        + `关项 / 重开用 cabin_set_item_status：用户本轮明确说「关掉 / 完成 / 搁置」就按原话执行；只是投递给你处理、用户还没表态时不要自行关项，汇报完由人在回执卡上确认。`
       : null
     const turnReminder = [roleCard, mentionReminder, playbookReminder?.text, cabinReminder, itemReminder].filter(Boolean).join('\n\n')
-    const providerMessage = withTransientReminder(body.message!, turnReminder)
+    const providerMessage = withTransientReminder(userContent, turnReminder)
     // Workflow control tools (list/run/status/cancel/approve/retry) are
     // registered as an in-process MCP server bound to this chat's workspace.
     // A task thread also gets the read/action tools (spec + confirm cards).
@@ -563,22 +582,41 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
     if (!thread) {
       toolServers['octopus-memory'] = createMemoryToolServer(
         { sessionId: id, org },
-        { longTermConsent: resolveLongTermConsent(body.message ?? '') },
+        { longTermConsent: resolveLongTermConsent(userContent) },
       )
     }
     // Cabin P3（C3）：舱主会话挂调度工具集（只调度不执行）。
     // design 25 §4.2：委派 doer 只挂「交结论」这一个工具，不能派任务 / 建任务。
+    // 2026-11-27 用户：会话只有一本账（cabin_delegations）——
+    //   · 舱主会话 → 汐音调度工具集；
+    //   · 汐音委派的 doer（origin=xiyin）→ 只挂「交结论」；
+    //   · 人自开的会话（origin=user）→ 普通聊天，不挂舱工具（不能变成第二个调度者）。
+    // 这个 id 还要驱动委派状态机（回合开始=作战中，回合结束=待命/等你答），
+    // 必须让下面的 streamSSE 闭包也看得到。
+    let doerDelegationId: string | null = null
+    let doerDelegationOrigin: "xiyin" | "user" | null = null
     if (!thread && session.cabin_id && cabinProvider) {
-      let delegationId: string | null = null
       try {
         const row = sessionDao.getDb().prepare(
-          "SELECT id FROM cabin_delegations WHERE doer_session_id = ? LIMIT 1",
-        ).get(id) as { id?: string } | undefined
-        delegationId = row?.id ?? null
+          "SELECT id, origin FROM cabin_delegations WHERE doer_session_id = ? LIMIT 1",
+        ).get(id) as { id?: string; origin?: string } | undefined
+        doerDelegationId = row?.id ?? null
+        doerDelegationOrigin = row ? (row.origin === "user" ? "user" : "xiyin") : null
       } catch { /* old DB without cabin_delegations — feature off */ }
-      toolServers[delegationId ? 'octopus-cabin-doer' : 'octopus-cabin'] = delegationId
-        ? createCabinDelegationToolServer(delegationId)
-        : createCabinToolServer(session.cabin_id)
+      if (doerDelegationId) {
+        if (doerDelegationOrigin !== "user") {
+          toolServers['octopus-cabin-doer'] = createCabinDelegationToolServer(doerDelegationId)
+        }
+      } else {
+        let isCabinMain = false
+        try {
+          const cabinRow = sessionDao.getDb().prepare(
+            "SELECT main_session_id FROM cabins WHERE id = ?",
+          ).get(session.cabin_id) as { main_session_id?: string | null } | undefined
+          isCabinMain = cabinRow?.main_session_id === id
+        } catch { /* cabins 表缺失 —— 不挂调度工具 */ }
+        if (isCabinMain) toolServers['octopus-cabin'] = createCabinToolServer(session.cabin_id)
+      }
     }
     const mcpServers = Object.keys(toolServers).length > 0 ? toolServers : undefined
 
@@ -626,7 +664,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
               wsPath: thread.task.wsPath!,
               taskId: thread.task.id,
               sessionId: id,
-              content: body.message!,
+              content: userContent,
               marker: quickEditMarkerFor(thread.takeover),
             })
             for (const cm of commits) {
@@ -639,6 +677,11 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
         : undefined
 
       try {
+        // 2026-11-25 用户：委派 doer 的回合开始 → 作战中（人刚答完，doer 接着干）；
+        // 2026-11-27 用户：人自开会话从「待命」起下一轮同口径。
+        if (doerDelegationId) {
+          try { cabinProvider?.delegations?.markRunning(doerDelegationId) } catch { /* best effort */ }
+        }
         // Step 1: Auto-compress long sessions
         await autoCompressSession(id, org, turnStream)
 
@@ -687,7 +730,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
                 transientReminder: !!turnReminder,
               },
             })
-        const llmResult = await tryClaudeSDK(body.message!, systemPrompt, turnStream, id, org, sessionDao, undefined, undefined, model, effort, {
+        const llmResult = await tryClaudeSDK(userContent, systemPrompt, turnStream, id, org, sessionDao, undefined, undefined, model, effort, {
           streamId,
           resumeSessionId,
           providerMessage,
@@ -736,7 +779,7 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
         // 确定性截串才替换）。放在主调用之后跑 —— 起名请求若与主流并发，会
         // 和共享 LLMCallTracker 的 message_delta 抢同一批 active call。
         if (llmResult.generated && !aborted && thread && !body.wake) {
-          taskThread?.maybeAdoptSmartTaskName(id, body.message)
+          taskThread?.maybeAdoptSmartTaskName(id, userContent)
         }
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err)
@@ -757,6 +800,28 @@ export function createChatRoutes(deps: ChatRouteDeps): Hono {
         }
         setActiveStreamBackgroundTasks(id, null)
         unregisterActiveStream(id, streamId)
+        // 2026-11-25 用户：doer 这一轮结束了还没交结论（cabin_delegation_done 会把
+        // 状态置 done）→ 回到「等你答」。否则 state 永远停在 running，编队一直显示
+        // 作战中、秒表空转 —— 会话明明已经回复了人，却看起来还在干。
+        // 2026-11-27 用户：人自开的会话同理回「待命」（markIdle）—— 没人等它答话。
+        if (doerDelegationId) {
+          try {
+            if (doerDelegationOrigin === "user") cabinProvider?.delegations?.markIdle(doerDelegationId)
+            else cabinProvider?.delegations?.markWaitingInput(doerDelegationId)
+          } catch { /* best effort */ }
+        } else if (!thread && session.cabin_id) {
+          // 2026-11-27 用户：人自开会话的委派行可能在本轮开始后才登记（先建会话、
+          // 发首条消息，再登记）—— 收轮时补查一次，别让它停在「作战中」。
+          try {
+            const row = sessionDao.getDb().prepare(
+              "SELECT id, origin FROM cabin_delegations WHERE doer_session_id = ? LIMIT 1",
+            ).get(id) as { id?: string; origin?: string } | undefined
+            if (row?.id) {
+              if (row.origin === "user") cabinProvider?.delegations?.markIdle(row.id)
+              else cabinProvider?.delegations?.markWaitingInput(row.id)
+            }
+          } catch { /* best effort */ }
+        }
         // 回合收尾：不让 background_runs 留下永久 running 的行。
         try { getBackgroundRuns().closeRunning(id) } catch { /* 观测面失败不影响收轮 */ }
         notifyWake('done')

@@ -1,10 +1,11 @@
-// 2026-11-19 用户 #4：正文里的产物绝对路径 → 可点文档 chip（点开座舱文档查看器）。
-// 只在 docLinks 变体（cockpit）渲染；classic / 桌面转录不动。
+// 2026-11-19 用户 #4：正文里的产物绝对路径 → 可点文档 chip（点开文档查看器）。
+// 2026-11-26 起全舱 / 桌面 / 经典舱都开；事件带 sessionId 供桌面窗解析白名单。
 
 import { render, screen, fireEvent } from '@testing-library/react'
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import type { AgentMessage } from '@/lib/agent/types'
 import { TuiMessage } from '../TuiTranscript'
+import { ChatMediaProvider } from '../chat-images'
 
 function assistant(content: string): AgentMessage {
   return {
@@ -50,10 +51,33 @@ describe('TuiMessage · 文档绝对路径 chip', () => {
     expect(ref?.getAttribute('data-doc-path')).toBe(DOC)
   })
 
-  it('非 docLinks 不渲染 chip（classic / 桌面逐字不变）', () => {
+  it('整条加粗的产物路径也出 chip（agent 常写成 **C:\\…\\报告.md**）', () => {
+    render(<TuiMessage message={assistant(`**${DOC}**`)} docLinks />)
+    const ref = screen.getByTestId('chat-doc-chip').closest('.doc-ref')
+    expect(ref?.getAttribute('data-doc-path')).toBe(DOC)
+    expect(ref?.closest('strong')).toBeTruthy()
+  })
+
+  it('未开 docLinks 的宿主不渲染 chip（详情面板等仍逐字不变）', () => {
     render(<TuiMessage message={assistant(`报告已写入 \`${DOC}\``)} />)
     expect(screen.queryByTestId('chat-doc-chip')).toBeNull()
     expect(screen.getByText(/2026-11-19-验收报告\.md/)).toBeTruthy()
+  })
+
+  it('chip 事件带上会话 id（桌面文档窗按它解析白名单）', () => {
+    const seen: Array<{ path: string; sessionId?: string | null }> = []
+    const onOpen = (event: Event) =>
+      seen.push((event as CustomEvent<{ path: string; sessionId?: string | null }>).detail)
+    window.addEventListener('octopus:open-doc', onOpen)
+
+    render(
+      <ChatMediaProvider value={{ sessionId: 's-42' }}>
+        <TuiMessage message={assistant(`报告已写入 \`${DOC}\``)} docLinks />
+      </ChatMediaProvider>,
+    )
+    fireEvent.click(screen.getByTestId('chat-doc-chip'))
+    expect(seen).toEqual([{ path: DOC, sessionId: 's-42' }])
+    window.removeEventListener('octopus:open-doc', onOpen)
   })
 
   it('非文档扩展名不误判；/api/xxx.md 这类片段不误判', () => {

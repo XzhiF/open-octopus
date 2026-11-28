@@ -7,11 +7,13 @@
 // index.ts 组合根注入 service/comm/decisions/delegations。
 
 import { z } from "zod"
+import { cabinItemLabel } from "@octopus/shared"
 import { createSdkMcpServer, tool } from "@octopus/providers"
 import type { CabinService } from "../cabin/cabin-service"
 import type { CabinCommService } from "../cabin/cabin-comm-service"
 import type { CabinDecisionService } from "../cabin/cabin-decision-service"
 import type { CabinDelegationService } from "../cabin/cabin-delegation-service"
+import type { CabinItemService } from "../cabin/cabin-item-service"
 import type { CabinBriefInput } from "../cabin/cabin-brief"
 
 export interface CabinToolsService {
@@ -19,6 +21,8 @@ export interface CabinToolsService {
   comm: CabinCommService
   decisions?: CabinDecisionService
   delegations?: CabinDelegationService
+  /** 舱内「事项」读侧（2026-11-26 用户）：投递正文被截断 / 需要原文时回读。 */
+  items?: CabinItemService
 }
 
 let provider: (() => CabinToolsService | null) | null = null
@@ -32,12 +36,16 @@ export function getCabinToolsProvider(): CabinToolsService | null {
 }
 
 /** 工作实体状态 → 人能扫一眼的短词（编队 / reminder 共用）。 */
-function workStatusLabel(status: string): string {
+function workStatusLabel(status: string, kind?: string): string {
+  // 会话的 done 不叫「完成」：交完结论仍是活的，和任务一样写「待命」；归档才是终态。
+  if (kind === "delegation" && status === "done") return "待命"
+  // 任务 raw done 是走完归档闸的终态；其它作业（workflow / subagent）done 才是已完成。
+  if (kind === "task" && status === "done") return "已归档"
   const map: Record<string, string> = {
     draft: "草稿", ready: "待触发", running: "执行中", paused: "已暂停",
     awaiting_review: "待验收", awaiting_archive: "待归档", archiving: "归档中",
     done: "已完成", aborted: "已中止", failed: "失败",
-    queued: "排队", waiting_input: "在问你", cancelled: "已取消",
+    queued: "排队", waiting_input: "在问你", cancelled: "已取消", archived: "已归档",
   }
   return map[status] ?? status
 }
@@ -68,8 +76,14 @@ export function buildCabinSummaryReminder(
     })
 
     const fleetLines = works.slice(0, 10).map((w) =>
-      `${w.handle} ${w.title}  ${workStatusLabel(w.status)}`,
+      `${w.handle} ${w.title}  ${workStatusLabel(w.status, w.kind)}`,
     )
+
+    // 人自开的会话（2026-11-27 用户）：与汐音委派同一本账（origin=user），
+    // 单独列给汐音 —— 她可以用 cabin_send_to_session 把活发进这些会话。
+    const userSessions = works.filter((w) => (
+      w.kind === "delegation" && w.origin === "user" && w.status !== "archived"
+    ))
 
     // 决策：待人答 vs 已答待转达（后者是汐音这回合必须处理的事）。
     const pendingDecisions = decisions?.pendingRelays(cabinId) ?? []
@@ -82,6 +96,12 @@ export function buildCabinSummaryReminder(
     const lines = [
       `[编队] ${cabin.name} · ${cabin.status} · 运行 ${view.health.running} · 待你 ${view.attention.length}`,
       ...(fleetLines.length ? fleetLines : ["（本舱还没有工作实体）"]),
+      ...(userSessions.length
+        ? [
+          "用户自开的会话（把活发进去用 cabin_send_to_session）：",
+          ...userSessions.slice(0, 6).map((w) => `${w.id} ${w.title}`),
+        ]
+        : []),
       ...(attentionLines.length ? ["需要你/我在处理：", ...attentionLines] : []),
       ...(pendingAsks.length
         ? ["待你拍板：", ...pendingAsks.slice(0, 6).map((a) => `${a.handle ?? ""}${a.title} · ask=${a.askId}`)]
@@ -219,6 +239,39 @@ export function createCabinToolServer(cabinId: string) {
       },
     ),
     tool(
+      "cabin_delegation_archive",
+      "归档一条委派会话（D1/D2…）。归档前可选：通读整段会话做一次反思、用 octo-wiki 技能落一条沉淀，然后再调本工具；不做沉淀也可以直接归档。归档后编队写「已归档」并沉到归档区，不再回流任何待办。运行中 / 排队的会话不能归档（先等它交结论或取消）。summary 是归档说明（进审计与结论）。",
+      {
+        delegation_id: z.string().min(1).describe("委派 id（不是句柄）"),
+        summary: z.string().optional().describe("一句话归档说明（可选）"),
+      },
+      async (input) => {
+        const { delegations } = must()
+        if (!delegations) throw new Error("delegation service not wired")
+        const row = delegations.get(input.delegation_id)
+        if (!row || row.cabin_id !== cabinId) {
+          return { content: [{ type: "text" as const, text: JSON.stringify({
+            status: "not_found", delegation_id: input.delegation_id,
+          }) }] }
+        }
+        try {
+          const res = delegations.archive(row.id, { summary: input.summary })
+          return { content: [{ type: "text" as const, text: JSON.stringify({
+            status: "archived", delegation_id: row.id,
+            handle: delegationHandle(cabinId, row.id),
+            state: res?.state ?? row.state,
+            archived_at: res?.archived_at ?? null,
+          }) }] }
+        } catch (err) {
+          return { content: [{ type: "text" as const, text: JSON.stringify({
+            status: "rejected",
+            error: err instanceof Error ? err.message : String(err),
+            message: "没有归档：按 error 处理（运行中的会话先等结论或取消）。",
+          }) }] }
+        }
+      },
+    ),
+    tool(
       "cabin_relay_decision",
       "把用户在**主对话**里做的决定代述给 doer（任务或委派）。verbatim 逐字来自用户点选的选项 —— 不要改写、不要换成同义词。framing 只允许补充边界 / 理由 / 影响，不允许改选择、不允许加新条件。同一 ask 重复调用是幂等的。",
       {
@@ -272,6 +325,118 @@ export function createCabinToolServer(cabinId: string) {
       },
     ),
     tool(
+      "cabin_list_items",
+      "读舱内「事项」（零散小待办：优化 / 修复 / 想法）。默认只列未决（todo + delivered）。正文过长会截断（body_truncated=true），完整原文用 cabin_get_item。",
+      {
+        status: z.enum(["open", "todo", "delivered", "done", "dropped", "all"]).optional()
+          .describe("过滤；默认 open = todo + delivered"),
+        ids: z.array(z.string()).optional().describe("只读这些事项 id"),
+      },
+      async (input) => {
+        const { items } = must()
+        if (!items) throw new Error("cabin item service not wired")
+        const status = input.status ?? "open"
+        const idSet = input.ids && input.ids.length > 0 ? new Set(input.ids) : null
+        const filtered = items.list(cabinId).filter((row) => {
+          if (idSet && !idSet.has(row.id)) return false
+          if (status === "all") return true
+          if (status === "open") return row.status === "todo" || row.status === "delivered"
+          return row.status === status
+        })
+        const BODY_MAX = 1200
+        const payload = filtered.slice(0, 50).map((row) => {
+          const chars = Array.from(row.body ?? "")
+          const truncated = chars.length > BODY_MAX
+          return {
+            id: row.id, seq: row.seq, kind: row.kind, status: row.status,
+            title: row.title,
+            body: truncated ? chars.slice(0, BODY_MAX).join("") : row.body,
+            body_chars: chars.length,
+            body_truncated: truncated,
+            delivered_at: row.delivered_at,
+            closed_at: row.closed_at,
+          }
+        })
+        return { content: [{ type: "text" as const, text: JSON.stringify({ items: payload, total: filtered.length }, null, 2) }] }
+      },
+    ),
+    tool(
+      "cabin_get_item",
+      "读单条事项的完整正文（投递消息里正文被截断，或需要逐字原文时用）。",
+      { item_id: z.string().min(1).describe("事项 id（不是 #IT-n 句柄；句柄用 cabin_list_items 查）") },
+      async (input) => {
+        const { items } = must()
+        if (!items) throw new Error("cabin item service not wired")
+        try {
+          const row = items.get(cabinId, input.item_id)
+          return { content: [{ type: "text" as const, text: JSON.stringify(row, null, 2) }] }
+        } catch (err) {
+          return { content: [{ type: "text" as const, text: JSON.stringify({
+            status: "not_found", item_id: input.item_id,
+            error: err instanceof Error ? err.message : String(err),
+          }) }] }
+        }
+      },
+    ),
+    tool(
+      "cabin_set_item_status",
+      "改舱内「事项」的状态：done = 完成关项、dropped = 搁置关项、todo = 重新打开。**只在用户明确要求关项 / 重开时调用**：投递给你处理、但用户还没表态时不要自行关，汇报完由人在回执卡上确认。关项只写 closed_at，记录保留，不删除。",
+      {
+        ids: z.array(z.string().min(1)).min(1).max(50)
+          .describe("事项 id 或 #IT-n 句柄，两种都收（也接受纯序号 n）"),
+        status: z.enum(["done", "dropped", "todo"])
+          .describe("目标状态：done 完成 / dropped 搁置 / todo 重新打开（仅对已关闭事项生效）"),
+      },
+      async (input) => {
+        const { items } = must()
+        if (!items) throw new Error("cabin item service not wired")
+        try {
+          // 投递消息里只露 #IT-n 句柄，模型未必知道原始 id —— 两种都收。
+          const all = items.list(cabinId)
+          const byId = new Map(all.map((row) => [row.id, row]))
+          const bySeq = new Map(all.map((row) => [row.seq, row]))
+          const resolved: string[] = []
+          const unresolved: string[] = []
+          for (const token of input.ids) {
+            const text = token.trim()
+            const direct = byId.get(text)
+            const seqMatch = /^#?it-?(\d+)$/i.exec(text) ?? /^(\d+)$/.exec(text)
+            const target = direct ?? (seqMatch ? bySeq.get(Number(seqMatch[1])) : undefined)
+            if (!target) { unresolved.push(token); continue }
+            if (!resolved.includes(target.id)) resolved.push(target.id)
+          }
+          if (resolved.length === 0) {
+            return { content: [{ type: "text" as const, text: JSON.stringify({
+              status: "not_found",
+              missing: unresolved,
+              message: "这些 id / 句柄在本舱找不到：先用 cabin_list_items 查一遍再改。",
+            }) }] }
+          }
+          const res = items.setStatus(cabinId, resolved, input.status)
+          return { content: [{ type: "text" as const, text: JSON.stringify({
+            status: "applied",
+            outcome: input.status,
+            items: res.items.map((row) => ({
+              id: row.id,
+              handle: cabinItemLabel(row),
+              title: row.title,
+              before: byId.get(row.id)?.status ?? null,
+              after: row.status,
+              changed: row.status !== byId.get(row.id)?.status,
+              closed_at: row.closed_at,
+            })),
+            missing: [...res.missing, ...unresolved],
+          }, null, 2) }] }
+        } catch (err) {
+          return { content: [{ type: "text" as const, text: JSON.stringify({
+            status: "rejected",
+            error: err instanceof Error ? err.message : String(err),
+            message: "状态没有改成：按 error 处理，不要假定已经关项 / 重开。",
+          }) }] }
+        }
+      },
+    ),
+    tool(
       "cabin_job_trace",
       "读某作业的审计时间线（dispatch/brief/report/attention/handback/note/decision/human_input/resume）。",
       { job_id: z.string().min(1) },
@@ -298,6 +463,48 @@ export function createCabinToolServer(cabinId: string) {
         const event = comm.note(cabinId, input.job_id, input.text, { notify: input.notify ?? false })
         return { content: [{ type: "text" as const, text: JSON.stringify({
           event_id: event.id, kind: "note", notified: input.notify ?? false,
+        }) }] }
+      },
+    ),
+    tool(
+      "cabin_send_to_session",
+      "把一件活发进舱内已有的、用户自己开的会话（会话里多一轮，用户能在会话里看到）。target = 这条会话的委派 id 或 session_id（摘要里的「用户自开的会话」段）。只支持 origin=user 的会话；汐音自己的委派不用这个 —— 直接回它。",
+      {
+        target: z.string().min(1).describe("用户自开会话的委派 id 或会话 id"),
+        message: z.string().min(1).describe("要发进这条会话的内容（一件活 / 一个请求）"),
+      },
+      async (input) => {
+        const { service, comm } = must()
+        const works = service.listWorkView(cabinId)
+        const work = works.find((w) => (
+          w.kind === "delegation" && (w.id === input.target || w.session_id === input.target)
+        ))
+        if (!work || work.origin !== "user" || !work.session_id) {
+          return { content: [{ type: "text" as const, text: JSON.stringify({
+            status: "failed",
+            error: "找不到可发消息的会话（只支持用户自开会话；用摘要里的委派 id / session_id）",
+          }) }] }
+        }
+        if (work.status === "archived") {
+          return { content: [{ type: "text" as const, text: JSON.stringify({
+            status: "failed", error: "会话已归档，不能再派活",
+          }) }] }
+        }
+        const org = service.getView(cabinId).cabin.org ?? ""
+        // 审计留痕 + 真发进会话：同一本账，事件挂在委派 id 上（作战详情「对接」可见）。
+        try {
+          service.appendEvent(work.id, cabinId, "note", "orchestrator", {
+            summary: `[汐音 → 会话] ${input.message}`,
+          })
+        } catch { /* 审计尽力而为 */ }
+        await comm.wakeSessionPublic(
+          work.session_id,
+          org,
+          `[汐音 · 派活] ${input.message}\n\n这是舱调度者转达的任务；做完在会话里给结论。`,
+        )
+        return { content: [{ type: "text" as const, text: JSON.stringify({
+          status: "sent", delegation_id: work.id, session_id: work.session_id,
+          title: work.title, handle: work.handle,
         }) }] }
       },
     ),
@@ -343,7 +550,7 @@ export function createCabinToolServer(cabinId: string) {
     name: "octopus-cabin",
     version: "1.1.0",
     instructions:
-      "舱主的调度工具集（自己动手用通用的 Read/Edit/Bash，不在这里）。派发=建真实任务（执行在 doer/worktree）；轻活=独立委派（无 phase/验收）；决策用 cabin_relay_decision 代述，逐字不改。监督读派生视图；一次只问人一个结构化问题。完成回流先审一道：需要人回复就 AskUserQuestion，不需要就一句提示 + cabin_ack_attention 收项（不回复执行者）。直接改了任务 home 或范围变更后，用 cabin_note_job 留痕，不要让它只存在于主对话。",
+      "舱主的调度工具集（自己动手用通用的 Read/Edit/Bash，不在这里）。派发=建真实任务（执行在 doer/worktree）；轻活=独立委派（无 phase/验收、有归档闸）；用户自己开的会话（origin=user，与你的委派同一本账、同一套状态机）要派活时，用 cabin_send_to_session 发进那条已有会话（会话里多一轮、用户可见），不要为它另开委派。决策用 cabin_relay_decision 代述，逐字不改。监督读派生视图；一次只问人一个结构化问题。完成回流先审一道：需要人回复就 AskUserQuestion，不需要就一句提示 + cabin_ack_attention 收项（不回复执行者）。会话跑完只是「待命」，归档由你管：用户说归档（或你判断该收口）时，可先通读会话做反思、用 octo-wiki 技能落沉淀，再调 cabin_delegation_archive；不沉淀也能直接归档。直接改了任务 home 或范围变更后，用 cabin_note_job 留痕，不要让它只存在于主对话。事项投递的正文若被截断或需要逐字原文，用 cabin_list_items / cabin_get_item 回读，不要凭标题猜需求。事项关项 / 重开用 cabin_set_item_status：用户明确说「关掉 / 完成 / 搁置 / 重开」时才改，投递后只是处理完、用户还没表态就先汇报，等人确认。",
     tools,
     alwaysLoad: true,
   })

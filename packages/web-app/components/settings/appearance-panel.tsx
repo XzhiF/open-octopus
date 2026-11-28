@@ -4,19 +4,21 @@
 // 默认在图标下方常驻显示；关掉后退回「只显示图标 + hover 提示」。
 // 偏好存 localStorage，已打开的坞和别的标签页都会实时跟着切换。
 
-import { LayoutGrid } from "lucide-react"
+import { ImageIcon, LayoutGrid } from "lucide-react"
 import { Switch } from "@/components/ui/switch"
 import { useDockLabelsVisible } from "@/hooks/use-dock-labels"
-import { setDockLabelsVisible } from "@/lib/ui-preferences"
+import { useChatImageThumbs } from "@/hooks/use-chat-image-thumbs"
+import { setChatImageThumbs, setDockLabelsVisible } from "@/lib/ui-preferences"
 
 export function AppearancePanel() {
   const dockLabels = useDockLabelsVisible()
+  const chatImages = useChatImageThumbs()
 
   return (
     <div className="flex h-full flex-col" data-testid="appearance-panel">
       <div className="border-b border-border bg-background px-6 py-4">
         <h1 className="text-lg font-semibold tracking-tight">外观</h1>
-        <p className="text-sm text-muted-foreground">界面显示与作业坞</p>
+        <p className="text-sm text-muted-foreground">界面显示、作业坞与对话</p>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-6">
@@ -42,6 +44,32 @@ export function AppearancePanel() {
               checked={dockLabels}
               onCheckedChange={setDockLabelsVisible}
               aria-label="图标下方常驻显示文字"
+            />
+          </div>
+        </section>
+
+        <section className="mt-8 max-w-2xl" data-appearance-section="chat-images">
+          <h2 className="mb-3 text-sm font-medium">对话</h2>
+
+          <div className="flex items-center gap-4 rounded-lg border border-border bg-card px-4 py-3.5">
+            <ImageIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <div className="min-w-0 flex-1">
+              <label
+                htmlFor="chat-image-thumbs"
+                className="block cursor-pointer text-sm font-medium"
+              >
+                显示图片缩略图
+              </label>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                对话里出现图片路径时直接显示缩略图，点开看大图；关闭后只显示路径文本。
+              </p>
+            </div>
+            <Switch
+              id="chat-image-thumbs"
+              data-testid="chat-image-thumbs-switch"
+              checked={chatImages}
+              onCheckedChange={setChatImageThumbs}
+              aria-label="显示图片缩略图"
             />
           </div>
         </section>

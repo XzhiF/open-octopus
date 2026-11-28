@@ -79,11 +79,16 @@ const CABIN_TOOL_NAMES = [
   "cabin_list_tasks",
   "cabin_dispatch_task",
   "cabin_delegate_task",
+  "cabin_delegation_archive",
   "cabin_relay_decision",
   "cabin_list_jobs",
+  "cabin_list_items",
+  "cabin_get_item",
+  "cabin_set_item_status",
   "cabin_job_trace",
   "cabin_note_job",
   "cabin_resume_job",
+  "cabin_ack_attention",
 ] as const
 
 const CABIN_DOER_TOOL_NAMES = ["cabin_delegation_done"] as const
@@ -114,7 +119,7 @@ export function buildMcpCatalog(): McpServerMeta[] {
     {
       server: "octopus-cabin",
       label: "舱调度",
-      description: "作战舱主对话的调度工具集：列舱内任务/作业、派发真实任务、派发轻量委派、转达用户决策、读审计 trace、恢复作业。自己动手改代码走通用 Read/Edit/Bash，不在这套工具里。",
+      description: "作战舱主对话的调度工具集：列舱内任务/作业/事项、派发真实任务、派发轻量委派、转达用户决策、改事项状态（关项/重开）、读审计 trace、恢复作业。自己动手改代码走通用 Read/Edit/Bash，不在这套工具里。",
       when: "会话绑定作战舱（cabin_id）且非任务线程、非委派 doer 时挂载",
       tools: CABIN_TOOL_NAMES.map((name) => ({ name, description: CABIN_TOOL_DESC[name] })),
     },
@@ -131,12 +136,17 @@ export function buildMcpCatalog(): McpServerMeta[] {
 const CABIN_TOOL_DESC: Record<string, string> = {
   cabin_list_tasks: "列出本舱全部任务（派生状态/会话），监督读。",
   cabin_dispatch_task: "派发真实 Octopus 任务进舱（建任务+作者线程+授权 wake），brief 是编译后的意图、原文逐字附后；执行在独立 worktree。",
-  cabin_delegate_task: "派发一次轻量委派（无 phase / worktree / 验收 / 归档）：一份 brief + 一个 doer 会话，编队显示 D1。",
+  cabin_delegate_task: "派发一次轻量委派（无 phase / worktree / 验收；有归档闸）：一份 brief + 一个 doer 会话，编队显示 D1。",
+  cabin_delegation_archive: "归档一条委派会话：可选先做会话反思 + wiki 沉淀，再归档；运行中的会话不能归档。",
   cabin_relay_decision: "把用户在舱主对话里做的决定代述给 doer；verbatim 逐字、幂等，framing 只补边界不改选择。",
   cabin_list_jobs: "统一作业账本（task/workflow/subagent）+ 独立委派 + 派生 status + 句柄。",
+  cabin_list_items: "读舱内「事项」（零散小待办）：默认列未决，正文超长截断并指路回读全文。",
+  cabin_get_item: "读单条事项的完整正文（投递消息里正文被截断时用）。",
+  cabin_set_item_status: "改事项状态：done 完成 / dropped 搁置 / todo 重新打开；批量、记录保留，用户明确要求才关项。",
   cabin_job_trace: "读某作业的 append-only 审计时间线。",
   cabin_note_job: "给作业留一条备注 / 范围变更（不授权），进审计时间线与作战详情「对接」；默认只留痕，notify=true 才唤醒会话。",
   cabin_resume_job: "恢复作业（草稿入列并触发 / ready 触发 / 暂停恢复）；gate 缺项原样报错。",
+  cabin_ack_attention: "把已完成回流从「要我处理」收掉（不回复执行者）；先审阅判断无需人回复再收。",
 }
 
 const CABIN_DOER_TOOL_DESC: Record<string, string> = {

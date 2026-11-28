@@ -152,3 +152,42 @@ describe('activity-model · 后台作业留档（2026-11-24 用户 #1）', () =>
     expect(detectPorts('--port 99999')).toEqual([])
   })
 })
+
+describe('activity-model · 子代理不重复算后台作业（2026-11-25 用户）', () => {
+  it('后台化的子代理同 id 出现两次：只留子代理那一行', () => {
+    // 真机：Task 工具 run_in_background 时 task_type='local_agent'，task_id = 子代理 id。
+    const items = activityItems(
+      [run({ id: 'sa-bg', description: '后台子代理' })],
+      [
+        { id: 'sa-bg', description: '后台子代理', taskType: 'local_agent' },
+        { id: 'bg-bash', description: 'pnpm dev', taskType: 'local_bash' },
+      ],
+      [bgRun({ task_id: 'sa-bg', task_type: 'local_agent', status: 'completed' })],
+    )
+    expect(items.filter((item) => item.kind === 'subagent').map((item) => item.run.id)).toEqual(['sa-bg'])
+    expect(items.filter((item) => item.kind === 'background').map((item) => item.task.id)).toEqual(['bg-bash'])
+
+    const groups = groupActivity(items)
+    expect(groups.subTotal).toBe(1)
+    expect(groups.bgTotal).toBe(1)
+    expect(groups.bgLive).toBe(1)
+  })
+
+  it('task_type 缺失的结束留档（task_notification 补写）也按 task_id 归到子代理', () => {
+    const items = activityItems(
+      [],
+      [],
+      [bgRun({ task_id: 'sa-bg', task_type: null, status: 'completed' })],
+    )
+    // runs 里没有这个子代理时无法判定 → 仍按后台留档显示；有 run 时被吞掉。
+    expect(items).toHaveLength(1)
+
+    const withRun = activityItems(
+      [run({ id: 'sa-bg', status: 'completed', ended_at: '2026-11-24T01:42:30.000Z' })],
+      [],
+      [bgRun({ task_id: 'sa-bg', task_type: null, status: 'completed' })],
+    )
+    expect(withRun).toHaveLength(1)
+    expect(withRun[0].kind).toBe('subagent')
+  })
+})

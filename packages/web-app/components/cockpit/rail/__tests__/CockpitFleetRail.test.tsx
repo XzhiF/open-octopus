@@ -293,23 +293,24 @@ describe('CockpitFleetRail · v21 单列编队', () => {
     expect(row('job:j1')).toBeInTheDocument()
   })
 
-  it('pct=null：运行中画不定长滚动条（不猜百分比）；待命行不画条', () => {
+  it('pct=null：不画进度条也不猜百分比；真实 pct 只显示数字', () => {
     const running = jobRow(jobView('j1', { status: 'running' }), { pct: null })
     const pending = jobRow(jobView('j2', { status: 'pending' }), { pct: null })
     const task = taskRow('t1', {}, 40)
     renderRail({ rows: sortRows([running, pending, task]) })
 
     const runNode = row('job:j1')
-    expect(runNode.querySelector('.ck12-flbar.is-live')).not.toBeNull()
+    expect(runNode.querySelector('.ck12-flbar')).toBeNull()
     expect(within(runNode).queryByText(/%/)).toBeNull()
-    expect(runNode.style.getPropertyValue('--p')).toBe('0')
+    expect(runNode.style.getPropertyValue('--p')).toBe('')
 
     expect(row('job:j2').querySelector('.ck12-flbar')).toBeNull()
 
+    // 2026-11-25 用户：进度条撤了，真实 pct 仍以数字保留。
     const taskNode = row('task:t1')
-    expect(taskNode.querySelector('.ck12-flbar')).not.toBeNull()
+    expect(taskNode.querySelector('.ck12-flbar')).toBeNull()
     expect(within(taskNode).getByText('40%')).toBeInTheDocument()
-    expect(taskNode.style.getPropertyValue('--p')).toBe('40')
+    expect(taskNode.style.getPropertyValue('--p')).toBe('')
   })
 
   it('arrivals 命中的 job 行带 pop class', () => {
@@ -323,7 +324,8 @@ describe('CockpitFleetRail · v21 单列编队', () => {
   })
 
   // v22 #6（2026-11-23 用户）：作战中要有计时，跟流式结果一样每秒走字。
-  it('作战中行挂活秒表（⏱ mm:ss 每秒走字）；待命/等你答行不画', () => {
+  // 2026-11-25 用户：秒表前加 braille 转字（与 chat 工作行同一套帧）。
+  it('作战中行挂活秒表（braille 转字 + mm:ss 每秒走字）；待命/等你答行不画', () => {
     vi.useFakeTimers()
     try {
       vi.setSystemTime(new Date('2026-11-14T09:01:05.000Z'))
@@ -340,23 +342,25 @@ describe('CockpitFleetRail · v21 单列编队', () => {
       renderRail({ rows: sortRows([run, authoring, queue]) })
 
       const clock = within(row('job:j1')).getByTestId('cockpit-rail-clock')
-      expect(clock).toHaveTextContent('⏱ 01:05')
+      expect(clock).toHaveTextContent('01:05')
+      expect(clock.querySelector('.ck12-flspin')).not.toBeNull()
       expect(clock).toHaveAttribute('title', expect.stringContaining('01:05'))
       // 作者在推进（job 还没进 running）同样算作战中。
-      expect(within(row('job:j3')).getByTestId('cockpit-rail-clock')).toHaveTextContent('⏱ 01:00')
+      expect(within(row('job:j3')).getByTestId('cockpit-rail-clock')).toHaveTextContent('01:00')
       // 待命行不画秒表。
       expect(within(row('job:j2')).queryByTestId('cockpit-rail-clock')).toBeNull()
 
       act(() => { vi.advanceTimersByTime(1000) })
-      expect(within(row('job:j1')).getByTestId('cockpit-rail-clock')).toHaveTextContent('⏱ 01:06')
+      expect(within(row('job:j1')).getByTestId('cockpit-rail-clock')).toHaveTextContent('01:06')
     } finally {
       vi.useRealTimers()
     }
   })
 
   // v23 十六轮（2026-11-24 用户）：待验收的任务作者还在推进 —— chip 保持生命周期
-  // 「等你验收」，行加流动态 / 统一秒表 / 不定长滚动条；副行让给秒表。
-  it('待验收 + 作者在跑：chip 仍等你验收，加流动态、统一秒表与不定长滚动条', () => {
+  // 「等你验收」，行加流动态 / 统一秒表；副行让给秒表。
+  // 2026-11-25 用户：进度条撤掉，动势只剩天蓝左缘 + 秒表转字。
+  it('待验收 + 作者在跑：chip 仍等你验收，加流动态与统一秒表，不画进度条', () => {
     vi.useFakeTimers()
     try {
       vi.setSystemTime(new Date('2026-11-14T09:02:00.000Z'))
@@ -375,8 +379,9 @@ describe('CockpitFleetRail · v21 单列编队', () => {
       expect(node.className).toMatch(/is-flow/)
       expect(within(node).getByText('等你验收')).toBeInTheDocument()
       expect(within(node).queryByText('作战中')).toBeNull()
-      expect(within(node).getByTestId('cockpit-rail-clock')).toHaveTextContent('⏱ 02:00')
-      expect(node.querySelector('.ck12-flbar.is-live')).not.toBeNull()
+      expect(within(node).getByTestId('cockpit-rail-clock')).toHaveTextContent('02:00')
+      expect(node.querySelector('.ck12-flbar')).toBeNull()
+      expect(node.querySelector('.ck12-flspin')).not.toBeNull()
       // 干活行不再显示「项目 · transport」，宽度留给秒表。
       expect(node.querySelector('.ck12-flsub-t')).toBeNull()
     } finally {
@@ -411,8 +416,9 @@ describe('CockpitFleetRail · v21 单列编队', () => {
     expect(node.querySelector('.ck12-flbar')).toBeNull()
   })
 
-  // 2026-11-25 用户：完结 ≠ 归档。归档是人工闸，状态词不能说会话「已被归档」。
-  it('完结 ≠ 归档：会话 / 委派跑完显示「已完成」，只有任务走完归档闸才显示「已归档」', () => {
+  // 2026-11-25 用户：完结 ≠ 归档。会话交完结论是「待命」（还能继续聊），
+  // 归档是汐音管理的独立终态；任务走完归档闸才写「已归档」。
+  it('完结 ≠ 归档：会话 done = 待命、archived_at = 已归档；任务走完归档闸 = 已归档', () => {
     const chatJob = jobRow(jobView('chat1', {
       kind: 'subagent', status: 'completed', title: 'D · 环境体检',
       ended_at: '2026-11-14T09:30:00.000Z',
@@ -432,15 +438,26 @@ describe('CockpitFleetRail · v21 单列编队', () => {
         brief: null, autonomy: 'hands-off', state: 'done',
         doer_session_id: 's1', result_summary: '全绿',
         created_at: '2026-11-14T09:00:00.000Z', updated_at: '2026-11-14T09:30:00.000Z',
-        ended_at: '2026-11-14T09:30:00.000Z', handle: 'D1', color: 1,
+        ended_at: '2026-11-14T09:30:00.000Z', archived_at: null, handle: 'D1', color: 1,
+      },
+    }
+    const archived: CockpitRow = {
+      ...delegation,
+      key: 'delegation:c1:d2',
+      delegation: {
+        ...delegation.delegation,
+        id: 'd2', title: '环境体检：已收口', archived_at: '2026-11-14T10:00:00.000Z',
       },
     }
 
-    renderRail({ rows: sortRows([chatJob, taskJob, delegation]) })
+    renderRail({ rows: sortRows([chatJob, taskJob, delegation, archived]) })
 
     expect(within(row('job:chat1')).getByText('已完成')).toBeInTheDocument()
-    expect(within(row('delegation:c1:d1')).getByText('已完成')).toBeInTheDocument()
     expect(within(row('job:t1')).getByText('已归档')).toBeInTheDocument()
+    expect(within(row('delegation:c1:d1')).getByText('待命')).toBeInTheDocument()
+    expect(within(row('delegation:c1:d2')).getByText('已归档')).toBeInTheDocument()
+    expect(row('delegation:c1:d1').getAttribute('data-tone')).toBe('queue')
+    expect(row('delegation:c1:d2').getAttribute('data-tone')).toBe('archived')
   })
 
   it('↑↓ 在可见行内移动并 select；输入框聚焦时不抢键', () => {
@@ -461,5 +478,72 @@ describe('CockpitFleetRail · v21 单列编队', () => {
     input.focus()
     fireEvent.keyDown(input, { key: 'ArrowDown' })
     expect(screen.getByTestId('selection')).toHaveTextContent('job:c1:j1')
+  })
+})
+
+// v23（2026-11-27 用户）：人在编队里自己开的会话 = cabin_delegations（origin=user）——
+// 与汐音委派同一本账；编队行 ❯、点行 / 💬 开独立 chat 窗、▦ 落会话详情「对接」。
+describe('CockpitFleetRail · v23 人自开会话（origin=user 委派）', () => {
+  function userDelegationRow(
+    id: string,
+    sessionId: string,
+    over: Partial<Extract<CockpitRow, { kind: 'delegation' }>['delegation']> = {},
+  ): CockpitRow {
+    return {
+      key: `delegation:${id}`,
+      kind: 'delegation',
+      cabinId: 'c1',
+      cabinName: '舱一',
+      pct: null,
+      delegation: {
+        id,
+        cabin_id: 'c1',
+        title: '整理限流阈值',
+        intent_text: '帮我整理限流阈值',
+        brief: null,
+        autonomy: 'checkpoint',
+        state: 'done',
+        origin: 'user',
+        doer_session_id: sessionId,
+        result_summary: null,
+        created_at: '2026-11-27T09:00:00.000Z',
+        updated_at: '2026-11-27T09:30:00.000Z',
+        ended_at: null,
+        archived_at: null,
+        handle: 'D1',
+        color: 2,
+        ...over,
+      },
+    }
+  }
+
+  it('「新会话」开一扇草稿窗；再点 = 聚焦，不重复开', () => {
+    renderRail()
+    fireEvent.click(screen.getByTestId('cockpit-fleet-new'))
+    expect(screen.getByTestId('selection')).toHaveAttribute('data-wins', '1')
+    fireEvent.click(screen.getByTestId('cockpit-fleet-new'))
+    expect(screen.getByTestId('selection')).toHaveAttribute('data-wins', '1')
+  })
+
+  it('会话行：❯ 字形 + 「会话 D1」副行；点行/💬 开会话窗，▦ 落会话详情「对接」', () => {
+    threadState.keys.add('delegation:d-user')
+    renderRail({ rows: sortRows([userDelegationRow('d-user', 's-1')]) })
+    const node = row('delegation:d-user')
+    expect(within(node).getByText('整理限流阈值')).toBeInTheDocument()
+    expect(node.querySelector('.ck12-flhg')?.textContent).toBe('❯')
+    expect(within(node).getByText(/会话 D1/)).toBeInTheDocument()
+    // 回合结束 = 待命（与汐音委派同一个状态词）。
+    expect(within(node).getByText('待命')).toBeInTheDocument()
+
+    // 行点击 = 开它自己的独立 chat 窗（data-wins 1），不选面。
+    fireEvent.click(node)
+    expect(screen.getByTestId('selection')).toHaveTextContent('none')
+    expect(screen.getByTestId('selection')).toHaveAttribute('data-wins', '1')
+
+    // ▦ = 会话详情（delegation ref，默认「对接」），行标 is-on。
+    fireEvent.click(screen.getByTestId('cockpit-rail-detail-delegation:d-user'))
+    expect(screen.getByTestId('selection')).toHaveTextContent('delegation:c1:d-user')
+    expect(screen.getByTestId('selection')).toHaveAttribute('data-tab', 'relay')
+    expect(row('delegation:d-user').className).toMatch(/is-on/)
   })
 })

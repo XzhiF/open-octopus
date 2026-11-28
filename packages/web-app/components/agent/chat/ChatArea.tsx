@@ -1030,7 +1030,7 @@ export function ChatArea({
                           : undefined}
                       />
                     </div>
-                  ) : <TuiMessage message={msg} compactEvent={compactEvent} />
+                  ) : <TuiMessage message={msg} compactEvent={compactEvent} docLinks />
                 ) : <ChatBubble message={msg} />}
                 {messageExtras?.(msg)}
               </Fragment>

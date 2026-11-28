@@ -87,6 +87,8 @@ export interface CockpitJobHeaderProps {
   endedAt?: string | null
   /** 行2：本作业消耗（已按计费设置格式化；null = 省略该段） */
   costLabel?: string | null
+  /** 行2 整段覆盖（会话详情：副行是「舱名 · 会话 <id>」，不走项目/分支口径）。 */
+  subtitle?: string | null
   /** v22 #5：打开这条作战的独立 chat 窗（有会话才传；没传不画按钮）。 */
   onOpenChat?: (() => void) | null
   /** 2026-11-24：待归档 / 归档中时头部挂 📦，直接切到「归档」页签。 */
@@ -103,6 +105,7 @@ export function CockpitJobHeader({
   jobNo,
   executor,
   cabinName,
+  subtitle,
   onOpenChat,
   onOpenArchive,
 }: CockpitJobHeaderProps) {
@@ -112,7 +115,8 @@ export function CockpitJobHeader({
   const atArchiveGate = status === 'awaiting_archive' || status === 'archiving'
   // 原型 .ph 副行：项目 · 分支 · 编号（拿不到的段整段省略）。
   // 项目优先用编队行派生名，没有锚点才退回舱名；编号缺省退回执行者短 id。
-  const subtitle = [projectName ?? cabinName, branch, jobNo ?? executor].filter(Boolean).join(' · ')
+  const derivedSubtitle = [projectName ?? cabinName, branch, jobNo ?? executor].filter(Boolean).join(' · ')
+  const subtitleText = subtitle ?? derivedSubtitle
 
   return (
     <div className="ck12-jh" data-testid="cockpit-job-header" data-loading={loading ? '1' : '0'}>
@@ -131,7 +135,7 @@ export function CockpitJobHeader({
 
         <span className="ck12-dh-pt">
           <b title={title ?? undefined}>{loading ? '载入作业…' : `${emoji} ${title ?? '—'}`}</b>
-          {!loading && subtitle && <span>{subtitle}</span>}
+          {!loading && subtitleText && <span>{subtitleText}</span>}
         </span>
 
         <span className="ck12-dh-sp" />
@@ -181,31 +185,38 @@ export function CockpitJobHeader({
 
 /** 详情页签（原型 .dtabs）：v21 五轮按原型放进滚动正文，和内容一起滚走。
  *  受控组件 —— tab / onTabChange 由宿主（URL 同步的 CockpitState）给。
- *  tabs 缺省 = COCKPIT_TABS；非任务类作业由宿主过滤掉「归档」。 */
+ *  tabs 缺省 = COCKPIT_TABS；非任务类作业由宿主过滤掉「归档」。
+ *  2026-11-25：badges 给页签挂角标（原型 .dtab .n，如「子代理 5」）。 */
 export function CockpitJobTabs({
   tab,
   onTabChange,
   tabs = COCKPIT_TABS,
+  badges,
 }: {
   tab?: CockpitTab | null
   onTabChange?: (tab: CockpitTab) => void
   tabs?: readonly CockpitTab[]
+  badges?: Partial<Record<CockpitTab, number>>
 }) {
   return (
     <div className="ck12-dtabs" role="tablist" aria-label="作业页签">
-      {tabs.map((key) => (
-        <button
-          key={key}
-          type="button"
-          role="tab"
-          aria-selected={tab === key}
-          data-testid={`cockpit-tab-${key}`}
-          className={cn('ck12-dtab', tab === key && 'on')}
-          onClick={() => onTabChange?.(key)}
-        >
-          {COCKPIT_TAB_LABELS[key]}
-        </button>
-      ))}
+      {tabs.map((key) => {
+        const badge = badges?.[key] ?? 0
+        return (
+          <button
+            key={key}
+            type="button"
+            role="tab"
+            aria-selected={tab === key}
+            data-testid={`cockpit-tab-${key}`}
+            className={cn('ck12-dtab', tab === key && 'on')}
+            onClick={() => onTabChange?.(key)}
+          >
+            {COCKPIT_TAB_LABELS[key]}
+            {badge > 0 && <i className="n">{badge}</i>}
+          </button>
+        )
+      })}
     </div>
   )
 }

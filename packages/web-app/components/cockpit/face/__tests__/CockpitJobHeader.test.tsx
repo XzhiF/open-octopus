@@ -38,21 +38,35 @@ describe('CockpitJobHeader', () => {
     expect(head?.firstElementChild).toBe(screen.getByTestId('cockpit-job-close'))
   })
 
-  it('页签不在头部（原型 .pb 内），由 CockpitJobTabs 渲染八个平行四边形 .dtab', () => {
+  it('页签不在头部（原型 .pb 内），由 CockpitJobTabs 渲染十个平行四边形 .dtab', () => {
     const onTabChange = vi.fn()
     const { container: head } = renderHeader()
     expect(head.querySelector('.ck12-dtab')).toBeNull()
 
     // v22 #5：对话页签删除 —— 编队对话是独立 chat 窗。
     // 2026-11-24：验收后加「归档」只读明细页签。
+    // 2026-11-25：末尾补「消耗 / 子代理」。
     const { container } = render(<CockpitJobTabs tab="run" onTabChange={onTabChange} />)
-    for (const key of ['relay', 'run', 'changes', 'accept', 'archive', 'files', 'debug', 'project']) {
+    for (const key of [
+      'relay', 'run', 'changes', 'accept', 'archive',
+      'files', 'debug', 'project', 'usage', 'agents',
+    ]) {
       expect(screen.getByTestId(`cockpit-tab-${key}`)).toBeInTheDocument()
     }
     expect(screen.queryByTestId('cockpit-tab-dialog')).toBeNull()
-    expect(container.querySelectorAll('.ck12-dtab').length).toBe(8)
+    expect(container.querySelectorAll('.ck12-dtab').length).toBe(10)
     fireEvent.click(screen.getByTestId('cockpit-tab-run'))
     expect(onTabChange).toHaveBeenCalledWith('run')
+  })
+
+  it('页签角标：badges 给对应签挂 .n（如「子代理 5」）', () => {
+    const { container } = render(
+      <CockpitJobTabs tab="run" onTabChange={() => {}} badges={{ agents: 5 }} />,
+    )
+    const badge = screen.getByTestId('cockpit-tab-agents').querySelector('.n')
+    expect(badge?.textContent).toBe('5')
+    expect(screen.getByTestId('cockpit-tab-run').querySelector('.n')).toBeNull()
+    expect(container.querySelectorAll('.ck12-dtab .n').length).toBe(1)
   })
 
   it('非任务作业由宿主过滤「归档」：传 tabs 时只渲染给定页签', () => {
@@ -60,7 +74,7 @@ describe('CockpitJobHeader', () => {
       <CockpitJobTabs
         tab="run"
         onTabChange={() => {}}
-        tabs={['relay', 'run', 'changes', 'accept', 'files', 'debug', 'project']}
+        tabs={['relay', 'run', 'changes', 'accept', 'files', 'debug', 'project', 'usage', 'agents']}
       />,
     )
     expect(screen.queryByTestId('cockpit-tab-archive')).toBeNull()
@@ -114,6 +128,16 @@ describe('CockpitJobHeader', () => {
     })
     expect(container.querySelector('.ck12-dh-pt span')?.textContent)
       .toBe('API 网关 · feat/refund-flow · t-2641')
+  })
+
+  it('副行可整段覆盖（会话详情：舱名 · 会话 <id>）', () => {
+    const { container } = renderHeader({
+      cabinName: 'Aurora',
+      branch: 'feat-cabin',
+      jobNo: 't-2641',
+      subtitle: 'Aurora · 会话 s-9f2a',
+    })
+    expect(container.querySelector('.ck12-dh-pt span')?.textContent).toBe('Aurora · 会话 s-9f2a')
   })
 
   it('标题带状态表情（原型 STATE_EMO）', () => {

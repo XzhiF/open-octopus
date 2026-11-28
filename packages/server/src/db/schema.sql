@@ -1470,11 +1470,17 @@ CREATE TABLE IF NOT EXISTS cabin_delegations (
     CHECK (autonomy IN ('approve','checkpoint','hands-off')),
   state TEXT NOT NULL DEFAULT 'queued'
     CHECK (state IN ('queued','running','waiting_input','done','failed','cancelled')),
+  -- 会话创建者（2026-11-27 用户）：同一种会话，只差谁开的。
+  -- xiyin = 汐音委派；user = 人在编队里自己开的会话（回合结束落「待命」）。
+  origin TEXT NOT NULL DEFAULT 'xiyin' CHECK (origin IN ('xiyin','user')),
   doer_session_id TEXT,
   result_summary TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  ended_at TEXT
+  ended_at TEXT,
+  -- 归档闸（2026-11-25 用户）：会话也有归档；结束 ≠ 归档。
+  -- 归档由汐音管理（可选：先做会话反思并写 wiki，再归档）。
+  archived_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_cabin_delegations_cabin ON cabin_delegations(cabin_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_cabin_delegations_doer ON cabin_delegations(doer_session_id);
@@ -1516,6 +1522,25 @@ CREATE TABLE IF NOT EXISTS cabin_attention_acks (
   UNIQUE (cabin_id, item_id)
 );
 CREATE INDEX IF NOT EXISTS idx_cabin_attention_acks_cabin ON cabin_attention_acks(cabin_id);
+
+-- ── 设备令牌（M3 · 2026-11-27）───────────────────────────────────────────
+-- 一台手机一条长期令牌：`tailscale serve` 之后的请求必须带 Bearer。
+-- 只存 sha256（64 hex），明文令牌只在兑换那一刻返回一次；token_prefix 是前 8
+-- 位，纯展示用（设置页能认出「是哪一条」，不足以还原令牌）。
+-- 吊销 = revoked_at 非空；行保留（谁在什么时候配对过是账本，不做物理删除）。
+CREATE TABLE IF NOT EXISTS devices (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,
+  token_prefix TEXT NOT NULL,
+  platform TEXT,
+  created_at TEXT NOT NULL,
+  last_seen_at TEXT,
+  revoked_at TEXT,
+  -- M4 远程拉起：配对时下发 / 消耗掉的那把 SSH 密钥槽（仅展示与对账）。
+  ssh_key_slot TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_devices_active ON devices(revoked_at);
 
 -- ── 舱归属写一次（2026-11-17）────────────────────────────────────────────
 -- 工作区 / 任务 / 会话 / 执行出生在哪个舱就永远属于哪个舱。

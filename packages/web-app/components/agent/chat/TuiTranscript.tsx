@@ -21,6 +21,8 @@ import { AcceptanceCheckCard } from './acceptance-check-card'
 import { ArchiveSummaryCard } from './archive-summary-card'
 import { AuthorAskCard } from './author-ask-card'
 import { CabinInitGateCard } from '@/components/cabin/CabinInitGateCard'
+import { ChatImages, useChatMediaScope } from './chat-images'
+import { openDoc } from '@/lib/open-doc'
 
 /** 文档扩展名（与服务端 GET /api/cabins/:id/doc 同一张表）：命中才渲染成可点 chip。 */
 const DOC_EXT_PATTERN = 'md|markdown|mdx|txt|json|jsonc|ya?ml|toml|ini|conf|csv|tsv|log|xml|html?|css|scss|less|js|mjs|cjs|ts|tsx|jsx|vue|svelte|py|go|rs|java|kt|kts|sh|bash|zsh|ps1|sql|graphql|proto|diff|patch|rst|adoc|png|jpe?g|gif|webp|avif|svg|bmp|ico|mp4|m4v|webm|ogv|mov|mp3|m4a|wav|ogg'
@@ -39,9 +41,10 @@ const DOC_PLAIN_RE = new RegExp(
 )
 
 /** 文档路径（2026-11-19 用户 #4）：正文里的产物绝对路径 —— 路径本身是纯文本
- *  （可选中复制），只有右侧「↗」小按钮可点，打开座舱文档查看器。
- *  只在 cockpit 变体渲染（TuiMessage docLinks）；classic / 桌面转录逐字不变。 */
+ *  （可选中复制），只有右侧「↗」小按钮可点。2026-11-26 起全舱 / 桌面 / 经典舱都开：
+ *  全舱由 CockpitDocWindow 接事件，桌面由 ChatDocWindow 按 sessionId 接。 */
 function DocRef({ path }: { path: string }) {
+  const scope = useChatMediaScope()
   return (
     <span className="doc-ref inline-flex max-w-full items-center gap-1 font-mono text-[10.5px]" data-doc-path={path}>
       <span aria-hidden="true" className="shrink-0">📄</span>
@@ -53,7 +56,7 @@ function DocRef({ path }: { path: string }) {
         data-testid="chat-doc-chip"
         onClick={(event) => {
           event.stopPropagation()
-          window.dispatchEvent(new CustomEvent('octopus:open-doc', { detail: { path } }))
+          openDoc(path, scope?.sessionId ?? null)
         }}
       >
         ↗
@@ -82,7 +85,11 @@ function withDocChips(text: string, keyBase: number): ReactNode {
 /** mini-markdown：`**bold**` / `行内 code` / 行首 # 标题 —— 消灭字面星号。 */
 function mdInline(text: string, docLinks = false): ReactNode {
   return text.split(/(\*\*[^*\n]+\*\*|`[^`\n]+`)/g).map((p, i) => {
-    if (/^\*\*[^*]+\*\*$/.test(p)) return <strong key={i} className="font-bold text-pop-pink">{p.slice(2, -2)}</strong>
+    // 加粗里也可能整条是产物路径（agent 常把交付文件写成 **C:\\…\\报告.md**）：
+    // 继续走一遍 inline 解析，否则 chip / 可点按钮会被 <strong> 吞掉。
+    if (/^\*\*[^*]+\*\*$/.test(p)) {
+      return <strong key={i} className="font-bold text-pop-pink">{mdInline(p.slice(2, -2), docLinks)}</strong>
+    }
     if (/^`[^`]+`$/.test(p)) {
       const inner = p.slice(1, -1)
       // 2026-11-19 用户 #4：code 里是产物绝对路径 → 渲染成可点 chip（悬停给完整路径）。
@@ -744,7 +751,7 @@ export function TuiMessage({ message, compactEvent, ask, docLinks = false, lead,
   compactEvent?: boolean
   /** 传了才把消息里的 AskUserQuestion 画成可答卡片（详情/线程宿主接管线）。 */
   ask?: TuiAskBinding
-  /** 正文里的产物绝对路径渲染成可点文档 chip（2026-11-19，仅 cockpit 传 true）。 */
+  /** 正文里的产物绝对路径渲染成可点文档 chip（全舱 / 桌面 / 经典舱都传 true）。 */
   docLinks?: boolean
   /** 助手行头（全域座舱的 `✦ 汐音`）：与统计行同一行，不单独占行。 */
   lead?: ReactNode
@@ -824,6 +831,7 @@ export function TuiMessage({ message, compactEvent, ask, docLinks = false, lead,
           </div>
         )
         : metaCount > 0 && <div className="text-pop-dim"><TuiMark />（未生成文本回复）</div>}
+      {displayContent && <ChatImages text={displayContent} />}
       {ask && askCall && (
         ask.answered ? (
           <div

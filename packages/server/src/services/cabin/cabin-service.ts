@@ -898,7 +898,9 @@ export class CabinService {
         const h = delegationHandles.get(d.id)
         return {
           id: d.id, title: d.title, state: d.state,
+          ...(d.origin === "user" ? { origin: "user" as const } : {}),
           ...(d.result_summary ? { summary: d.result_summary } : {}),
+          ...(d.archived_at ? { archived_at: d.archived_at } : {}),
           ...(h ? { handle: h.handle, color: h.color } : {}),
         }
       }),
@@ -1385,11 +1387,29 @@ export class CabinService {
   docRoots(cabinId: string): string[] {
     const row = this.mustGet(cabinId)
     const roots: string[] = []
-    if (row.path) roots.push(path.resolve(row.path))
+    const push = (value: string | null | undefined) => {
+      if (value) roots.push(path.resolve(value.replace(/^~/, os.homedir())))
+    }
+    push(row.path)
+    // 2026-11-26 用户：生成物常见落点 —— 项目检出 / 外部项目 / worktree /
+    // 旧任务 home / 对话媒体目录，都放进文档窗白名单，避免「磁盘上有、点开 404」。
+    if (row.path) {
+      try {
+        for (const repo of readCabinConfig(row.path).repos) {
+          if (repo.main_path) push(repo.main_path)
+          if (repo.worktree_path) push(repo.worktree_path)
+          for (const wt of repo.worktrees ?? []) push(wt.path)
+          if (repo.local_path) push(path.resolve(row.path, repo.local_path))
+        }
+      } catch { /* 坏 cabin.json 不影响文档窗其余根 */ }
+    }
+    push(path.join(os.homedir(), ".octopus", "chat-media"))
     if (this.infra) {
       for (const t of this.infra.taskDAO.findByCabinId(cabinId)) {
         const wsPath = t.workspace_id ? this.infra.workspaceDAO.findPathById(t.workspace_id) : null
         if (wsPath) roots.push(path.resolve(wsPath.replace(/^~/, os.homedir())))
+        // 老任务 home（resolver 之前的 ~/.octopus/tasks/<id>）仍可能留着产物。
+        push(path.join(os.homedir(), ".octopus", "tasks", t.id))
       }
     }
     return [...new Set(roots)]
@@ -1434,9 +1454,11 @@ export class CabinService {
         status = row?.status ?? "unknown"
         project_keys = this.anchorsOfCwd(row?.cwd ?? null, projects)
       }
-      const transport = j.kind === "task" ? "task-thread" : j.kind === "workflow" ? "workflow-engine" : "sdk-agent"
+      const transport = j.kind === "task"
+        ? "task-thread"
+        : j.kind === "workflow" ? "workflow-engine" : "sdk-agent"
       const agent_running = !!j.session_id && isStreaming(j.session_id)
-      return { ...j, status, transport, project_keys, agent_running }
+      return { ...j, title: j.title, status, transport, project_keys, agent_running }
     })
   }
 
@@ -1470,7 +1492,10 @@ export class CabinService {
         return {
           id: d.id, kind: "delegation" as const,
           handle: h?.handle ?? "D?", color: h?.color ?? 0,
-          title: d.title, status: d.state,
+          title: d.title,
+          // 归档是独立一档（2026-11-25 用户）：state=done 只是「待命」。
+          status: d.archived_at ? "archived" : d.state,
+          origin: d.origin,
           session_id: d.doer_session_id, job_id: d.id,
         } satisfies CabinWorkRow
       }),

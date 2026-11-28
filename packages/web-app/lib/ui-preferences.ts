@@ -8,6 +8,7 @@
 // （storage 事件）。
 
 const DOCK_LABELS_KEY = "octopus.ui.dockLabels.v1"
+const CHAT_IMAGE_THUMBS_KEY = "octopus.ui.chatImageThumbs.v1"
 
 const listeners = new Set<() => void>()
 let storageListenerInstalled = false
@@ -42,7 +43,50 @@ export function subscribeDockLabels(listener: () => void): () => void {
   if (!storageListenerInstalled && typeof window !== "undefined") {
     storageListenerInstalled = true
     window.addEventListener("storage", (event) => {
-      if (event.key !== DOCK_LABELS_KEY) return
+      if (event.key !== DOCK_LABELS_KEY && event.key !== CHAT_IMAGE_THUMBS_KEY) return
+      for (const l of listeners) l()
+    })
+  }
+  return () => {
+    listeners.delete(listener)
+  }
+}
+
+// ── 对话里的图片缩略图（2026-11-26 用户）──────────────────────────────
+// 助手正文里出现图片绝对路径时，在消息下面直接显示缩略图；点开看大图。
+// 默认打开，设置 → 外观 可关（关掉后退回「只有路径文本」的旧形态）。
+
+function readChatImageThumbs(): boolean {
+  if (typeof window === "undefined") return true
+  try {
+    const raw = window.localStorage.getItem(CHAT_IMAGE_THUMBS_KEY)
+    // 只有显式写 false 才关闭；缺省/脏数据都按「显示」处理。
+    return raw !== "false"
+  } catch {
+    return true
+  }
+}
+
+/** Current preference; the default is `true` (thumbnails visible). */
+export function getChatImageThumbs(): boolean {
+  return readChatImageThumbs()
+}
+
+export function setChatImageThumbs(visible: boolean): void {
+  try {
+    window.localStorage.setItem(CHAT_IMAGE_THUMBS_KEY, String(visible))
+  } catch {
+    // private mode / quota — keep the in-memory behaviour working.
+  }
+  for (const listener of listeners) listener()
+}
+
+export function subscribeChatImageThumbs(listener: () => void): () => void {
+  listeners.add(listener)
+  if (!storageListenerInstalled && typeof window !== "undefined") {
+    storageListenerInstalled = true
+    window.addEventListener("storage", (event) => {
+      if (event.key !== DOCK_LABELS_KEY && event.key !== CHAT_IMAGE_THUMBS_KEY) return
       for (const l of listeners) l()
     })
   }

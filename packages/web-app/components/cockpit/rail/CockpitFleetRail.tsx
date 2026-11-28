@@ -2,14 +2,17 @@
 
 // v21（design 31 §3.1）· 左栏编队 —— 单列 hex 卡。
 //
-//   · 排序：状态优先（受阻 → 等你 → 在跑 → 待命 → 已结束），同状态按创建时间
-//     升序（旧 → 新）；纯 attention 行不进编队（归右栏 inbox）。
+//   · 排序：状态优先（受阻 → 等你 → 在跑 → 待命 → 已完成 → 已归档），
+//     同状态按创建时间（旧 → 新；归档档相反：新 → 旧）；纯 attention 行不进编队
+//     （归右栏 inbox）。
 //   · 默认 6 行；超出时底部「更多 +N ⌄ / 收起 ⌃」，展开只重渲染本栏。
 //   · v22 #5（2026-11-23 用户）：行体 / 💬 = 打开这条作战的独立 chat 窗（默认
 //     和主通讯台一样大、盖在上面）；▦ = 作战详情。行不再切换主通讯台。
-//   · 数字纪律：pct 只在真实拿到时画条；null 一律不画，不猜。
-//   · v22 #6（2026-11-23 用户）：作战中行副行最右挂活秒表（⏱ mm:ss，每秒走字）
+//   · 数字纪律：pct 只在真实拿到时显示数字；null 一律不显示，不猜。
+//   · v22 #6（2026-11-23 用户）：作战中行副行最右挂活秒表（mm:ss，每秒走字）
 //     —— 与流式卡的计时同一套读数，一眼看出它没卡住；只这一格每秒重渲染。
+//   · 2026-11-25 用户：编队行去掉进度条 / 六边进度环 —— 运行中 = 天蓝左缘竖条
+//     + 秒表前的 braille 转字（与 chat 流尾工作行同一套帧，10fps）。
 //
 // 数据只从 useCockpitFleet() 来（已经是入口舱单舱），不自己 fetch。
 
@@ -27,13 +30,14 @@ import {
   type CockpitRow,
   type FleetStatus,
 } from '../fleet/fleet-model'
-import { sameCockpitRef, type CockpitRef } from '../state/cockpit-state'
+import { sameCockpitRef, defaultTabForRef, type CockpitRef } from '../state/cockpit-state'
 import { projectNameFromKey, rowProjectKeys } from '../projects/project-model'
+import { accentOfRow } from '../fleet/project-accent'
 import { taskDisplayStatus } from '@/components/cabin/modules/ui'
 import { jobStatusLabel } from '@/components/cabin/job-status'
 import { useCockpitState } from '../state/CockpitStateProvider'
 import { useCockpitThreads } from '../chat/use-cockpit-threads'
-import { openFleetChat } from '../chat/open-fleet-window'
+import { openFleetChat, openNewSessionWindow } from '../chat/open-fleet-window'
 import { attentionStageLabel } from '../fx/CockpitBrief'
 
 const RAIL_LAYER_PRIORITY = 70
@@ -46,32 +50,27 @@ const STATUS_LABEL: Record<FleetStatus, string> = {
   wait: '等你答',
   run: '作战中',
   queue: '待命',
-  // done 组按实体细分（见 statusTextOf）：任务走完归档闸 = 已归档，其余 = 已完成。
+  // done 组按实体细分（见 statusTextOf）：非会话作业跑完 = 已完成。
   done: '已完成',
+  archived: '已归档',
 }
 
-/** 原型四个项目色 —— 用项目 key 稳定 hash 取一个，不依赖服务端多给字段。 */
-const ACCENTS = ['#35C7F0', '#8B7CF6', '#FFB020', '#3DDC97']
-
-function accentOf(row: CockpitRow): string {
-  const anchor = row.kind === 'job' ? rowProjectKeys(row)[0] ?? row.key : row.key
-  let hash = 0
-  for (let i = 0; i < anchor.length; i += 1) hash = (hash * 31 + anchor.charCodeAt(i)) | 0
-  return ACCENTS[Math.abs(hash) % ACCENTS.length]
-}
-
-/** 类型字形（原型 KIND）；attention 行不进编队。 */
+/** 类型字形（原型 KIND）；attention 行不进编队。
+ *  会话（delegation）用 ❯ —— 它是一条聊天会话，不是任务/工作流。 */
 function glyphOf(row: CockpitRow): string {
   if (row.kind === 'task') return '◆'
-  if (row.kind === 'delegation') return '≫'
+  if (row.kind === 'delegation') return '❯'
   if (row.kind !== 'job') return '◆'
   const kind = row.job.kind
   return kind === 'workflow' ? '⬡' : kind === 'subagent' ? '◈' : '◆'
 }
 
 function rowRef(row: CockpitRow): CockpitRef | null {
-  if (row.kind === 'job') return { kind: 'job', cabinId: row.cabinId, id: row.job.id }
+  if (row.kind === 'job') {
+    return { kind: 'job', cabinId: row.cabinId, id: row.job.id }
+  }
   if (row.kind === 'task') return { kind: 'task', cabinId: row.cabinId, id: row.task.id }
+  if (row.kind === 'delegation') return { kind: 'delegation', cabinId: row.cabinId, id: row.delegation.id }
   if (row.kind === 'attention') return { kind: 'attention', cabinId: row.cabinId, id: row.item.id }
   return null
 }
@@ -85,7 +84,7 @@ function titleOf(row: CockpitRow): string {
 
 function pctOf(row: CockpitRow): number | null {
   if (row.kind === 'attention' || row.kind === 'delegation') return null
-  // 主线程 agent 在跑、执行还没开始：不显示 0% 的假进度条。
+  // 主线程 agent 在跑、执行还没开始：不显示 0% 的假进度。
   if (row.kind === 'job' && row.job.agent_running && row.job.status !== 'running') return null
   return row.pct
 }
@@ -97,7 +96,9 @@ function subOf(row: CockpitRow, status: FleetStatus): string {
     : null
   if (row.kind === 'delegation') {
     const delegation: CabinDelegationView = row.delegation
-    return [project, `委派 ${delegation.handle ?? ''}`.trim()].filter(Boolean).join(' · ')
+    // 同一本账，只差创建者：人自开的写「会话」，汐音派的写「委派」。
+    const label = delegation.origin === 'user' ? '会话' : '委派'
+    return [project, `${label} ${delegation.handle ?? ''}`.trim()].filter(Boolean).join(' · ')
   }
   if (row.kind === 'job' && row.attention) {
     return [project, attentionStageLabel(row.attention)].filter(Boolean).join(' · ')
@@ -132,12 +133,10 @@ function statusTextOf(row: CockpitRow, status: FleetStatus): string {
   if (raw === 'archiving') return '归档中'
   if (row.kind === 'job' && row.attention) return attentionStageLabel(row.attention)
   if (status === 'wait') return '等你答'
-  // 2026-11-25 用户：完结 ≠ 归档。只有走完归档闸的任务（task 派生 done）才配
-  // 「已归档」；会话 / 委派 / 其它作业跑完只是「已完成」。归档是人工闸——用户
-  // 在对话里说「归档」才启动，状态词不能暗示它已经发生过。
+  // 2026-11-25 用户：完结 ≠ 归档。会话做完只是「待命」（还能继续聊），
+  // 已归档是独立终态；任务走完归档闸才写「已归档」。
+  if (status === 'archived') return '已归档'
   if (status === 'done') {
-    const isTask = row.kind === 'task' || (row.kind === 'job' && row.job.kind === 'task')
-    if (isTask && raw === 'done') return '已归档'
     if (row.kind === 'delegation') return statusLabel(row)
     if (row.kind === 'job' && raw && raw !== 'unknown') return jobStatusLabel(raw)
     return '已完成'
@@ -156,18 +155,32 @@ function startedAtOf(row: CockpitRow): number | null {
   return Number.isNaN(at) ? null : at
 }
 
-/** v22 #6（2026-11-23 用户）：干活行的活秒表 —— 每秒 +1，同流式卡的 ⏱ 读数。
+/** chat 流尾工作行同款 braille 转字（2026-11-25 用户）：10fps 循环，表示「还在干活」。 */
+const RUN_SPIN = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+
+/** v22 #6（2026-11-23 用户）：干活行的活秒表 —— 每秒 +1，同流式卡的读数。
  *  v23 十六轮（2026-11-24 用户）：口径统一成「已作战」= job 起点 → now，
  *  作战中 / 待验收在跑 / 待命在跑 共用；≥1h 只显示 h:mm（完整值在 title）。
+ *  2026-11-25 用户：秒表前加一枚 braille 转字（与 chat 工作行同一套帧，10fps），
+ *  替换原来的 ⏱ 字形；reduced-motion 下冻结首帧。
  *  自带 interval，只有这一格文本重渲染，整条编队不跟着每秒重建。
- *  backgroundWait = 作者在等后台任务：点与字转琥珀色（仍是静态，不闪）。 */
+ *  backgroundWait = 作者在等后台任务：点、字、转字一并转琥珀色（仍是静态，不闪）。 */
 function RunClock({ start, backgroundWait = false }: { start: number; backgroundWait?: boolean }) {
   const [now, setNow] = useState(() => Date.now())
+  const [frame, setFrame] = useState(0)
   useEffect(() => {
     setNow(Date.now())
     const timer = window.setInterval(() => setNow(Date.now()), 1000)
     return () => window.clearInterval(timer)
   }, [start])
+  useEffect(() => {
+    if (
+      typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    ) return
+    const timer = window.setInterval(() => setFrame((f) => (f + 1) % RUN_SPIN.length), 100)
+    return () => window.clearInterval(timer)
+  }, [])
   const ms = Math.max(0, now - start)
   const label = formatRunClock(ms, { compact: true })
   const full = formatRunClock(ms)
@@ -177,7 +190,7 @@ function RunClock({ start, backgroundWait = false }: { start: number; background
       data-testid="cockpit-rail-clock"
       title={`已作战 ${full} · ${backgroundWait ? '作者在等后台，回合还活着' : '每秒走字 = 还活着'}`}
     >
-      ⏱ {label}
+      <span className="ck12-flspin" aria-hidden="true">{RUN_SPIN[frame]}</span> {label}
     </span>
   )
 }
@@ -211,19 +224,25 @@ export function CockpitFleetRail() {
 
   const runCount = visible.filter((row) => fleetStatusOf(row) === 'run').length
   const queueCount = visible.filter((row) => fleetStatusOf(row) === 'queue').length
-  const doneCount = visible.filter((row) => fleetStatusOf(row) === 'done').length
+  const archivedCount = visible.filter((row) => fleetStatusOf(row) === 'archived').length
 
-  /** v22 #5：行体 / 💬 = 这条作战的独立 chat 窗；没有会话的行退回详情。 */
+  /** v22 #5：行体 / 💬 = 这条作战的独立 chat 窗；没有会话的行退回详情。
+   *  2026-11-27：人自开会话就是 delegation 行 —— 有 doer 会话，走同一扇窗入口。 */
   const openChat = (row: CockpitRow) => {
-    if (byKey.has(row.key)) { openFleetChat(wins, threadApi, row.key, chatWindow); return }
+    const thread = byKey.get(row.key)
+    if (thread) { openFleetChat(wins, threadApi, row.key, chatWindow, thread.sessionId); return }
     const ref = rowRef(row)
     if (ref) select(ref)
   }
-  /** ▦ = 作战详情（落在「运行」页签）；待归档 / 归档中直接落「归档」页签。 */
+  /** ▦ = 详情（会话落「对接」，任务/作业落「运行」）；待归档 / 归档中直接落「归档」页签。 */
   const openDetail = (row: CockpitRow) => {
     const ref = rowRef(row)
-    if (ref) select(ref, onArchiveGate(row) ? 'archive' : 'run')
+    if (ref) select(ref, onArchiveGate(row) ? 'archive' : defaultTabForRef(ref))
   }
+
+  /** v23（2026-11-27 用户）：编队「新会话」—— 空白草稿窗，发第一条消息才创建会话，
+   *  不占汐音的回合，也不会有上下文串味。 */
+  const openNewSession = () => { openNewSessionWindow(wins, chatWindow) }
 
   // ── 新行 pop：arrivals 命中的 attention + 首次出现的 key，900ms 后收 ──
   const seenKeysRef = useRef<Set<string> | null>(null)
@@ -346,6 +365,15 @@ export function CockpitFleetRail() {
         <span className="ck12-fr-sp" />
         <button
           type="button"
+          className="ck12-fr-new"
+          title="新建会话 · 发第一条消息才创建，不占汐音"
+          data-testid="cockpit-fleet-new"
+          onClick={openNewSession}
+        >
+          新会话
+        </button>
+        <button
+          type="button"
           className="ck12-fr-all"
           title={fleetOpen ? '收起编队列表' : '展开全部编队'}
           data-testid="cockpit-fleet-all"
@@ -358,7 +386,7 @@ export function CockpitFleetRail() {
       <div className="ck12-fr-sub">
         <span>在跑 <b>{runCount}</b></span>
         <span>待命 <b>{queueCount}</b></span>
-        <span>归档 <b>{doneCount}</b></span>
+        <span>归档 <b>{archivedCount}</b></span>
       </div>
 
       {/* 有数据但本轮刷新失败：保留上一份编队，明确标 stale，不悄悄假装最新。 */}
@@ -413,17 +441,31 @@ export function CockpitFleetRail() {
           const rawStatus = rawStatusOf(row)
           const archGate = onArchiveGate(row)
           const pct = rawStatus === 'awaiting_archive' ? null : pctOf(row)
-          const startedAt = live ? startedAtOf(row) : null
+          // 人自开的会话生命周期很长（created_at 是会话始建时间）——本轮起跑时刻
+          // 用 running 那一次写入的 updated_at，不拿会话年龄冒充本轮耗时。
+          const startedAt = !live
+            ? null
+            : row.kind === 'delegation' && row.delegation.origin === 'user'
+              ? (() => {
+                const at = Date.parse(row.delegation.updated_at)
+                return Number.isNaN(at) ? null : at
+              })()
+              : startedAtOf(row)
           const backgroundWait = live && row.kind === 'job' && row.live_phase === 'background-wait'
-          const liveText = live ? (backgroundWait ? '作者在等后台' : '作者在跑') : null
-          const showBar = stage !== 'done' && (live || pct !== null)
-          /** 没有真实进度（pct=null）的干活行：底部用不定长滚动条，不猜百分比。 */
-          const indeterminate = live && pct === null
+          const liveText = live
+            ? (backgroundWait
+              ? '作者在等后台'
+              : row.kind === 'delegation' && row.delegation.origin === 'user' ? '会话在跑' : '作者在跑')
+            : null
+          const endedStage = stage === 'done' || stage === 'archived'
           const statusText = statusTextOf(row, stage)
-          const accent = accentOf(row)
+          const accent = accentOfRow(row)
           const title = titleOf(row)
+          const delegationSessionId = row.kind === 'delegation' ? row.delegation.doer_session_id : null
           const talkable = byKey.has(row.key)
-          const chatOpen = wins.windows.some((win) => win.threadKey === row.key && !win.min)
+          const chatOpen = wins.windows.some((win) => !win.min && (
+            win.threadKey === row.key || (!!delegationSessionId && win.sessionId === delegationSessionId)
+          ))
           const unread = threadApi.unread[row.key] ?? 0
           const showActs = talkable || !!ref
           return (
@@ -441,7 +483,7 @@ export function CockpitFleetRail() {
               className={`ck12-flrow is-${stage}${live ? ' is-flow' : ''}${selected ? ' is-on' : ''}${
                 chatOpen ? ' is-chat' : ''
               }${popped.has(row.key) ? ' is-pop' : ''}${flash.key === row.key ? ` is-arrived-${flash.nonce % 2}` : ''}`}
-              style={{ ['--accent' as string]: accent, ['--p' as string]: String(pct ?? 0) }}
+              style={{ ['--accent' as string]: accent }}
               onClick={() => (talkable ? openChat(row) : openDetail(row))}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' || event.key === ' ') {
@@ -458,7 +500,7 @@ export function CockpitFleetRail() {
               <span className="ck12-flbody">
                 <span className="ck12-fltop">
                   <b className="ck12-fl-title">{title}</b>
-                  {pct !== null && stage !== 'done' && (
+                  {pct !== null && !endedStage && (
                     <span className="ck12-flpct">{Math.round(pct)}%</span>
                   )}
                 </span>
@@ -470,18 +512,6 @@ export function CockpitFleetRail() {
                     <RunClock start={startedAt} backgroundWait={backgroundWait} />
                   )}
                 </span>
-                {showBar && (
-                  <span
-                    className={`ck12-flbar${indeterminate ? ' is-live' : live ? ' is-run' : ''}`}
-                    aria-hidden="true"
-                  >
-                    <i
-                      style={indeterminate
-                        ? undefined
-                        : { width: `${Math.max(0, Math.min(100, pct ?? 0))}%` }}
-                    />
-                  </span>
-                )}
               </span>
 
               {showActs && (
@@ -513,8 +543,10 @@ export function CockpitFleetRail() {
                       className={`ck12-flact${archGate ? ' is-arch' : ''}`}
                       aria-label={`${archGate ? '归档' : '详情'} ${title}`}
                       title={archGate
-                        ? '📦 归档 · 作战详情 · 归档页签'
-                        : '▦ 详情 · 作战详情（不动主通讯台）'}
+                        ? '📦 归档 · 详情 · 归档页签'
+                        : row.kind === 'delegation'
+                          ? '▦ 会话详情（对接 / 文件 / 运行 / 调试 / 消耗 / 子代理）'
+                          : '▦ 详情 · 作战详情（不动主通讯台）'}
                       data-testid={`cockpit-rail-detail-${row.key}`}
                       onClick={(event) => {
                         event.stopPropagation()

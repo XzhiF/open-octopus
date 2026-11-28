@@ -1,10 +1,11 @@
 // 全域座舱 URL 纯函数（S1；S9 在此之上补 origin 规则）。
 //
 // 契约（plans §1.1）：
-//   /cabin/:cabinId/cockpit?job=<jobId>&tab=<dialog|relay|run|changes|accept>
+//   /cabin/:cabinId/cockpit?job=<jobId>&tab=<relay|run|changes|accept|archive|files|debug|project|usage|agents>
 //   /cabin/:cabinId/cockpit?task=<taskId>
+//   /cabin/:cabinId/cockpit?delegation=<id>
 //   /cabin/:cabinId/cockpit?attn=<attentionId>
-// 参数优先级 job > task > attn；都缺 → 由 resolveDefaultRef 决定。
+// 参数优先级 job > task > delegation > attn；都缺 → 由 resolveDefaultRef 决定。
 //
 // 2026-11-15 用户口径：全域只属于入口舱。`?cabin=` 跨舱语义已退役 —— 旧链接
 // 里的 `cabin` 参数会被忽略并清掉，所有 ref 的所属舱一律 = 入口舱。
@@ -53,6 +54,10 @@ export function parseCockpitUrl(
   const task = cleanId(params.get('task'))
   if (task) return { ref: { kind: 'task', cabinId: ownerCabinId, id: task }, tab }
 
+  // 会话（delegation）详情：?delegation=<id>（2026-11-25；人自开会话同一条路径）。
+  const delegation = cleanId(params.get('delegation'))
+  if (delegation) return { ref: { kind: 'delegation', cabinId: ownerCabinId, id: delegation }, tab }
+
   const attention = cleanId(params.get('attn'))
   if (attention) return { ref: { kind: 'attention', cabinId: ownerCabinId, id: attention }, tab }
 
@@ -83,7 +88,7 @@ export function serializeCockpitHref(
 
 /** 座舱自己拥有的查询参数；同步 URL 时只重写这些，其余（?demo=1 等）原样保留。
  *  `cabin` 已退役但保留在表里：旧跨舱深链的残留参数会在第一次同步时被清掉。 */
-export const COCKPIT_OWNED_PARAMS = ['job', 'task', 'attn', 'project', 'tab', 'cabin'] as const
+export const COCKPIT_OWNED_PARAMS = ['job', 'task', 'delegation', 'attn', 'project', 'tab', 'cabin'] as const
 
 /** 把当前 query 里不归座舱管的参数并到目标 href 上（顺序：座舱参数在前）。 */
 export function cockpitHrefPreserving(

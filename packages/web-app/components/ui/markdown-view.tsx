@@ -1,8 +1,8 @@
 'use client'
 
-// 只读文档的 Markdown 渲染（2026-11-19 从 CockpitTreeWindow 抽出）：
-// 目录窗右栏与聊天文档查看器共用同一套排版（.ck12-ckt-doc / .ck12-ckt-fence）。
+// 只读文档的 Markdown 渲染（2026-11-19 全舱文档窗；2026-11-26 桌面文档窗共用）：
 // 只做查看用的一小撮语法（标题 / 列表 / 引用 / 行内 code / 代码块），不引入完整渲染器。
+// 排版由各宿主的外层容器负责（.ck12-ckt-doc / .chat-doc-md）。
 
 import type { ReactNode } from 'react'
 

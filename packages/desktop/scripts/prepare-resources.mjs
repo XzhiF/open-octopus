@@ -146,6 +146,23 @@ const webDest = path.join(resources, 'web')
 if (!fs.existsSync(path.join(webSrc, 'index.html'))) throw new Error('web dist missing; build failed')
 fs.cpSync(webSrc, webDest, { recursive: true })
 
+// 托盘图标在主进程里按 process.resourcesPath/tray 读（build/ 只在构建期有用）。
+const traySrc = path.join(desktopDir, 'build', 'tray')
+const trayDest = path.join(resources, 'tray')
+if (!fs.existsSync(traySrc)) throw new Error(`tray icons missing: ${traySrc}`)
+fs.cpSync(traySrc, trayDest, { recursive: true })
+
+// 远程拉起（M4）：install-remote.{ps1,sh} + octopus-ctl.{ps1,sh} 跟着桌面端走。
+// 设置页「启用远程拉起」→ server 按宿主平台调用对应脚本（用 OCTOPUS_REMOTE_DIR 找）。
+const remoteSrc = path.join(repoRoot, 'scripts', 'remote')
+const remoteDest = path.join(resources, 'remote')
+for (const file of ['install-remote.ps1', 'octopus-ctl.ps1', 'install-remote.sh', 'octopus-ctl.sh']) {
+  if (!fs.existsSync(path.join(remoteSrc, file))) {
+    throw new Error(`remote script missing: ${path.join(remoteSrc, file)}`)
+  }
+}
+fs.cpSync(remoteSrc, remoteDest, { recursive: true })
+
 const corePackSrc = path.join(repoRoot, 'packages', 'core-pack')
 const corePackDest = path.join(resources, 'packages', 'core-pack')
 fs.mkdirSync(corePackDest, { recursive: true })
@@ -175,6 +192,9 @@ for (const [label, file] of [
   ['better-sqlite3', path.join(modulesDir, 'better-sqlite3', 'build', 'Release', 'better_sqlite3.node')],
   ['node runtime', nodeDest],
   ['web index', path.join(webDest, 'index.html')],
+  ['tray icons', path.join(trayDest, process.platform === 'darwin' ? 'tray-mac.png' : 'tray-16.png')],
+  ['remote installer', path.join(remoteDest, process.platform === 'win32' ? 'install-remote.ps1' : 'install-remote.sh')],
+  ['remote ctl', path.join(remoteDest, process.platform === 'win32' ? 'octopus-ctl.ps1' : 'octopus-ctl.sh')],
   ['core-pack skills', path.join(corePackDest, 'skills')],
 ]) {
   if (!fs.existsSync(file)) throw new Error(`missing ${label}: ${file}`)

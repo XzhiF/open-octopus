@@ -21,6 +21,13 @@ extraResources:
     to: server/node_modules
   - from: resources/packages/core-pack
     to: packages/core-pack
+  # 托盘图标：由 prepare-resources 从 build/tray 拷进 resources/，
+  # 运行时从 process.resourcesPath/tray 读。
+  - from: resources/tray
+    to: tray
+  # M4 远程拉起：安装器与控制脚本（设置页一键启用时以管理员调用）。
+  - from: resources/remote
+    to: remote
 asar: true
 npmRebuild: false
 publish: null

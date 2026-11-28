@@ -498,11 +498,18 @@ function workspaceGuide() {
 }
 function ensureRootClaudePointer(wsDir) {
   const rootClaude = path.join(wsDir, "CLAUDE.md");
-  const pointer = "> 工作空间完整说明（目录结构 / 项目 / 开工作树命令）见 [.octopus/CLAUDE.md](.octopus/CLAUDE.md)";
+  const pointer = "> \u5DE5\u4F5C\u7A7A\u95F4\u5B8C\u6574\u8BF4\u660E\uFF08\u76EE\u5F55\u7ED3\u6784 / \u9879\u76EE / \u5F00\u5DE5\u4F5C\u6811\u547D\u4EE4\uFF09\u89C1 [.octopus/CLAUDE.md](.octopus/CLAUDE.md)";
   let existing = "";
-  try { existing = fs.readFileSync(rootClaude, "utf-8"); } catch { /* new file */ }
+  try {
+    existing = fs.readFileSync(rootClaude, "utf-8");
+  } catch {
+  }
   if (existing.includes(pointer)) return;
-  const next = existing.trim().length === 0 ? `${pointer}\n` : `${existing.replace(/\s*$/, "")}\n\n${pointer}\n`;
+  const next = existing.trim().length === 0 ? `${pointer}
+` : `${existing.replace(/\s*$/, "")}
+
+${pointer}
+`;
   fs.writeFileSync(rootClaude, next, "utf-8");
 }
 function writeClaudeMd(wsDir, wsName, repos) {
