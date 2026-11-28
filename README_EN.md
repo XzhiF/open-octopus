@@ -80,9 +80,10 @@ and minimized state persist; deep links open the owning window.
 
 **Cabin (classic)** — one directory per cabin. The left rail is the *fleet* (every operation in this
 cabin), the middle is the main chat, the right is *needs handling*. Open an operation to see its
-detail: Overview → Liaison → Runs → Changes → Acceptance → Files → Debug → Projects.
+detail: Liaison → Runs → Changes → Acceptance → Archive → Files → Debug → Projects → Usage →
+Sub-agents.
 
-<img src="docs/imgs/task-detail.webp" alt="Operation detail: status, executor, branch, events" />
+<img src="docs/imgs/task-detail.webp" alt="Operation detail · Liaison: you → Xiyin → executor, three-way comms" />
 
 **Cockpit (global)** — a directory-free view: every cabin's operations in one fleet, with the same
 inbox and conversation. Built for seeing everything and deciding in one place.
