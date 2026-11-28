@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 
 import '../../app/theme.dart';
 import '../../core/models/quote.dart';
 import '../../core/models/telemetry.dart';
+import '../../core/nav.dart';
 import '../../core/providers.dart';
 import '../../widgets/octo_bar.dart';
 import '../../widgets/panel.dart';
@@ -116,7 +116,7 @@ class _SessionScreenState extends ConsumerState<SessionScreen> {
                 subtitleWidget: widget.agent && _role != null
                     ? _barSubtitle(device?.name, quote?.stage.label)
                     : null,
-                onBack: () => context.pop(),
+                onBack: () => back(context),
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
                 actions: [
                   BarIconButton(

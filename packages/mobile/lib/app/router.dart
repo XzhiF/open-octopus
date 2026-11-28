@@ -11,12 +11,17 @@ import '../features/devices/add_device_screen.dart';
 import '../features/devices/devices_screen.dart';
 import '../features/settings/settings_screen.dart';
 import '../features/tasks/task_detail_screen.dart';
+import '../widgets/back_to_exit.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
   final router = GoRouter(
     initialLocation: '/',
     routes: [
-      GoRoute(path: '/', builder: (context, state) => const DevicesScreen()),
+      // 栈底：这里的返回 / 边缘左滑不直接退 App，要连按两次（BackToExit）。
+      GoRoute(
+        path: '/',
+        builder: (context, state) => const BackToExit(child: DevicesScreen()),
+      ),
       GoRoute(path: '/add-device', builder: (context, state) => const AddDeviceScreen()),
       GoRoute(path: '/device', builder: (context, state) => const CabinListScreen()),
       GoRoute(

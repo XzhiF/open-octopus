@@ -15,8 +15,26 @@ import '../../widgets/states.dart';
 class CabinListScreen extends ConsumerWidget {
   const CabinListScreen({super.key});
 
+  /// 系统返回 / 边缘左滑与标题栏返回同一件事：放下这台设备、回设备列表。
+  /// （栈被 `go` 压平过时也不会把 App 退掉 —— 退出只发生在设备列表。）
+  void _leaveDevice(BuildContext context, WidgetRef ref) {
+    ref.read(appStateProvider.notifier).selectDevice(null);
+    context.go('/');
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        _leaveDevice(context, ref);
+      },
+      child: _content(context, ref),
+    );
+  }
+
+  Widget _content(BuildContext context, WidgetRef ref) {
     final device = ref.watch(currentDeviceProvider);
     if (device == null) {
       return Scaffold(
@@ -54,10 +72,7 @@ class CabinListScreen extends ConsumerWidget {
                 title: device.name,
                 num: _statusNum(status),
                 subtitle: _statusLabel(status),
-                onBack: () {
-                  ref.read(appStateProvider.notifier).selectDevice(null);
-                  context.go('/');
-                },
+                onBack: () => _leaveDevice(context, ref),
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
                 actions: [
                   BarIconButton(

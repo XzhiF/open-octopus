@@ -8,6 +8,7 @@ import '../../app/theme.dart';
 import '../../core/haptics.dart';
 import '../../core/http.dart';
 import '../../core/models/device.dart';
+import '../../core/nav.dart';
 import '../../core/pairing.dart';
 import '../../core/providers.dart';
 import '../../widgets/octo_bar.dart';
@@ -207,7 +208,8 @@ class _AddDeviceScreenState extends ConsumerState<AddDeviceScreen> {
         SnackBar(content: Text(hint), duration: const Duration(seconds: 7)),
       );
     }
-    context.go('/device');
+    // 换掉「添加设备」这一页：栈里留下设备列表，返回时回得去。
+    context.pushReplacement('/device');
   }
 
   @override
@@ -222,7 +224,7 @@ class _AddDeviceScreenState extends ConsumerState<AddDeviceScreen> {
               OctoBar(
                 title: '添加设备',
                 num: 'PAIRING',
-                onBack: () => context.pop(),
+                onBack: () => back(context),
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
               ),
               Expanded(

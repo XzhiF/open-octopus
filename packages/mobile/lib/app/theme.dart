@@ -134,6 +134,23 @@ ThemeData buildOctoTheme() {
       scrolledUnderElevation: 0,
       foregroundColor: Octo.ink,
     ),
+    // 提示条：跟面板同一套暗底 + 青边，别让默认的白条在舰桥里闪一下。
+    snackBarTheme: SnackBarThemeData(
+      backgroundColor: const Color(0xF21B1638),
+      contentTextStyle: const TextStyle(
+        fontFamily: Octo.mono,
+        fontSize: 11.5,
+        letterSpacing: 0.3,
+        color: Octo.ink,
+      ),
+      actionTextColor: Octo.teal,
+      behavior: SnackBarBehavior.floating,
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(Octo.rM),
+        side: const BorderSide(color: Octo.edge),
+      ),
+    ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
       fillColor: const Color(0xAD100D28),

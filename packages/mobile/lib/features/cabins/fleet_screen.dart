@@ -11,6 +11,7 @@ import '../../core/models/chat.dart';
 import '../../core/models/device.dart';
 import '../../core/models/quote.dart';
 import '../../core/models/task.dart';
+import '../../core/nav.dart';
 import '../../core/providers.dart';
 import '../../widgets/link_banner.dart';
 import '../../widgets/octo_bar.dart';
@@ -105,7 +106,7 @@ class _FleetScreenState extends ConsumerState<FleetScreen>
                 title: '编队',
                 num: 'FLEET',
                 subtitle: [cabin?.name, device?.name].whereType<String>().join(' · '),
-                onBack: () => context.pop(),
+                onBack: () => back(context),
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
               ),
               LinkBanner(

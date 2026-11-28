@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../app/theme.dart';
 import '../../core/format.dart';
 import '../../core/models/chat.dart';
+import '../../core/nav.dart';
 import '../../core/providers.dart';
 import '../../widgets/octo_bar.dart';
 import '../../widgets/panel.dart';
@@ -58,7 +59,7 @@ class _GlobalChatScreenState extends ConsumerState<GlobalChatScreen> {
                 title: '单独会话',
                 num: 'FREE',
                 subtitle: device == null ? null : '${device.name} · 不归属任何舱',
-                onBack: () => context.pop(),
+                onBack: () => back(context),
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
               ),
               Expanded(

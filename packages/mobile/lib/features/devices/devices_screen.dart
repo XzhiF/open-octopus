@@ -220,7 +220,8 @@ class _DeviceTile extends ConsumerWidget {
             return;
           }
           await ref.read(appStateProvider.notifier).selectDevice(device.id);
-          if (context.mounted) context.go('/device');
+          // push：进舱列表后系统返回 / 边缘左滑能退回设备列表，而不是把 App 退掉。
+          if (context.mounted) context.push('/device');
         },
         child: Row(
           children: [

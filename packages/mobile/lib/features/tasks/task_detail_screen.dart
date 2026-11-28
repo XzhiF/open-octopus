@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 
 import '../../app/theme.dart';
 import '../../core/format.dart';
 import '../../core/models/task.dart';
+import '../../core/nav.dart';
 import '../../core/providers.dart';
 import '../../widgets/octo_bar.dart';
 import '../../widgets/panel.dart';
@@ -34,7 +34,7 @@ class TaskDetailScreen extends ConsumerWidget {
                 subtitle: taskAsync.value == null
                     ? null
                     : (taskStatusLabels[taskAsync.value!.status] ?? taskAsync.value!.status),
-                onBack: () => context.pop(),
+                onBack: () => back(context),
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
               ),
               Expanded(
