@@ -93,6 +93,39 @@ When an agent needs an answer, the question appears directly in the chat — pic
 
 <img src="docs/imgs/ask-card.webp" alt="Ask card with options" />
 
+## Mobile: move the work forward while you're out
+
+The desktop is the host and the phone is the remote: the same cabins and the same conversation, so a
+reply or a decision is one tap away wherever you are.
+
+- **It connects** — the phone reaches your machine over Tailscale and trades a one-time 6-digit code
+  for a long-lived device token; the token lives only in the phone's OS secure storage, the server
+  keeps just its sha256.
+- **It reaches a sleeping desktop** — with remote start installed, Octopus shows up as
+  “online · not running”; tap Start and you are inside within 90 seconds (the key handed to the phone
+  can only run `status` / `start`).
+- **Three states** — running / online · not running / offline, so “service down” and “network down”
+  never look the same.
+- **The same chat inside the cabin** — pending decisions, quoted replies, live run state, and
+  model / ctx / tok telemetry, identical to the desktop.
+
+<p align="center">
+  <img src="docs/imgs/mobile-devices.webp" width="230" alt="Phone · devices: one Tailnet machine, running" />
+  <img src="docs/imgs/mobile-fleet.webp" width="230" alt="Phone · fleet: needs your decision" />
+  <img src="docs/imgs/mobile-cabin.webp" width="230" alt="Phone · cabin chat: quote a pending decision and reply" />
+</p>
+
+To add the phone, generate a one-time code under *Settings → Device pairing* on the desktop:
+
+<img src="docs/imgs/mobile-pairing.webp" alt="Desktop · Settings → Device pairing: code, remote start, paired devices" />
+
+The app lives in `packages/mobile` (Flutter · Android):
+
+```bash
+cd packages/mobile
+flutter build apk --release --split-per-abi
+```
+
 ## Engine (internal)
 
 The workflow engine is still here, behind the task:
@@ -116,7 +149,7 @@ The workflow engine is still here, behind the task:
 
 TypeScript 5.9 · Node.js · pnpm workspaces · Hono 4 (REST + SSE + WebSocket) ·
 Vite 8 + React 19 + React Router 7 · Electron 38 · better-sqlite3 · Monaco · XYFlow ·
-Yjs · Zod · Vitest + Playwright
+Yjs · Zod · Vitest + Playwright · Flutter 3.50 (Android phone app)
 
 ## Getting started
 
@@ -152,6 +185,7 @@ octopus/
 │   ├── server/     ← Hono API · SSE / WS · task / cabin / knowledge / scheduler services
 │   ├── web-app/    ← React SPA · chat desktop + cabin + cockpit
 │   ├── desktop/    ← Electron host + Node sidecar
+│   ├── mobile/     ← Flutter phone app · devices / cabins / chat interior
 │   ├── cli/        ← octopus CLI (internal tool)
 │   └── core-pack/  ← skills / agents / clones / workflow templates
 ├── scripts/        ← dev / prod / port allocation

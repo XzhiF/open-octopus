@@ -90,6 +90,34 @@ task-author 分身和你谈规格
 
 <img src="docs/imgs/ask-card.webp" alt="待你定：提问卡与选项" />
 
+## 手机端：在外面把活推进一格
+
+桌面是主机，手机是遥控器：同一套舱、同一份对话，人在外面也能回一句、做一个决定。
+
+- **连得上** —— 手机经 Tailscale 访问你这台电脑，用一次性 6 位配对码换一条长期设备令牌；
+  令牌只存在手机的系统安全存储里，服务端只留 sha256。
+- **没开机也能进** —— 装了「远程拉起」后，电脑上 Octopus 没开时手机显示「在线 · 未启动」，
+  点「启动」最多 90 秒进舱（那把小钥匙只能跑 `status` / `start`，开不了别的）。
+- **三档状态** —— 运行中 / 在线 · 未启动 / 离线，一眼看清是「服务没起」还是「网络不通」。
+- **舱内是同一份 chat** —— 待你定、引用回复、运行态、模型 / ctx / tok 遥测，与桌面一致。
+
+<p align="center">
+  <img src="docs/imgs/mobile-devices.webp" width="230" alt="手机 · 设备列表：一台 Tailnet 设备，运行中" />
+  <img src="docs/imgs/mobile-fleet.webp" width="230" alt="手机 · 编队：待你定" />
+  <img src="docs/imgs/mobile-cabin.webp" width="230" alt="手机 · 舱内对话：引用一条待你定再回复" />
+</p>
+
+手机添加设备时，先在电脑上「设置 → 手机配对」生成配对码：
+
+<img src="docs/imgs/mobile-pairing.webp" alt="电脑 · 设置 → 手机配对：配对码、远程拉起、已配对设备" />
+
+手机端在 `packages/mobile`（Flutter · Android），出包：
+
+```bash
+cd packages/mobile
+flutter build apk --release --split-per-abi
+```
+
 ## 引擎（内部）
 
 工作流引擎仍然在，只是退到了任务背后：
@@ -112,7 +140,7 @@ task-author 分身和你谈规格
 
 TypeScript 5.9 · Node.js · pnpm workspaces · Hono 4（REST + SSE + WebSocket）·
 Vite 8 + React 19 + React Router 7 · Electron 38 · better-sqlite3 · Monaco · XYFlow ·
-Yjs · Zod · Vitest + Playwright
+Yjs · Zod · Vitest + Playwright · Flutter 3.50（Android 手机端）
 
 ## 快速开始
 
@@ -148,6 +176,7 @@ octopus/
 │   ├── server/     ← Hono API · SSE / WS · 任务 / 舱 / 知识 / 调度服务
 │   ├── web-app/    ← React SPA · 对话桌面 + 作战舱 + 指挥舱
 │   ├── desktop/    ← Electron 宿主 + Node sidecar
+│   ├── mobile/     ← Flutter 手机端 · 设备 / 舱 / chat 内场
 │   ├── cli/        ← octopus CLI（内部工具）
 │   └── core-pack/  ← skills / agents / clones / workflows 模板
 ├── scripts/        ← dev / prod / 端口分配
