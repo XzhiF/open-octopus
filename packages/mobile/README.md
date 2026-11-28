@@ -36,13 +36,20 @@ tailscale serve --bg --https=443 http://127.0.0.1:47820
 安全存储里，服务端只留 sha256。
 
 **远程拉起（M4）**：电脑上打开 Octopus →「设置 → 手机配对 → 远程拉起」→
-**启用远程拉起**（弹一次 UAC；机器没有 OpenSSH Server 会顺带启用）。也可以手动跑：
+**启用远程拉起**（Windows 弹一次 UAC；macOS 弹一次管理员授权；没开 sshd 会顺带打开）。也可以手动跑：
 
 ```powershell
+# Windows
 powershell -ExecutionPolicy Bypass -File scripts\remote\install-remote.ps1
 ```
 
-安装器会装一个只认 `status` / `start` 的 SSH 强制命令、注册登录计划任务、准备一批手机密钥槽
+```bash
+# macOS
+bash scripts/remote/install-remote.sh
+```
+
+安装器会装一个只认 `status` / `start` 的 SSH 强制命令、注册登录项（Windows 计划任务 /
+macOS LaunchAgent）、准备一批手机密钥槽
 （详见 `scripts/remote/README.md`）。默认**不改 sshd 配置、不重启 sshd**，只往
 `authorized_keys` 追加一行受限密钥 —— 原来的远程登录方式不受影响。之后配对时，手机同时
 换到一把受限 SSH 私钥；电脑上 Octopus 没开时，设备列表会显示「在线 · 未启动」，点「启动」
@@ -71,7 +78,7 @@ powershell -ExecutionPolicy Bypass -File scripts\remote\install-remote.ps1
 lib/
 ├── main.dart / app/        ← 入口 · 主题 token · go_router
 ├── core/
-│   ├── api.dart            ← 13 个端点的薄封装（舱 / 舱事件 / 会话 / 任务 / SSE）
+│   ├── api.dart            ← REST/SSE 薄封装（舱 / 会话 / 任务 / 通讯台遥测 / 身份与星核）
 │   ├── http.dart           ← dio 工厂 + 错误归一 + 探活
 │   ├── pairing.dart        ← 兑换配对码 / 鉴权探针
 │   ├── remote.dart         ← 远程拉起：SSH 执行面 + octopus-ctl 的 JSON 解析 + 三档状态合成
@@ -83,10 +90,11 @@ lib/
 ├── features/
 │   ├── devices/            ← A 设备列表 · B 添加设备
 │   ├── cabins/             ← D 舱列表 · E 舱内主 chat · E2 编队（待你定 / 会话 / 任务）
-│   ├── chat/               ← ChatPane（面板 + 引用条 + 输入区）· F 会话 · H 单独会话
+│   ├── chat/               ← ChatPane（通讯台头 + 面板 + 引用条 + 输入区）· F 会话 · H 单独会话
+│   │   └── sheets/         ← chat 内场抽屉：轮次 / 星核（技能·分身·MCP·会话）/ 模型 / ctx / tok
 │   ├── tasks/              ← 任务只读详情
 │   └── settings/           ← 设备管理 · 动效开关 · 立绘动画
-└── widgets/                ← 场景底 / 星流 / 立绘 / 圆角面板 / TUI 转录 / 输入区 / 引用条
+└── widgets/                ← 场景底 / 星流 / 立绘 / 圆角面板 / TUI 转录（过程折叠）/ 输入区 / 引用条
 ```
 
 ## M1 做了什么
@@ -146,6 +154,40 @@ lib/
   `status` / `start` 的强制命令；私钥进系统安全存储，PC 上发完即删。
 - **没装也能用**：电脑没装「远程拉起」时，配对照常成功，只是少一样能力（会提示怎么装）。
 
+## 2026-11-28 · chat 内场（轮次 · 星核 · 遥测）
+
+按 `mobile-v1.html`「3 · chat 内场」把桌面通讯台的三件事搬进手机（原型 E3–E9）：
+
+- **通讯台头**：`✦ 星核 · model · ctx · tok · ≡ N轮` 一行。ctx 芯片带占用底条，
+  60% 转琥珀、85% 转红；tok 芯片读会话账本；轮次芯片读「真人发言」条数（事件卡不算）。
+  每枚芯片点开对应底部抽屉 —— 拇指够得着，也不挡消息。
+- **过程折叠**：assistant 的 think / 工具不再铺满屏幕，折成一行摘要
+  `✦ 汐音 · 已完成 · 9s · 3 步 · 工具 1 · 1.2K tok · ¥0.06 ▸`，点开才看步骤；
+  正文始终露出，跑动中也只占一行头 + 流式正文。
+- **轮次索引（E3）**：一条 = 你的一句话，新的在上；点一条收起抽屉、把消息滚到那一行并闪粉。
+  当前轮青色。
+- **星核（E4–E6）**：技能 / 分身 / MCP / 会话四栏。
+  - 技能：当前身份自带的只读置顶；其余可搜、可挂 —— 选中后下一条消息发成
+    `/skill-name 你的话`，发送后自动摘掉（与桌面 composer 同款）。
+  - 分身：当前身份 / 切回主 Agent / 切身份（写会话 role，下一条生效）；
+    「委派 · 一次性」随下一条消息发 `subagents`。
+  - MCP：内置 catalog 只读（按会话类型挂载）。
+  - 会话：压缩 `/compact`、清空 `/clear`（红色 + 二次确认）、自动压缩 `/autocompact`、
+    重命名（PUT 会话 title）、导出最近 20 轮到剪贴板。跑动中禁用压 / 清。
+- **模型设置（E7）**：pro-max / pro / se 三个别名，每个模型记住自己的思考强度与
+  上下文窗口（200K / 1M）；偏好存本机 SharedPreferences，随每条消息传
+  `model` / `effort` / `maxContext`。
+- **ctx 明细（E8）**：窗口占用、构成（系统提示 / 工具 / MCP / 消息 …，SDK 类别译成中文）、
+  延后加载项单列、缓存命中、可用；底部「现在压一下」。
+- **tok 明细（E9）**：本会话调用 / 入出 / 缓存命中 / 费用 + 按模型拆；费用未定价显示「—」；
+  舱会话可从底部进只读「本舱账本」。
+
+数据口径：会话、context_usage 走 `GET /api/agent/sessions/:id`；每轮的时长 / token / 费用
+走 `GET /api/sessions/:id/llm-calls`（llm_calls 账本），归属规则与桌面 `turn-stats.ts` 一致
+（`message_id` 优先，否则按真人用户消息切窗；事件卡不是边界；`session_compress` 行排除）。
+身份与切换走 `/api/agent/sessions/:id/role`，技能 / 分身 / MCP 分别走 `/api/agent/skills`、
+`/api/clones`、`/api/agent/mcp/servers`。
+
 ## 应用图标
 
 - 与 PC exe **同一张汐音立绘**（`packages/desktop/build/icon.png`），不重绘。
@@ -175,7 +217,7 @@ lib/
 
 ```bash
 flutter analyze     # 0 error / 0 warning
-flutter test        # 73 passed
+flutter test        # 81 passed
 dart run tool/smoke.dart http://127.0.0.1:3001 --attention --cabin-events=2   # 连真实 dev server
 ```
 

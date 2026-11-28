@@ -79,7 +79,8 @@ class _CabinScreenState extends ConsumerState<CabinScreen>
     final device = ref.watch(currentDeviceProvider);
     final status = device == null
         ? DeviceStatus.unknown
-        : (ref.watch(deviceStatusProvider(device.id)).value ?? DeviceStatus.unknown);
+        : (ref.watch(deviceStatusProvider(device.id)).value ??
+              DeviceStatus.unknown);
 
     // 舱事件：attention / 状态一变就重拉快照（见 providers.cabinEventsProvider）。
     ref.listen(cabinEventsProvider(widget.cabinId), (_, next) {
@@ -112,9 +113,10 @@ class _CabinScreenState extends ConsumerState<CabinScreen>
               OctoBar(
                 title: cabin?.name ?? '舱',
                 num: '主 CHAT',
-                subtitle: [device?.name, _cabinStatus(cabin?.status)]
-                    .whereType<String>()
-                    .join(' · '),
+                subtitle: [
+                  device?.name,
+                  _cabinStatus(cabin?.status),
+                ].whereType<String>().join(' · '),
                 onBack: () => context.pop(),
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
                 actions: [
@@ -137,7 +139,8 @@ class _CabinScreenState extends ConsumerState<CabinScreen>
               LinkBanner(
                 status: status,
                 onRetry: () {
-                  if (device != null) ref.invalidate(deviceStatusProvider(device.id));
+                  if (device != null)
+                    ref.invalidate(deviceStatusProvider(device.id));
                   _refreshNow();
                 },
               ),
@@ -177,10 +180,7 @@ class _CabinScreenState extends ConsumerState<CabinScreen>
     }
     if (cabin == null) {
       return const Center(
-        child: EmptyState(
-          title: '找不到这个舱',
-          detail: '它可能被归档或删掉了，回舱列表看看',
-        ),
+        child: EmptyState(title: '找不到这个舱', detail: '它可能被归档或删掉了，回舱列表看看'),
       );
     }
     if (workspaceId == null) {
@@ -211,6 +211,8 @@ class _CabinScreenState extends ConsumerState<CabinScreen>
       key: ValueKey(sessionId),
       workspaceId: workspaceId,
       sessionId: sessionId,
+      cabinId: widget.cabinId,
+      cabinName: cabin.name,
       agent: true,
       quote: _quote,
       onQuoteClosed: () => setState(() => _quote = null),
@@ -221,7 +223,9 @@ class _CabinScreenState extends ConsumerState<CabinScreen>
   }
 
   Future<void> _openFleet() async {
-    final quote = await context.push<SessionQuote>('/cabin/${widget.cabinId}/fleet');
+    final quote = await context.push<SessionQuote>(
+      '/cabin/${widget.cabinId}/fleet',
+    );
     if (!mounted) return;
     if (quote != null) setState(() => _quote = quote);
     _refreshNow();
@@ -250,12 +254,12 @@ class _CabinScreenState extends ConsumerState<CabinScreen>
   }
 
   static String? _cabinStatus(String? status) => switch (status) {
-        'active' => '运行中',
-        'dormant' => '休眠',
-        'archived' => '已归档',
-        'initializing' => '初始化中',
-        'draft' => '草稿',
-        null => null,
-        _ => status,
-      };
+    'active' => '运行中',
+    'dormant' => '休眠',
+    'archived' => '已归档',
+    'initializing' => '初始化中',
+    'draft' => '草稿',
+    null => null,
+    _ => status,
+  };
 }

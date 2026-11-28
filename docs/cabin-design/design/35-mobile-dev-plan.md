@@ -546,6 +546,26 @@ androidx.security / tink 依赖，比 M2 的 183 MiB 涨了约 34 MiB）。首�
 - **测试**：`flutter test` **68 passed**（新增启动页 2 条 + 立绘 WebP/隐藏 2 条）；
   `flutter analyze` 0 error / 0 warning。
 
+### 2026-11-28 · chat 内场落地（`packages/mobile`）
+
+原型 `mobile-v1.html` §3（E3–E9）从「设计」变成真机可用的东西：
+
+- **通讯台头**：舱主会话上方一行 `✦ 星核 · model · ctx · tok · ≡ N轮`；ctx 带占用底条
+  （60% 琥珀 / 85% 红），tok 读会话账本，轮次只数真人发言（事件卡不计）。
+- **过程折叠**：assistant 的 think / 工具折成一行摘要（时长 · 步数 · 工具 · tok · 费用），
+  点开才看步骤；正文始终露出，跑动中折叠也不挡流式正文。
+- **五个底部抽屉**：轮次索引（点一条收起抽屉 + 滚动定位 + 粉闪）、星核（技能 / 分身 / MCP / 会话）、
+  模型设置（模型别名 + 每模型 effort / 上下文预设，本机记忆）、ctx 明细（构成 / 缓存 / 可用 / 压缩）、
+  tok 明细（调用 / 入出 / 缓存 / 费用 / 按模型 + 本舱账本）。
+- **动作全走真实端点**：技能挂载 = 下一条消息加 `/skill-name` 前缀；分身 = 会话 role；
+  委派 = 一次性 `subagents`；压缩 / 清空 / 自动压缩 = 真斜杠命令；改名 = `PUT /api/agent/sessions/:id`；
+  导出 = 最近 20 轮复制到剪贴板。
+- **数据口径**：`context_usage` 来自会话详情（冷启动为账本估算，带 `~`）；每轮时长 / token / 费用来自
+  `GET /api/sessions/:id/llm-calls`，归属规则与桌面 `turn-stats.ts` 一致（message_id 优先、按真人用户
+  消息切窗、事件卡不作边界、`session_compress` 排除）。费用未定价显示「—」。
+- **真机回归**：vivo V2304A / Android 16 上验证通讯台头、折叠展开、轮次跳转、模型切换持久化、
+  星核四栏、ctx/tok 明细；`flutter test` **81 passed**，`flutter analyze` 0 error / 0 warning。
+
 ---
 
 ## 12. 变更记录
@@ -558,3 +578,4 @@ androidx.security / tink 依赖，比 M2 的 183 MiB 涨了约 34 MiB）。首�
 | 2026-11-27 | M4 落地：SSH 强制命令（status/start）+ 登录计划任务 + 密钥槽配对下发；设备三档状态与一键启动 |
 | 2026-11-27 | M5 打磨：图标换汐音（与 PC exe 同源）+ 自适应图标；启动页（系统层 + Flutter 光环字标）；场景图转 WebP（5.6 MB → 307 KB）；触感反馈；release 签名与 `--split-per-abi`（36.4 MB / arm64） |
 | 2026-11-27 | 舱首页改主 chat（原型方案 A）：点进舱直接到 `cabins.main_session_id`，汐音 WebP 立在聊天面板后、底缘淡出；右上角「☰ 编队」= 待你定 / 会话 / 任务；删掉「汐音 · 待命 IDLE」动作标签；舱会话切 `/api/agent`（旧 `chat/sessions` 域在舱里没有行），TUI 增系统行；测试 73 passed |
+| 2026-11-28 | chat 内场落地（原型 E3–E9）：通讯台头 + 过程折叠 + 轮次索引；星核 / 模型 / ctx / tok 五抽屉；技能挂载、委派、身份切换、压缩 / 清空 / 改名 / 导出全接真实端点；测试 81 passed |

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
@@ -7,6 +8,29 @@ import '../../core/api.dart';
 import '../../core/http.dart';
 import '../../core/models/chat.dart';
 import '../../core/models/sse.dart';
+import '../../core/models/telemetry.dart';
+import '../../core/turn_stats.dart';
+
+/// 发一条消息时随行的通讯台设置。
+class ChatSendOptions {
+  const ChatSendOptions({
+    this.model,
+    this.effort,
+    this.maxContext,
+    this.skill,
+    this.subagent,
+  });
+
+  final String? model;
+  final String? effort;
+  final String? maxContext;
+
+  /// 星核 · 技能里选中的一把：服务端按斜杠命令消费（`/skill 你的话`）。
+  final String? skill;
+
+  /// 星核 · 分身里委派的一次性身份（发送后自动摘掉）。
+  final ChatSubagentRef? subagent;
+}
 
 /// 一个会话的读取 + 流式发送。跟屏幕同生命周期，不跨页面共享。
 ///
@@ -33,6 +57,15 @@ class ChatController extends ChangeNotifier {
   bool loading = true;
   bool sending = false;
 
+  /// 通讯台遥测：ctx 芯片 / tok 芯片 / 轮次统计 / 当前身份。
+  ContextUsage? contextUsage;
+  SessionUsage usage = const SessionUsage();
+  Map<String, TurnStats> turnStats = const {};
+  SessionRole? role;
+
+  /// CLI 广播过的斜杠命令（进程内缓存）。
+  List<String> slashCommands = const [];
+
   /// 本地乐观显示的这条用户消息（流结束、快照回来后就清掉）。
   String? pendingUserText;
 
@@ -49,17 +82,84 @@ class ChatController extends ChangeNotifier {
       session = agent
           ? await api.agentSession(sessionId)
           : await api.session(workspaceId, sessionId);
+      contextUsage = session?.contextUsage;
     } catch (e) {
       loadError = e;
     } finally {
       loading = false;
       _notify();
     }
+    // 遥测是增强项：先把会话画出来，身份 / 账本 / 命令表在后台补。
+    if (agent && session != null) unawaited(_loadTelemetry());
   }
 
-  Future<void> send(String text) async {
-    final trimmed = text.trim();
+  /// 身份 + 账本（tok 芯片 / 轮次统计）。失败不拖垮会话流：遥测挂掉时
+  /// 芯片显示「--」，消息照常能看能发。
+  Future<void> _loadTelemetry() async {
+    try {
+      role = await api.sessionRole(sessionId);
+    } catch (_) {
+      // 老服务 / 权限不足：身份贴纸退回主 Agent。
+    }
+    try {
+      final ledger = await api.sessionLedger(sessionId);
+      usage = ledger.usage;
+      turnStats = buildTurnStats(session?.messages ?? const [], ledger.rows);
+    } catch (_) {
+      // 账本不可读时保留上一份；连上一份都没有就是 0（UI 显示 --）。
+    }
+    try {
+      slashCommands = await api.slashCommands(sessionId);
+    } catch (_) {
+      // 命令表是增强项，拿不到就不提示。
+    }
+    _notify();
+  }
+
+  /// 切身份（null = 回主 Agent）。返回更新后的角色；失败抛出给 UI 提示。
+  Future<SessionRole> setRole(String? expert) async {
+    final next = await api.setSessionRole(sessionId, expert);
+    role = next;
+    _notify();
+    return next;
+  }
+
+  Future<void> rename(String title) async {
+    await api.renameAgentSession(sessionId, title);
+    final current = session;
+    if (current != null) {
+      session = ChatSession(
+        id: current.id,
+        workspaceId: current.workspaceId,
+        title: title,
+        isActive: current.isActive,
+        provider: current.provider,
+        providerSessionId: current.providerSessionId,
+        createdAt: current.createdAt,
+        updatedAt: current.updatedAt,
+        messages: current.messages,
+        totalMessageCount: current.totalMessageCount,
+        contextUsage: current.contextUsage,
+      );
+    }
+    _notify();
+  }
+
+  Future<void> send(
+    String text, {
+    ChatSendOptions options = const ChatSendOptions(),
+  }) async {
+    var trimmed = text.trim();
     if (trimmed.isEmpty || sending) return;
+
+    // 技能挂载与桌面同款：`/skill-name 你的话`，不覆盖用户自己写的斜杠命令。
+    final skill = options.skill;
+    if (skill != null &&
+        skill.isNotEmpty &&
+        !trimmed.startsWith('/') &&
+        !trimmed.startsWith('@@')) {
+      trimmed = '/$skill $trimmed';
+    }
 
     sending = true;
     pendingUserText = trimmed;
@@ -74,6 +174,12 @@ class ChatController extends ChangeNotifier {
           ? api.sendAgentMessage(
               sessionId: sessionId,
               content: trimmed,
+              model: options.model,
+              effort: options.effort,
+              maxContext: options.maxContext,
+              subagents: options.subagent == null
+                  ? const []
+                  : [options.subagent!],
               cancelToken: cancel,
             )
           : api.sendMessage(
@@ -116,9 +222,11 @@ class ChatController extends ChangeNotifier {
           : await api.session(workspaceId, sessionId);
       if (_disposed) return;
       session = fresh;
+      contextUsage = fresh.contextUsage ?? contextUsage;
       live = LiveTurn();
       pendingUserText = null;
       _notify();
+      if (agent) await _loadTelemetry();
     } catch (e) {
       if (_disposed) return;
       // 快照失败不吞掉已有内容：把错误挂到 live 上，让用户能重试。
@@ -140,7 +248,8 @@ class ChatController extends ChangeNotifier {
       case 'local_command_output':
         l.started = true;
         // agent 域是 {delta, content(累计)}；旧 chat 域只有 {content}(增量)。
-        l.text += (data?['delta'] as String?) ?? (data?['content'] as String?) ?? '';
+        l.text +=
+            (data?['delta'] as String?) ?? (data?['content'] as String?) ?? '';
         break;
       case 'assistant_continue':
         // 后台任务唤醒的续轮：服务端用 separator 把两段话分开。
@@ -148,7 +257,8 @@ class ChatController extends ChangeNotifier {
         if (separator != null && separator.isNotEmpty) l.text += separator;
         break;
       case 'thinking':
-        l.thinking += (data?['delta'] as String?) ?? (data?['content'] as String?) ?? '';
+        l.thinking +=
+            (data?['delta'] as String?) ?? (data?['content'] as String?) ?? '';
         break;
       case 'thinking_done':
         l.thinkingDone = true;
@@ -157,7 +267,9 @@ class ChatController extends ChangeNotifier {
       case 'ask_user_question':
         final askId = (data?['tool_call_id'] as String?) ?? '';
         if (askId.isNotEmpty && l.tools.every((t) => t.id != askId)) {
-          l.tools.add(LiveTool(id: askId, name: 'AskUserQuestion', status: 'done'));
+          l.tools.add(
+            LiveTool(id: askId, name: 'AskUserQuestion', status: 'done'),
+          );
         }
         break;
       case 'tool_call':
@@ -183,6 +295,18 @@ class ChatController extends ChangeNotifier {
           l.text = content;
         }
         break;
+      case 'context_usage':
+        // 通讯台 ctx 芯片的实时源：SDK 每轮上报一次（含构成 categories）。
+        if (data != null) {
+          contextUsage = ContextUsage.fromJson(data);
+        }
+        break;
+      case 'slash_commands':
+        final commands = data?['commands'];
+        if (commands is List) {
+          slashCommands = commands.whereType<String>().toList(growable: false);
+        }
+        break;
       case 'error':
         l.errorMessage = (data?['message'] as String?) ?? '出错了';
         l.errorCode = data?['code'] as String?;
@@ -198,9 +322,13 @@ class ChatController extends ChangeNotifier {
   void _applyToolCall(Map<String, dynamic>? data) {
     final l = live;
     final type = data?['type'] as String?;
-    final id = (data?['tool_call_id'] as String?) ?? (data?['toolCallId'] as String?) ?? '';
+    final id =
+        (data?['tool_call_id'] as String?) ??
+        (data?['toolCallId'] as String?) ??
+        '';
     if (id.isEmpty) return;
-    final name = (data?['tool_name'] as String?) ??
+    final name =
+        (data?['tool_name'] as String?) ??
         (data?['toolName'] as String?) ??
         'tool';
     final index = l.tools.indexWhere((t) => t.id == id);
@@ -219,12 +347,9 @@ class ChatController extends ChangeNotifier {
         ..inputText = inputText ?? l.tools[index].inputText
         ..status = type == 'start' ? 'running' : l.tools[index].status;
     } else {
-      l.tools.add(LiveTool(
-        id: id,
-        name: name,
-        inputText: inputText,
-        status: 'running',
-      ));
+      l.tools.add(
+        LiveTool(id: id, name: name, inputText: inputText, status: 'running'),
+      );
     }
     l.started = true;
   }

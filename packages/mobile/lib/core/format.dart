@@ -30,6 +30,41 @@ String formatCount(int n) {
   return '$n';
 }
 
+/// 通讯台头的 token 读数：1.2K / 12.3K / 200K / 1M（原型大写 K）。
+/// 小数只在需要时保留一位（200.0K → 200K）。
+String formatTokNum(int n) {
+  String trim(String s) => s.endsWith('.0') ? s.substring(0, s.length - 2) : s;
+  if (n >= 1000000) return '${trim((n / 1000000).toStringAsFixed(1))}M';
+  if (n >= 1000) return '${trim((n / 1000).toStringAsFixed(1))}K';
+  return '$n';
+}
+
+/// 轮次抽屉里的相对时间：刚刚 / 2 分钟 / 8 分钟 / 3 小时 / 2 天。
+String formatAgoShort(String? iso, {DateTime? now}) {
+  if (iso == null || iso.trim().isEmpty) return '—';
+  final t = DateTime.tryParse(iso);
+  if (t == null) return '—';
+  final diff = (now ?? DateTime.now()).difference(t.toLocal());
+  if (diff.isNegative || diff.inSeconds < 60) return '刚刚';
+  if (diff.inMinutes < 60) return '${diff.inMinutes} 分钟';
+  if (diff.inHours < 24) return '${diff.inHours} 小时';
+  return '${diff.inDays} 天';
+}
+
+/// USD → 人民币展示（桌面 TUI 同口径 ×7）；null = 未定价，显示「—」。
+String formatCny(double? usd, {bool complete = true}) {
+  if (usd == null) return '—';
+  final value = usd * 7;
+  final text = '¥${value.toStringAsFixed(2)}';
+  return complete ? text : '≈$text';
+}
+
+/// 0–1 比率 → `62.4%`；null = 没有输入类 token，显示「—」。
+String formatRate(double? rate) {
+  if (rate == null) return '—';
+  return '${(rate * 100).toStringAsFixed(1)}%';
+}
+
 /// 路径缩略：`C:\xzf\ai\open-octopus` → 保留尾部，前面用 … 收掉。
 String shortenPath(String path, {int max = 42}) {
   final p = path.trim();
@@ -39,7 +74,10 @@ String shortenPath(String path, {int max = 42}) {
 
 /// 尾巴两段：`C:\xzf\ai\open-octopus` → `open-octopus` 的上级 + 自己。
 String pathTail(String path) {
-  final parts = path.split(RegExp(r'[\\/]')).where((s) => s.isNotEmpty).toList();
+  final parts = path
+      .split(RegExp(r'[\\/]'))
+      .where((s) => s.isNotEmpty)
+      .toList();
   if (parts.length <= 2) return path;
   return '…/${parts.sublist(parts.length - 2).join('/')}';
 }

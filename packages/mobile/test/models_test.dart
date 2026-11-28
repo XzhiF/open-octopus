@@ -8,13 +8,22 @@ void main() {
   group('Device', () {
     test('归一化地址：补协议、去尾斜杠', () {
       expect(normalizeBaseUrl('  https://a.ts.net/  '), 'https://a.ts.net');
-      expect(normalizeBaseUrl('shufang-pc.tailxxxx.ts.net'), 'https://shufang-pc.tailxxxx.ts.net');
+      expect(
+        normalizeBaseUrl('shufang-pc.tailxxxx.ts.net'),
+        'https://shufang-pc.tailxxxx.ts.net',
+      );
       expect(normalizeBaseUrl('10.0.2.2:3001'), 'http://10.0.2.2:3001');
-      expect(normalizeBaseUrl('http://127.0.0.1:3001/'), 'http://127.0.0.1:3001');
+      expect(
+        normalizeBaseUrl('http://127.0.0.1:3001/'),
+        'http://127.0.0.1:3001',
+      );
     });
 
     test('从域名猜显示名', () {
-      expect(guessDeviceName('https://shufang-pc.tailxxxx.ts.net'), 'shufang-pc');
+      expect(
+        guessDeviceName('https://shufang-pc.tailxxxx.ts.net'),
+        'shufang-pc',
+      );
     });
 
     test('fromJson 容忍缺名字', () {
@@ -38,7 +47,12 @@ void main() {
         'view': {
           'attention': [
             {'id': 'a1', 'stage': 'review', 'title': '待验收一条'},
-            {'id': 'a2', 'stage': 'answer', 'title': '问一句', 'question': '要不要删？'},
+            {
+              'id': 'a2',
+              'stage': 'answer',
+              'title': '问一句',
+              'question': '要不要删？',
+            },
             {'id': 'a3', 'stage': 'start', 'title': '入列'},
           ],
           'health': {'running': 2, 'queued': 1},
@@ -101,6 +115,92 @@ void main() {
     });
   });
 
+  group('ChatSession.fromAgentJson', () {
+    test('ctx 用量 / 事件卡 / 折叠来源 / 中断标记都从 agent 行读出来', () {
+      final session = ChatSession.fromAgentJson({
+        'id': 's1',
+        'workspace_id': 'w1',
+        'created_at': '2026-11-27T10:00:00Z',
+        'context_usage': {
+          'totalTokens': 6200,
+          'maxTokens': 100000,
+          'rawMaxTokens': 100000,
+          'percentage': 6.2,
+          'estimated': false,
+          'categories': [
+            {
+              'id': 'system_prompt',
+              'name': 'System prompt',
+              'tokens': 3100,
+              'kind': 'used',
+            },
+            {
+              'id': 'messages',
+              'name': 'Messages',
+              'tokens': 5600,
+              'kind': 'used',
+            },
+            {
+              'id': 'system_tools_deferred',
+              'name': 'System tools (deferred)',
+              'tokens': 24373,
+              'kind': 'deferred',
+              'isDeferred': true,
+            },
+          ],
+        },
+        'messages': {
+          'items': [
+            {
+              'id': 'u1',
+              'role': 'user',
+              'content': '任务状态变更',
+              'created_at': '2026-11-27T10:00:00Z',
+              'metadata': '{"displayType":"event"}',
+            },
+            {
+              'id': 'a1',
+              'role': 'assistant',
+              'content': '清完了。',
+              'thinking': '先核对 manifest',
+              'tool_calls': [
+                {
+                  'id': 't1',
+                  'name': 'Edit',
+                  'status': 'fail',
+                  'input': {'file_path': 'spec/phase-1.md'},
+                },
+              ],
+              'metadata': '{"timeline":[{"kind":"text","text":"清完了。"}],"interrupted":true}',
+              'created_at': '2026-11-27T10:00:03Z',
+            },
+          ],
+          'total': 2,
+        },
+      });
+
+      expect(session.contextUsage!.percentage, 6.2);
+      expect(session.contextUsage!.usedCategories.map((c) => c.id), [
+        'system_prompt',
+        'messages',
+      ]);
+      expect(session.contextUsage!.categories.last.isDeferred, isTrue);
+
+      final user = session.messages.first;
+      expect(user.isUser, isTrue);
+      expect(user.isEvent, isTrue);
+
+      final assistantRows = session.messages.skip(1).toList();
+      expect(assistantRows.first.displayType, 'thinking');
+      expect(assistantRows.first.sourceId, 'a1');
+      expect(assistantRows[1].toolStatus, 'error');
+      final text = assistantRows.last;
+      expect(text.content, '清完了。');
+      expect(text.interrupted, isTrue);
+      expect(text.sourceId, 'a1');
+    });
+  });
+
   group('TaskItem', () {
     test('从 v4 task_spec 取 goal / phases / ac', () {
       final task = TaskItem.fromJson({
@@ -127,7 +227,11 @@ void main() {
     });
 
     test('没有 task_spec 也不炸', () {
-      final task = TaskItem.fromJson({'id': 't2', 'name': 'x', 'status': 'draft'});
+      final task = TaskItem.fromJson({
+        'id': 't2',
+        'name': 'x',
+        'status': 'draft',
+      });
       expect(task.goal, isNull);
       expect(task.phases, isEmpty);
     });

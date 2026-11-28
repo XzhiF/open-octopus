@@ -8,12 +8,21 @@ import 'models/cabin.dart';
 import 'models/chat.dart';
 import 'models/sse.dart';
 import 'models/task.dart';
+import 'models/telemetry.dart';
 
 /// 一台设备上的 Octopus REST/SSE。所有端点都在桌面壳 sidecar（47820）上，
 /// 经 `tailscale serve` 换成 HTTPS；开发时也可直连 `pnpm dev` 的 3001。
 class OctopusApi {
+  /// 业务请求始终带一个 Bearer：`/api/agent/*` 的闸只检查头是否存在（与桌面
+  /// web 的 `Bearer agent` 同款）。没配对时用 `mobile` —— 回环直连（adb reverse /
+  /// 本机）能读能发；远程连接仍会被设备令牌闸 401，页面据此提示补配对码。
   OctopusApi(this.baseUrl, {String? token, Dio? dio})
-      : _dio = dio ?? createApiDio(baseUrl, token: token);
+    : _dio =
+          dio ??
+          createApiDio(
+            baseUrl,
+            token: (token == null || token.isEmpty) ? 'mobile' : token,
+          );
 
   final String baseUrl;
   final Dio _dio;
@@ -43,7 +52,8 @@ class OctopusApi {
     final data = await _getJson('/api/cabins/$cabinId/attention');
     if (data is! Map) throw ApiException('attention 返回格式不对', kind: 'parse');
     final map = data.cast<String, dynamic>();
-    final items = (map['attention'] as List?)
+    final items =
+        (map['attention'] as List?)
             ?.whereType<Map>()
             .map((e) => AttentionItem.fromJson(e.cast<String, dynamic>()))
             .toList(growable: false) ??
@@ -51,7 +61,9 @@ class OctopusApi {
     return CabinDetail(
       cabin: const Cabin(id: '', name: '', path: '', status: ''),
       attention: items,
-      health: CabinHealth.fromJson((map['health'] as Map?)?.cast<String, dynamic>()),
+      health: CabinHealth.fromJson(
+        (map['health'] as Map?)?.cast<String, dynamic>(),
+      ),
     );
   }
 
@@ -84,7 +96,10 @@ class OctopusApi {
     return ChatSession.fromJson(data.cast<String, dynamic>());
   }
 
-  Future<ChatSession> createSession(String? workspaceId, {String? title}) async {
+  Future<ChatSession> createSession(
+    String? workspaceId, {
+    String? title,
+  }) async {
     final data = await _postJson(
       _sessionsPath(workspaceId),
       body: title == null ? const {} : {'title': title},
@@ -96,7 +111,9 @@ class OctopusApi {
   /// 删会话（手机端 v1 只在「单独会话」里用到；舱会话保持只读语义）。
   Future<void> deleteSession(String? workspaceId, String sessionId) async {
     try {
-      final resp = await _dio.delete<dynamic>('${_sessionsPath(workspaceId)}/$sessionId');
+      final resp = await _dio.delete<dynamic>(
+        '${_sessionsPath(workspaceId)}/$sessionId',
+      );
       _unwrap(resp);
     } on DioException catch (e) {
       throw describeDioError(e);
@@ -127,15 +144,33 @@ class OctopusApi {
   }
 
   /// 舱会话发消息：POST 响应体内联 SSE（与桌面主对话同一条管道）。
+  ///
+  /// `model` / `effort` / `maxContext` 是通讯台的模型设置（服务端原样解析成
+  /// SDK 选项）；`subagents` 是「委派 · 一次性」，随这一条消息发出。
   Stream<SseEvent> sendAgentMessage({
     required String sessionId,
     required String content,
+    String? model,
+    String? effort,
+    String? maxContext,
+    List<ChatSubagentRef> subagents = const [],
     CancelToken? cancelToken,
   }) {
     return _sse(
       () => _dio.post<ResponseBody>(
         '/api/agent/sessions/$sessionId/chat',
-        data: {'message': content, 'session_id': sessionId},
+        data: {
+          'message': content,
+          'session_id': sessionId,
+          if (model != null && model.isNotEmpty) 'model': model,
+          if (effort != null && effort.isNotEmpty) 'effort': effort,
+          if (maxContext != null && maxContext.isNotEmpty)
+            'maxContext': maxContext,
+          if (subagents.isNotEmpty)
+            'subagents': [
+              for (final s in subagents) {'id': s.id, 'label': s.label},
+            ],
+        },
         cancelToken: cancelToken,
         options: Options(
           responseType: ResponseType.stream,
@@ -144,6 +179,100 @@ class OctopusApi {
         ),
       ),
     );
+  }
+
+  // ── 通讯台遥测（原型 E3–E9）─────────────────────────────────────
+
+  /// 当前会话身份（星核 · 分身）。
+  Future<SessionRole> sessionRole(String sessionId) async {
+    final data = await _getJson('/api/agent/sessions/$sessionId/role');
+    if (data is! Map) throw ApiException('身份返回格式不对', kind: 'parse');
+    return SessionRole.fromJson(data.cast<String, dynamic>());
+  }
+
+  /// 切身份；`expert` 传 null = 回主 Agent。
+  Future<SessionRole> setSessionRole(String sessionId, String? expert) async {
+    final data = await _putJson(
+      '/api/agent/sessions/$sessionId/role',
+      body: {'expert': expert},
+    );
+    if (data is! Map) throw ApiException('身份返回格式不对', kind: 'parse');
+    return SessionRole.fromJson(data.cast<String, dynamic>());
+  }
+
+  /// 会话账本：逐 call 行（轮次归属）+ 整本聚合（tok 芯片 / 明细抽屉）。
+  Future<({SessionUsage usage, List<LlmCallRow> rows})> sessionLedger(
+    String sessionId,
+  ) async {
+    final data = await _getJson('/api/sessions/$sessionId/llm-calls');
+    if (data is! Map) throw ApiException('账本返回格式不对', kind: 'parse');
+    final map = data.cast<String, dynamic>();
+    final rawRows = map['data'];
+    final rows = rawRows is List
+        ? rawRows
+              .whereType<Map>()
+              .map((e) => LlmCallRow.fromJson(e.cast<String, dynamic>()))
+              .toList(growable: false)
+        : const <LlmCallRow>[];
+    return (usage: SessionUsage.fromAggregates(map['aggregates']), rows: rows);
+  }
+
+  /// 舱账本（tok 抽屉底部的「本舱账本 · 去看看」）。
+  Future<SessionUsage> cabinUsage(String cabinId) async {
+    final data = await _getJson('/api/cabins/$cabinId/usage');
+    if (data is! Map) throw ApiException('舱账本返回格式不对', kind: 'parse');
+    final map = data.cast<String, dynamic>();
+    // 舱账本的「全域累计」在 grand；老服务没有就退回 summary。
+    return SessionUsage.fromAggregates(map['grand'] ?? map['summary']);
+  }
+
+  Future<List<SkillInfo>> skills() async {
+    final data = await _getJson('/api/agent/skills');
+    final list = data is Map ? data['items'] : data;
+    if (list is! List) return const [];
+    return list
+        .whereType<Map>()
+        .map((e) => SkillInfo.fromJson(e.cast<String, dynamic>()))
+        .toList(growable: false);
+  }
+
+  Future<List<CloneRef>> clones() async {
+    final data = await _getJson('/api/clones');
+    final list = data is Map ? data['clones'] : data;
+    if (list is! List) return const [];
+    return list
+        .whereType<Map>()
+        .map((e) => CloneRef.fromJson(e.cast<String, dynamic>()))
+        .toList(growable: false);
+  }
+
+  Future<List<McpServerInfo>> mcpServers() async {
+    final data = await _getJson('/api/agent/mcp/servers');
+    final list = data is Map ? data['servers'] : data;
+    if (list is! List) return const [];
+    return list
+        .whereType<Map>()
+        .map((e) => McpServerInfo.fromJson(e.cast<String, dynamic>()))
+        .toList(growable: false);
+  }
+
+  /// 重命名会话（星核 · 会话）。
+  Future<void> renameAgentSession(String sessionId, String title) async {
+    await _putJson('/api/agent/sessions/$sessionId', body: {'title': title});
+  }
+
+  /// CLI 在 `system:init` 里广播过的斜杠命令（进程内缓存，重启后为空）。
+  Future<List<String>> slashCommands(String sessionId) async {
+    try {
+      final data = await _getJson(
+        '/api/agent/sessions/$sessionId/slash-commands',
+      );
+      final list = data is Map ? data['commands'] : data;
+      if (list is! List) return const [];
+      return list.whereType<String>().toList(growable: false);
+    } on ApiException {
+      return const [];
+    }
   }
 
   /// 舱内登记过的会话（委派 / 用户自开会话）。老服务没有这条路由就返回空。
@@ -225,7 +354,10 @@ class OctopusApi {
   }
 
   /// 工作区级事件（任务 / 会话状态变化）。global 会话没有这条通道。
-  Stream<SseEvent> workspaceEvents(String workspaceId, {CancelToken? cancelToken}) {
+  Stream<SseEvent> workspaceEvents(
+    String workspaceId, {
+    CancelToken? cancelToken,
+  }) {
     return _sse(
       () => _dio.get<ResponseBody>(
         '/api/workspaces/$workspaceId/events',
@@ -255,7 +387,9 @@ class OctopusApi {
     );
   }
 
-  Stream<SseEvent> _sse(Future<Response<ResponseBody>> Function() request) async* {
+  Stream<SseEvent> _sse(
+    Future<Response<ResponseBody>> Function() request,
+  ) async* {
     Response<ResponseBody> resp;
     try {
       resp = await request();
@@ -307,13 +441,30 @@ class OctopusApi {
     }
   }
 
+  Future<dynamic> _putJson(String path, {Object? body}) async {
+    try {
+      final resp = await _dio.put<dynamic>(path, data: body ?? const {});
+      return _unwrap(resp);
+    } on DioException catch (e) {
+      throw describeDioError(e);
+    }
+  }
+
   dynamic _unwrap(Response<dynamic> resp) {
     final code = resp.statusCode ?? 0;
     if (code == 401 || code == 403) {
-      throw ApiException('设备令牌失效，需要重新配对', statusCode: code, kind: 'unauthorized');
+      throw ApiException(
+        '设备令牌失效，需要重新配对',
+        statusCode: code,
+        kind: 'unauthorized',
+      );
     }
     if (code >= 400) {
-      throw ApiException(_messageFromText(resp.data, code), statusCode: code, kind: 'http');
+      throw ApiException(
+        _messageFromText(resp.data, code),
+        statusCode: code,
+        kind: 'http',
+      );
     }
     return resp.data;
   }
@@ -337,7 +488,9 @@ class OctopusApi {
       final msg = data['message'] ?? data['error'];
       if (msg is String && msg.isNotEmpty) return msg;
     }
-    if (data is String && data.trim().isNotEmpty && data.length < 400) return data.trim();
+    if (data is String && data.trim().isNotEmpty && data.length < 400) {
+      return data.trim();
+    }
     return '请求失败（HTTP $code）';
   }
 }

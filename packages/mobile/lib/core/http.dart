@@ -30,7 +30,10 @@ ApiException describeDioError(DioException e) {
       return ApiException('已取消', kind: 'cancel');
     case DioExceptionType.badResponse:
       final code = e.response?.statusCode;
-      return ApiException(_messageFromBody(e.response?.data, code), statusCode: code);
+      return ApiException(
+        _messageFromBody(e.response?.data, code),
+        statusCode: code,
+      );
     case DioExceptionType.connectionError:
     case DioExceptionType.transformTimeout:
     case DioExceptionType.unknown:
@@ -47,7 +50,8 @@ String describeError(Object error) {
 
 String _networkHint(DioException e) {
   final raw = e.message ?? '';
-  if (raw.contains('Connection refused') || raw.contains('Failed host lookup')) {
+  if (raw.contains('Connection refused') ||
+      raw.contains('Failed host lookup')) {
     return '连不上 —— Octopus 没在跑，或者不在同一个 Tailscale 网络里';
   }
   return '连不上设备（网络不可达）';
@@ -58,33 +62,42 @@ String _messageFromBody(Object? data, int? statusCode) {
     final msg = data['message'] ?? data['error'];
     if (msg is String && msg.isNotEmpty) return msg;
   }
-  if (data is String && data.trim().isNotEmpty && data.length < 400) return data.trim();
+  if (data is String && data.trim().isNotEmpty && data.length < 400) {
+    return data.trim();
+  }
   return '请求失败（HTTP ${statusCode ?? '?'}）';
 }
 
 /// 业务请求用：接受 4xx 当正常响应体，交给上层判断。
+///
+/// 令牌是设备配对令牌：没有就**不带** Authorization —— 探活要能靠 401
+/// 判断「这台电脑开了设备令牌」，把配对码框亮出来。
 Dio createApiDio(String baseUrl, {String? token}) {
-  return Dio(BaseOptions(
-    baseUrl: baseUrl,
-    connectTimeout: const Duration(seconds: 8),
-    receiveTimeout: const Duration(seconds: 30),
-    sendTimeout: const Duration(seconds: 15),
-    headers: {
-      'Accept': 'application/json',
-      if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
-    },
-    validateStatus: (code) => code != null && code < 600,
-  ));
+  return Dio(
+    BaseOptions(
+      baseUrl: baseUrl,
+      connectTimeout: const Duration(seconds: 8),
+      receiveTimeout: const Duration(seconds: 30),
+      sendTimeout: const Duration(seconds: 15),
+      headers: {
+        'Accept': 'application/json',
+        if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
+      },
+      validateStatus: (code) => code != null && code < 600,
+    ),
+  );
 }
 
 /// 探活：200 = 运行中；503 = 服务在但未就绪；其余/异常 = 离线。
 Future<DeviceStatus> probeDevice(String baseUrl) async {
-  final dio = Dio(BaseOptions(
-    baseUrl: baseUrl,
-    connectTimeout: const Duration(seconds: 4),
-    receiveTimeout: const Duration(seconds: 5),
-    validateStatus: (_) => true,
-  ));
+  final dio = Dio(
+    BaseOptions(
+      baseUrl: baseUrl,
+      connectTimeout: const Duration(seconds: 4),
+      receiveTimeout: const Duration(seconds: 5),
+      validateStatus: (_) => true,
+    ),
+  );
   try {
     final resp = await dio.get<dynamic>('/api/actuator/health');
     final code = resp.statusCode ?? 0;

@@ -13,6 +13,7 @@ class Composer extends StatefulWidget {
     this.chips = const [],
     this.sending = false,
     this.enabled = true,
+    this.controls,
   });
 
   final Future<void> Function(String text) onSend;
@@ -21,6 +22,9 @@ class Composer extends StatefulWidget {
   final List<String> chips;
   final bool sending;
   final bool enabled;
+
+  /// 输入区上方的一行控制（原型 `.ctrlrow`）：当前身份 / 一次性委派。
+  final Widget? controls;
 
   @override
   State<Composer> createState() => _ComposerState();
@@ -62,7 +66,12 @@ class _ComposerState extends State<Composer> {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: EdgeInsets.fromLTRB(12, 8, 12, MediaQuery.viewPaddingOf(context).bottom > 0 ? 4 : 10),
+      padding: EdgeInsets.fromLTRB(
+        12,
+        8,
+        12,
+        MediaQuery.viewPaddingOf(context).bottom > 0 ? 4 : 10,
+      ),
       decoration: const BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topCenter,
@@ -74,6 +83,12 @@ class _ComposerState extends State<Composer> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          if (widget.controls != null) ...[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(2, 0, 2, 8),
+              child: Row(children: [widget.controls!]),
+            ),
+          ],
           if (widget.chips.isNotEmpty) ...[
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
@@ -88,8 +103,9 @@ class _ComposerState extends State<Composer> {
                             ? null
                             : () {
                                 _controller.text = chip;
-                                _controller.selection =
-                                    TextSelection.collapsed(offset: chip.length);
+                                _controller.selection = TextSelection.collapsed(
+                                  offset: chip.length,
+                                );
                               },
                       ),
                     ),
@@ -133,8 +149,10 @@ class _ComposerState extends State<Composer> {
                   decoration: InputDecoration(
                     hintText: widget.placeholder,
                     isDense: true,
-                    contentPadding:
-                        const EdgeInsets.symmetric(horizontal: 13, vertical: 13),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 13,
+                      vertical: 13,
+                    ),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(16),
                       borderSide: const BorderSide(color: Octo.hairline),
@@ -145,7 +163,9 @@ class _ComposerState extends State<Composer> {
                     ),
                     focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(16),
-                      borderSide: BorderSide(color: Octo.teal.withValues(alpha: .5)),
+                      borderSide: BorderSide(
+                        color: Octo.teal.withValues(alpha: .5),
+                      ),
                     ),
                   ),
                 ),
@@ -186,7 +206,11 @@ class _Chip extends StatelessWidget {
           ),
           child: Text(
             label,
-            style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w600, color: Octo.metal),
+            style: const TextStyle(
+              fontSize: 10.5,
+              fontWeight: FontWeight.w600,
+              color: Octo.metal,
+            ),
           ),
         ),
       ),
@@ -218,7 +242,13 @@ class _SendButton extends StatelessWidget {
             decoration: const BoxDecoration(
               shape: BoxShape.circle,
               gradient: Octo.accentGradient,
-              boxShadow: [BoxShadow(color: Color(0x422EE6D6), blurRadius: 18, offset: Offset(0, 6))],
+              boxShadow: [
+                BoxShadow(
+                  color: Color(0x422EE6D6),
+                  blurRadius: 18,
+                  offset: Offset(0, 6),
+                ),
+              ],
             ),
             child: busy
                 ? const SizedBox(
@@ -229,7 +259,11 @@ class _SendButton extends StatelessWidget {
                       valueColor: AlwaysStoppedAnimation(Color(0xFF06131A)),
                     ),
                   )
-                : const Icon(Icons.arrow_upward, size: 19, color: Color(0xFF06131A)),
+                : const Icon(
+                    Icons.arrow_upward,
+                    size: 19,
+                    color: Color(0xFF06131A),
+                  ),
           ),
         ),
       ),
