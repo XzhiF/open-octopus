@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:dio/dio.dart';
 
 import 'http.dart';
+import 'chat_media.dart';
 import 'models/cabin.dart';
 import 'models/chat.dart';
 import 'models/sse.dart';
@@ -260,6 +261,24 @@ class OctopusApi {
   Future<void> renameAgentSession(String sessionId, String title) async {
     await _putJson('/api/agent/sessions/$sessionId', body: {'title': title});
   }
+
+  /// 会话里的产物文件（聊天文件 chip 点开）：文本回内容、媒体只回 kind。
+  /// 白名单由服务端按会话解析（同桌面的 `/api/chat-media`）。
+  Future<ChatDocResult> chatDoc(String sessionId, String path) async {
+    final data = await _getJson(
+      '/api/chat-media/${Uri.encodeComponent(sessionId)}/doc',
+      query: {'path': path},
+    );
+    if (data is! Map) throw ApiException('文档返回格式不对', kind: 'parse');
+    return ChatDocResult.fromJson(data.cast<String, dynamic>());
+  }
+
+  /// 图片 / 媒体字节流地址（`Image.network` 直连，带不了 Authorization 也放行）。
+  String chatMediaUrl(
+    String sessionId, {
+    required String route,
+    required String path,
+  }) => chatMediaUrlFor(baseUrl, sessionId, route: route, path: path);
 
   /// CLI 在 `system:init` 里广播过的斜杠命令（进程内缓存，重启后为空）。
   Future<List<String>> slashCommands(String sessionId) async {

@@ -3,14 +3,14 @@ import 'package:flutter/material.dart';
 import '../app/theme.dart';
 import '../core/haptics.dart';
 
-/// 输入区（原型 `.composer`）：快捷词药丸 + 圆角输入框 + 圆形发送键。
+/// 输入区（原型 `.composer`）：身份贴纸 + 圆角输入框 + 圆形发送键。
+/// 原型定稿不要预设快捷词 —— 输入框上方只留控制行（身份 / 委派）。
 class Composer extends StatefulWidget {
   const Composer({
     super.key,
     required this.onSend,
     this.placeholder = '说点什么…',
     this.helper,
-    this.chips = const [],
     this.sending = false,
     this.enabled = true,
     this.controls,
@@ -19,7 +19,6 @@ class Composer extends StatefulWidget {
   final Future<void> Function(String text) onSend;
   final String placeholder;
   final String? helper;
-  final List<String> chips;
   final bool sending;
   final bool enabled;
 
@@ -89,31 +88,6 @@ class _ComposerState extends State<Composer> {
               child: Row(children: [widget.controls!]),
             ),
           ],
-          if (widget.chips.isNotEmpty) ...[
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: [
-                  for (final chip in widget.chips)
-                    Padding(
-                      padding: const EdgeInsets.only(right: 6),
-                      child: _Chip(
-                        label: chip,
-                        onTap: widget.sending
-                            ? null
-                            : () {
-                                _controller.text = chip;
-                                _controller.selection = TextSelection.collapsed(
-                                  offset: chip.length,
-                                );
-                              },
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 8),
-          ],
           if (widget.helper != null) ...[
             Padding(
               padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
@@ -179,40 +153,6 @@ class _ComposerState extends State<Composer> {
             ],
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _Chip extends StatelessWidget {
-  const _Chip({required this.label, this.onTap});
-
-  final String label;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(999),
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: .045),
-            borderRadius: BorderRadius.circular(999),
-            border: Border.all(color: Octo.hairline.withValues(alpha: .9)),
-          ),
-          child: Text(
-            label,
-            style: const TextStyle(
-              fontSize: 10.5,
-              fontWeight: FontWeight.w600,
-              color: Octo.metal,
-            ),
-          ),
-        ),
       ),
     );
   }

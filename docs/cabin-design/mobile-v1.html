@@ -231,9 +231,6 @@
             background:linear-gradient(180deg,rgba(8,6,18,.4),rgba(8,6,18,.72))}
   .ctrlrow{display:flex;align-items:center;gap:6px;padding:0 2px 8px}
   .ctrlrow .sp{flex:1}
-  .chips{display:flex;gap:6px;margin-bottom:8px;overflow:hidden}
-  .chips span{font:600 10.5px/1 var(--ui);color:var(--metal);border:1px solid rgba(185,179,217,.2);
-              padding:8px 11px;border-radius:999px;white-space:nowrap;background:rgba(255,255,255,.045)}
   .inputrow{display:flex;align-items:flex-end;gap:8px;padding-bottom:6px}
   .inputrow .box{flex:1;min-height:44px;border:1px solid rgba(185,179,217,.18);border-radius:16px;
                  background:rgba(16,13,40,.68);padding:13px;font:11.5px/1.4 var(--mono);color:var(--dim);
@@ -345,6 +342,129 @@
   .code{font:10px/1.7 var(--mono);color:var(--metal);background:rgba(10,8,24,.72);
         border:1px solid rgba(185,179,217,.14);border-radius:10px;padding:8px 10px;white-space:pre-wrap}
 
+  /* ── 提问卡（ask_user_question）：不折进工具行，直接长在转录里 ── */
+  .qcard{border:1px solid rgba(46,230,214,.3);border-radius:var(--r-l);overflow:hidden;
+         background:linear-gradient(160deg,rgba(46,230,214,.09),rgba(16,13,40,.86));
+         box-shadow:0 12px 30px rgba(0,0,0,.3)}
+  .qhead{display:flex;align-items:center;gap:8px;padding:9px 11px;
+         border-bottom:1px solid rgba(46,230,214,.14);
+         font:800 8.5px/1 var(--mono);letter-spacing:.14em;color:var(--teal)}
+  .qhead .qg{width:18px;height:18px;flex:none;border-radius:50%;display:grid;place-items:center;
+             font:800 10px/1 var(--mono);color:var(--teal);
+             border:1px solid rgba(46,230,214,.45);background:rgba(46,230,214,.14)}
+  .qhead .qc{margin-left:auto;color:var(--dim);font-weight:700;letter-spacing:.06em}
+  .qblock{padding:9px 10px 2px;border-top:1px solid rgba(46,230,214,.12)}
+  .qblock:first-of-type{border-top:0}
+  .qtag{display:flex;align-items:center;gap:6px;margin:0 2px 5px;
+        font:800 8.5px/1 var(--mono);letter-spacing:.12em;color:var(--teal)}
+  .qtag b{width:16px;height:16px;flex:none;border-radius:50%;display:grid;place-items:center;
+          font:800 9px/1 var(--mono);color:var(--teal);
+          border:1px solid rgba(46,230,214,.4);background:rgba(46,230,214,.1)}
+  .qq{padding:0 2px 2px;font:600 12.5px/1.6 var(--ui);color:#fff}
+  .qopts{display:flex;flex-direction:column;gap:5px;padding:7px 0 0}
+  .qopt{display:flex;align-items:flex-start;gap:9px;padding:9px 10px;border-radius:11px;
+        border:1px solid rgba(185,179,217,.16);background:rgba(255,255,255,.03)}
+  .qopt .rk{width:15px;height:15px;flex:none;margin-top:1px;border-radius:50%;
+            border:1px solid rgba(185,179,217,.42);background:rgba(10,8,24,.5)}
+  .qopt.on{border-color:rgba(46,230,214,.5);background:rgba(46,230,214,.09)}
+  .qopt.on .rk{border-color:var(--teal);background:var(--teal);box-shadow:inset 0 0 0 3px #0d1024}
+  .qopt .m{flex:1;min-width:0}
+  .qopt .ol{font:600 12px/1.35 var(--ui);color:#fff}
+  .qopt .od{font:9.5px/1.55 var(--mono);color:var(--dim);margin-top:2px}
+  .qopt.multi .rk{border-radius:5px}
+  .qopt.multi.on .rk{position:relative;border-radius:5px;box-shadow:none}
+  .qopt.multi.on .rk::after{content:"✓";position:absolute;inset:0;display:grid;place-items:center;
+                            font:800 10px/1 var(--mono);color:#06131a}
+  .qinput{margin:6px 10px 2px;display:flex;align-items:center;gap:7px;padding:9px 11px;border-radius:11px;
+          border:1px solid rgba(46,230,214,.36);background:rgba(10,8,24,.62);
+          font:10.5px/1.45 var(--mono);color:var(--ink)}
+  .qinput .p{flex:none;color:var(--teal);font-weight:800}
+  .qfoot{display:flex;align-items:center;gap:8px;padding:10px 10px 11px}
+  .qbtn{flex:1;text-align:center;padding:10px 0;border-radius:11px;
+        font:800 11px/1 var(--mono);letter-spacing:.08em}
+  .qbtn.ghostbtn{flex:none;padding:10px 13px;font-weight:700;color:var(--metal);
+                 border:1px solid rgba(185,179,217,.22);background:rgba(255,255,255,.03)}
+  .qbtn.go{color:#06131a;background:linear-gradient(180deg,#69f2e4,#22d9c8);
+           box-shadow:0 6px 18px rgba(46,230,214,.24)}
+  .qbtn.off{color:rgba(6,19,26,.5);background:linear-gradient(180deg,rgba(105,242,228,.42),rgba(34,217,200,.42));
+            box-shadow:none}
+  /* 已答：整卡收成一行（详情仍可展开） */
+  .qdone{display:flex;align-items:center;gap:9px;padding:9px 11px;border-radius:13px;
+         border:1px solid rgba(61,220,151,.24);background:rgba(61,220,151,.06)}
+  .qdone .qg{width:18px;height:18px;flex:none;border-radius:50%;display:grid;place-items:center;
+             font:800 10px/1 var(--mono);color:var(--green);
+             border:1px solid rgba(61,220,151,.4);background:rgba(61,220,151,.12)}
+  .qdone .m{flex:1;min-width:0}
+  .qdone .n{font:700 11px/1.3 var(--ui);color:var(--green)}
+  .qdone .d{font:9.5px/1.5 var(--mono);color:var(--metal);margin-top:2px;
+            white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .qdone .r{flex:none;font:9.5px/1 var(--mono);color:var(--dim)}
+
+  /* ── 产物：图片缩略图 + 文件 chip（默认态，都长在正文下面） ── */
+  .thumbs{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+  .thumb{position:relative;width:138px;height:96px;flex:none;border-radius:10px;overflow:hidden;
+         border:1px solid rgba(46,230,214,.3);background:#0b0920}
+  .thumb img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+  .thumb .sm{position:absolute;left:0;right:0;bottom:0;display:flex;align-items:center;gap:5px;
+             padding:7px 7px 4px;background:linear-gradient(0deg,rgba(4,3,10,.92),rgba(4,3,10,0));
+             font:8.5px/1 var(--mono);color:var(--metal)}
+  .thumb .sm b{font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .thumb .sm .ex{margin-left:auto;flex:none;color:var(--teal);font-size:9px}
+  .files{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+  .fchip{display:inline-flex;align-items:center;gap:7px;max-width:100%;padding:6px 7px 6px 9px;
+         border-radius:10px;border:1px solid rgba(185,179,217,.2);background:rgba(16,13,40,.7)}
+  .fchip .fi{flex:none;color:var(--teal);font-size:11px}
+  .fchip .fn{font:600 10px/1.3 var(--mono);color:var(--ink);max-width:176px;
+             white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .fchip .fe{flex:none;font:8.5px/1 var(--mono);color:var(--dim);letter-spacing:.04em}
+  .fchip .cp{flex:none;width:21px;height:21px;display:grid;place-items:center;border-radius:7px;
+             border:1px solid rgba(185,179,217,.22);color:var(--metal);font:600 9.5px/1 var(--mono)}
+
+  /* ── 灯箱 / 文档窗：盖在当前 chat 上，不跳页 ── */
+  .lbx{position:absolute;inset:52px 0 0;z-index:8;display:flex;flex-direction:column;
+       background:rgba(4,3,10,.92);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+  .lbx .lh{display:flex;align-items:center;gap:9px;padding:10px 14px;
+           border-bottom:1px solid rgba(255,255,255,.08)}
+  .lbx .lh .m{flex:1;min-width:0}
+  .lbx .lh .n{font:600 12px/1.3 var(--ui);color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .lbx .lh .s{font:8.5px/1.4 var(--mono);color:var(--dim);margin-top:2px}
+  .lbx .lx{flex:none;width:28px;height:28px;display:grid;place-items:center;border-radius:9px;
+           border:1px solid rgba(185,179,217,.24);color:var(--metal);font-size:12px;background:rgba(255,255,255,.04)}
+  .lbx .lp{display:flex;align-items:center;gap:8px;padding:8px 14px;
+           border-bottom:1px solid rgba(255,255,255,.06);
+           font:8.5px/1.5 var(--mono);color:var(--dim)}
+  .lbx .lp .t{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .lbx .lp .cp{flex:none;color:var(--teal);border:1px solid rgba(46,230,214,.4);border-radius:999px;
+               padding:4px 8px;font-weight:700;letter-spacing:.04em}
+  .lbx .lb{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:12px}
+  .lbx .lb img{max-width:100%;max-height:100%;object-fit:contain;border-radius:10px;
+               border:1px solid rgba(255,255,255,.1);background:#0b0920}
+  .lbx .lf{padding:0 14px 16px;text-align:center;font:9px/1.6 var(--mono);color:rgba(141,134,184,.8)}
+
+  .docwin{position:absolute;inset:54px 10px 10px;z-index:8;display:flex;flex-direction:column;
+          border-radius:20px;border:1px solid rgba(46,230,214,.26);overflow:hidden;
+          background:linear-gradient(180deg,rgba(21,17,50,.99),rgba(10,8,24,.99));
+          box-shadow:0 24px 60px rgba(0,0,0,.72)}
+  .docwin .dh{display:flex;align-items:center;gap:9px;padding:11px 12px;
+              border-bottom:1px solid rgba(185,179,217,.14)}
+  .docwin .dh .g{width:28px;height:28px;flex:none;display:grid;place-items:center;border-radius:9px;
+                 font-size:12px;color:var(--teal);border:1px solid rgba(46,230,214,.3);background:rgba(46,230,214,.08)}
+  .docwin .dh .m{flex:1;min-width:0}
+  .docwin .dh .n{font:600 12.5px/1.3 var(--ui);color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .docwin .dh .s{font:8.5px/1.4 var(--mono);color:var(--dim);margin-top:2px}
+  .docwin .dh .x{flex:none;width:26px;height:26px;display:grid;place-items:center;border-radius:8px;
+                 border:1px solid rgba(185,179,217,.22);color:var(--metal);font-size:11px}
+  .docwin .dp{display:flex;align-items:center;gap:8px;padding:8px 12px;
+              border-bottom:1px solid rgba(185,179,217,.1);font:8.5px/1.5 var(--mono);color:var(--dim)}
+  .docwin .dp .t{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;direction:rtl;text-align:left}
+  .docwin .dp .cp{flex:none;color:var(--teal);font-weight:700;letter-spacing:.03em;
+                  border:1px solid rgba(46,230,214,.4);border-radius:999px;padding:4px 8px}
+  .docwin .db{flex:1;min-height:0;overflow:hidden;padding:10px 12px}
+  .docwin .code{font:9px/1.75 var(--mono);height:100%;overflow:hidden}
+  .docwin .df{display:flex;align-items:center;gap:8px;padding:0 12px 12px;
+              font:8.5px/1.5 var(--mono);color:rgba(141,134,184,.85)}
+  .docwin .df .sp{flex:1}
+
   /* 空态 */
   .empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:0 22px;text-align:center}
   .empty .t{font:700 15px/1.3 var(--ui);letter-spacing:.02em;color:#fff}
@@ -395,7 +515,7 @@
 <body>
 <div class="wrap">
 
-<h1>手机端 · V1 定版<span class="v">定稿 · 2026-11-26 · 2026-11-27 chat 内场</span></h1>
+<h1>手机端 · V1 定版<span class="v">定稿 · 2026-11-26 · 2026-11-28 提问与产物</span></h1>
 <p class="sub">
   目标：<b>人在外面，能把家里那台机器上的活推进一格。</b>
   结构按调研稿 §5.6–5.7：设备 →（作业舱 | 新建单独会话）。
@@ -406,6 +526,9 @@
   <strong>工具与 think 默认折叠</strong>，点开才看步骤。
   主 chat 的通讯台头一行放 <code>model / ctx / tok / 身份 / ≡ 轮次</code>；
   星核抽屉收纳技能 · 分身 · MCP，会话级动作（压缩 / 清空 …）单独一栏。
+  输入框上方<strong>不放预设快捷词</strong> —— 只有身份贴纸和输入行。
+  agent 停下来问的 <code>ask_user_question</code> 直接长成提问卡；
+  正文里的图片走缩略图 + 灯箱，产物文件走 chip + 只读文档窗，全程不离开这次 chat。
   应用图标与 PC 现用 exe 图标同源；落地计划见 <code>design/35-mobile-dev-plan.md</code>。
 </p>
 <p class="rule">
@@ -426,6 +549,10 @@
     <div class="flow" style="margin-top:13px">
       <span class="pill">通讯台头</span><span class="ar">=</span>
       <span class="pill">✦ 星核</span><span class="pill">model</span><span class="pill">ctx</span><span class="pill">tok</span><span class="pill">身份</span><span class="pill">≡ 轮次</span>
+    </div>
+    <div class="flow" style="margin-top:13px">
+      <span class="pill">聊天里的块</span><span class="ar">=</span>
+      <span class="pill">❯ 你</span><span class="pill">✦ 汐音 + 折叠</span><span class="pill">? 提问卡</span><span class="pill">▣ 图片缩略图</span><span class="pill">▤ 文件 chip</span>
     </div>
     <div class="flow" style="margin-top:13px">
       <span class="pill">设备状态</span><span class="ar">=</span>
@@ -650,7 +777,6 @@
 
         <div class="composer">
           <div class="ctrlrow"><span class="cchip identity">◉ 执行者</span><span class="sp"></span></div>
-          <div class="chips"><span>看看编队</span><span>看 diff</span><span>最近怎么样</span></div>
           <div class="inputrow">
             <div class="box">说点什么…</div>
             <div class="send">↑</div>
@@ -658,7 +784,7 @@
         </div>
         <div class="homebar"><i></i></div>
       </div></div>
-      <figcaption><b>E · 舱内主 chat</b><br><em>点进舱先落到这</em>：直接跟汐音说话，她站在聊天面板后侧动着，消息列满宽不打折。通讯台头一行：<em>星核 / model / ctx / tok / ≡ 轮次</em>；身份贴纸在输入区上方。工具与 think 默认折成一行，<b>点开才看步骤</b>；跑动中也只占一行。待你定 / 会话 / 任务走右上角「☰ 编队」。</figcaption>
+      <figcaption><b>E · 舱内主 chat</b><br><em>点进舱先落到这</em>：直接跟汐音说话，她站在聊天面板后侧动着，消息列满宽不打折。通讯台头一行：<em>星核 / model / ctx / tok / ≡ 轮次</em>；身份贴纸在输入区上方，<em>下方直接就是输入行 —— 不放预设快捷词</em>。工具与 think 默认折成一行，<b>点开才看步骤</b>；跑动中也只占一行。待你定 / 会话 / 任务走右上角「☰ 编队」。</figcaption>
     </figure>
 
     <figure>
@@ -1125,9 +1251,343 @@
   </div>
 </section>
 
+<!-- ══════ 4 · 提问与产物 ══════ -->
+<section class="grp">
+  <h2>4 · 提问与产物（ask_user_question · 图片 · 文件）</h2>
+  <div class="gd">agent 停下来问你、或把生成的东西给你看：都在这次 chat 里完成 —— 不跳页、不切应用。</div>
+  <div class="row">
+
+    <figure>
+      <div class="frame"><div class="island"></div><div class="screen">
+        <div class="scene"><img src="assets/scene-deepspace.png" alt=""></div>
+        <canvas class="warp"></canvas>
+        <div class="grade"></div><div class="grain"></div>
+
+        <div class="sbar"><span>9:41</span><span class="r"><span class="ts"><i></i>TAILNET</span><span class="bat"></span></span></div>
+        <div class="bar"><div class="back">‹</div><div><div class="t">octopus-web<span class="num">主 CHAT</span></div><div class="s">书房 PC · 运行中</div></div><div class="sp"></div><div class="act">☰ 编队</div></div>
+
+        <div class="console">
+          <span class="core">✦</span>
+          <span class="cchips">
+          <span class="cchip model">model <b>pro</b> <span class="tip">▾</span></span>
+          <span class="cchip ctx"><span class="fill"></span><span class="bar"><i></i></span>ctx <b>6.2%</b> <span class="tip">▾</span></span>
+          <span class="cchip tok">tok <b>1.2K</b> <span class="tip">▾</span></span>
+          </span>
+          <span class="sp"></span>
+          <span class="cchip turn">≡ 12轮</span>
+        </div>
+
+        <div class="body" style="padding:12px 12px 0">
+          <div class="stream">
+            <div class="m"><div class="me"><span class="p">❯</span><div class="tx">把 phase 2 的残留引用处理掉</div></div></div>
+            <div class="m">
+              <div class="head"><span class="tag">✦ 汐音</span><span class="ok">已完成</span><span>·</span><span class="pk">8s</span><span>·</span><span class="nt">2 步</span><span>·</span><span class="tl">工具 1</span><span class="fold">▸</span></div>
+              <div class="bodyx"><span class="mk">✳</span>动手前先定一件事 —— 删到什么程度：</div>
+            </div>
+            <div class="m">
+              <div class="qcard">
+                <div class="qhead"><span class="qg">?</span><span>要你定</span><span class="qc">1 个问题</span></div>
+                <div class="qblock">
+                  <div class="qtag"><b>1</b> 删除范围</div>
+                  <div class="qq">phase 2 删掉后，spec 与验收清单里的 5 处引用怎么处理？</div>
+                  <div class="qopts">
+                    <div class="qopt on">
+                      <span class="rk"></span>
+                      <div class="m"><div class="ol">一起清掉</div><div class="od">spec + 验收清单（5 处）全删</div></div>
+                    </div>
+                    <div class="qopt">
+                      <span class="rk"></span>
+                      <div class="m"><div class="ol">只删 spec</div><div class="od">验收清单留着，下一轮再收</div></div>
+                    </div>
+                    <div class="qopt">
+                      <span class="rk"></span>
+                      <div class="m"><div class="ol">先别动</div><div class="od">保留引用，等 phase 2 的决定</div></div>
+                    </div>
+                    <div class="qopt">
+                      <span class="rk"></span>
+                      <div class="m"><div class="ol">其他</div><div class="od">自己写一句（选中后出输入框）</div></div>
+                    </div>
+                  </div>
+                </div>
+                <div class="qfoot">
+                  <span class="qbtn ghostbtn">先讨论</span>
+                  <span class="qbtn go">提交回答</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="composer">
+          <div class="ctrlrow"><span class="cchip identity">◉ 执行者</span><span class="sp"></span></div>
+          <div class="inputrow">
+            <div class="box">也可以直接说，不走选项…</div>
+            <div class="send">↑</div>
+          </div>
+        </div>
+        <div class="homebar"><i></i></div>
+      </div></div>
+      <figcaption><b>E10 · 提问卡（单选）</b><br><code>AskUserQuestion</code> 不再折成一行工具调用，直接长成一张卡：<em>所有问题平铺、整段随转录滚</em>，单选是圆点，「其他」选中后出输入框。答完所有问题才能提交；「先讨论」= 不回答，让 agent 先解释。提交后整卡收成一行「✓ 已回答」，回答正文落进转录。</figcaption>
+    </figure>
+
+    <figure>
+      <div class="frame"><div class="island"></div><div class="screen">
+        <div class="scene"><img src="assets/scene-deepspace.png" alt=""></div>
+        <canvas class="warp"></canvas>
+        <div class="grade"></div><div class="grain"></div>
+
+        <div class="sbar"><span>9:41</span><span class="r"><span class="ts"><i></i>TAILNET</span><span class="bat"></span></span></div>
+        <div class="bar"><div class="back">‹</div><div><div class="t">octopus-web<span class="num">主 CHAT</span></div><div class="s">书房 PC · 运行中</div></div><div class="sp"></div><div class="act">☰ 编队</div></div>
+
+        <div class="console">
+          <span class="core">✦</span>
+          <span class="cchips">
+          <span class="cchip model">model <b>pro</b> <span class="tip">▾</span></span>
+          <span class="cchip ctx"><span class="fill"></span><span class="bar"><i></i></span>ctx <b>6.2%</b> <span class="tip">▾</span></span>
+          <span class="cchip tok">tok <b>1.2K</b> <span class="tip">▾</span></span>
+          </span>
+          <span class="sp"></span>
+          <span class="cchip turn">≡ 12轮</span>
+        </div>
+
+        <div class="body" style="padding:12px 12px 0">
+          <div class="stream">
+            <div class="m">
+              <div class="qcard">
+                <div class="qhead"><span class="qg">?</span><span>要你定</span><span class="qc">2 个问题 · 一次答完</span></div>
+                <div class="qblock">
+                  <div class="qtag"><b>1</b> 删除范围</div>
+                  <div class="qq">phase 2 删掉后，spec 与验收清单里的 5 处引用怎么处理？</div>
+                  <div class="qopts">
+                    <div class="qopt on">
+                      <span class="rk"></span>
+                      <div class="m"><div class="ol">一起清掉</div><div class="od">spec + 验收清单全删</div></div>
+                    </div>
+                    <div class="qopt">
+                      <span class="rk"></span>
+                      <div class="m"><div class="ol">只删 spec</div><div class="od">验收清单下一轮再收</div></div>
+                    </div>
+                  </div>
+                </div>
+                <div class="qblock">
+                  <div class="qtag"><b>2</b> 留档</div>
+                  <div class="qq">这批产物要留哪些档？</div>
+                  <div class="qopts">
+                    <div class="qopt multi on">
+                      <span class="rk"></span>
+                      <div class="m"><div class="ol">diff 摘要</div><div class="od">12 个 commit 的要点</div></div>
+                    </div>
+                    <div class="qopt multi on">
+                      <span class="rk"></span>
+                      <div class="m"><div class="ol">证据截图</div><div class="od">3 张跑动截图</div></div>
+                    </div>
+                    <div class="qopt multi">
+                      <span class="rk"></span>
+                      <div class="m"><div class="ol">测试日志</div><div class="od">验收表里已有</div></div>
+                    </div>
+                  </div>
+                </div>
+                <div class="qfoot">
+                  <span class="qbtn ghostbtn">先讨论</span>
+                  <span class="qbtn go">提交回答</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="composer">
+          <div class="ctrlrow"><span class="cchip identity">◉ 执行者</span><span class="sp"></span></div>
+          <div class="inputrow">
+            <div class="box">也可以直接说，不走选项…</div>
+            <div class="send">↑</div>
+          </div>
+        </div>
+        <div class="homebar"><i></i></div>
+      </div></div>
+      <figcaption><b>E11 · 提问卡（多题 · 多选）</b><br>多题<em>平铺在同一张卡里</em>，一次滚完、一次提交；多选是方框，可同时勾多项。题号 + <code>header</code> 来自工具参数，不另造标题；提交正文与桌面同一份（<code>用户回答了以下问题…</code>）。</figcaption>
+    </figure>
+
+    <figure>
+      <div class="frame"><div class="island"></div><div class="screen">
+        <div class="scene"><img src="assets/scene-deepspace.png" alt=""></div>
+        <canvas class="warp"></canvas>
+        <div class="grade"></div><div class="grain"></div>
+
+        <div class="sbar"><span>9:41</span><span class="r"><span class="ts"><i></i>TAILNET</span><span class="bat"></span></span></div>
+        <div class="bar"><div class="back">‹</div><div><div class="t">octopus-web<span class="num">主 CHAT</span></div><div class="s">书房 PC · 运行中</div></div><div class="sp"></div><div class="act">☰ 编队</div></div>
+
+        <div class="console">
+          <span class="core">✦</span>
+          <span class="cchips">
+          <span class="cchip model">model <b>pro</b> <span class="tip">▾</span></span>
+          <span class="cchip ctx"><span class="fill"></span><span class="bar"><i></i></span>ctx <b>6.2%</b> <span class="tip">▾</span></span>
+          <span class="cchip tok">tok <b>1.2K</b> <span class="tip">▾</span></span>
+          </span>
+          <span class="sp"></span>
+          <span class="cchip turn">≡ 12轮</span>
+        </div>
+
+        <div class="body" style="padding:12px 12px 0">
+          <div class="stream">
+            <div class="m"><div class="me"><span class="p">❯</span><div class="tx">跑完给我看下截图和验收表</div></div></div>
+            <div class="m">
+              <div class="head"><span class="tag">✦ 汐音</span><span class="ok">已完成</span><span>·</span><span class="pk">15s</span><span>·</span><span class="nt">4 步</span><span>·</span><span class="tl">工具 2</span><span>·</span><span class="gr">1.2K tok</span><span class="fold">▸</span></div>
+              <div class="bodyx"><span class="mk">✳</span>截了一张总览，验收表也按 phase 2 的删除更新了：</div>
+              <div class="thumbs">
+                <div class="thumb"><img src="assets/scene-cruise.png" alt="cabin-overview"><div class="sm"><b>cabin-overview.png</b><span class="ex">放大</span></div></div>
+                <div class="thumb"><img src="assets/scene-deepspace.png" alt="diff-stat"><div class="sm"><b>diff-stat.png</b><span class="ex">放大</span></div></div>
+              </div>
+              <div class="files">
+                <div class="fchip"><span class="fi">▤</span><span class="fn">acceptance-plan-r2.json</span><span class="fe">json · 3.2KB</span><span class="cp">⧉</span></div>
+                <div class="fchip"><span class="fi">▤</span><span class="fn">round-report-2.md</span><span class="fe">md · 6.1KB</span><span class="cp">⧉</span></div>
+              </div>
+            </div>
+            <div class="hint" style="text-align:left;padding:0 2px;line-height:1.6">点图看大图 · 点文件看只读窗 · ⧉ 只复制文件名</div>
+          </div>
+        </div>
+
+        <div class="composer">
+          <div class="ctrlrow"><span class="cchip identity">◉ 执行者</span><span class="sp"></span></div>
+          <div class="inputrow">
+            <div class="box">说点什么…</div>
+            <div class="send">↑</div>
+          </div>
+        </div>
+        <div class="homebar"><i></i></div>
+      </div></div>
+      <figcaption><b>E12 · 产物（默认态）</b><br>助手正文里的图片绝对路径自动变成缩略图（每条最多 4 张），其他文件变成 <code>▤</code> chip；<em>加载失败就静默收起</em>，不占位不报错。chip 右侧 <code>⧉</code> 只复制文件名，点 chip 本身进只读窗。</figcaption>
+    </figure>
+
+    <figure>
+      <div class="frame"><div class="island"></div><div class="screen">
+        <div class="scene"><img src="assets/scene-deepspace.png" alt=""></div>
+        <canvas class="warp"></canvas>
+        <div class="grade"></div><div class="grain"></div>
+
+        <div class="sbar"><span>9:41</span><span class="r"><span class="ts"><i></i>TAILNET</span><span class="bat"></span></span></div>
+        <div class="bar"><div class="back">‹</div><div><div class="t">octopus-web<span class="num">主 CHAT</span></div><div class="s">书房 PC · 运行中</div></div><div class="sp"></div><div class="act">☰ 编队</div></div>
+
+        <div class="console">
+          <span class="core">✦</span>
+          <span class="cchips">
+          <span class="cchip model">model <b>pro</b> <span class="tip">▾</span></span>
+          <span class="cchip ctx"><span class="fill"></span><span class="bar"><i></i></span>ctx <b>6.2%</b> <span class="tip">▾</span></span>
+          <span class="cchip tok">tok <b>1.2K</b> <span class="tip">▾</span></span>
+          </span>
+          <span class="sp"></span>
+          <span class="cchip turn">≡ 12轮</span>
+        </div>
+
+        <div class="body" style="padding:12px 12px 0">
+          <div class="stream">
+            <div class="m"><div class="me"><span class="p">❯</span><div class="tx">跑完给我看下截图和验收表</div></div></div>
+            <div class="m">
+              <div class="head"><span class="tag">✦ 汐音</span><span class="ok">已完成</span><span>·</span><span class="pk">15s</span><span>·</span><span class="nt">4 步</span><span>·</span><span class="tl">工具 2</span><span class="fold">▸</span></div>
+              <div class="bodyx"><span class="mk">✳</span>截了一张总览，验收表也按 phase 2 的删除更新了：</div>
+              <div class="thumbs">
+                <div class="thumb"><img src="assets/scene-cruise.png" alt="cabin-overview"><div class="sm"><b>cabin-overview.png</b><span class="ex">放大</span></div></div>
+                <div class="thumb"><img src="assets/scene-deepspace.png" alt="diff-stat"><div class="sm"><b>diff-stat.png</b><span class="ex">放大</span></div></div>
+              </div>
+              <div class="files">
+                <div class="fchip"><span class="fi">▤</span><span class="fn">acceptance-plan-r2.json</span><span class="fe">json · 3.2KB</span><span class="cp">⧉</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="lbx">
+          <div class="lh">
+            <div class="m"><div class="n">cabin-overview.png</div><div class="s">图片 · 2880×1800 · 1.4MB</div></div>
+            <span class="lx">✕</span>
+          </div>
+          <div class="lp">
+            <span class="t">C:\work\octopus-web\artifacts\cabin-overview.png</span>
+            <span class="cp">⧉ 复制</span>
+          </div>
+          <div class="lb"><img src="assets/scene-cruise.png" alt="cabin-overview 放大"></div>
+          <div class="lf">双指缩放 · 点空白处 / 返回键关闭</div>
+        </div>
+        <div class="homebar"><i></i></div>
+      </div></div>
+      <figcaption><b>E13 · 图片灯箱</b><br>点缩略图 = 在当前 chat 上盖一层灯箱，<em>不跳系统相册</em>。图片走 <code>/api/chat-media/:sid/image</code>（服务端按会话白名单校验）；顶部保留路径与复制，关闭后回到原滚动位置。</figcaption>
+    </figure>
+
+    <figure>
+      <div class="frame"><div class="island"></div><div class="screen">
+        <div class="scene"><img src="assets/scene-deepspace.png" alt=""></div>
+        <canvas class="warp"></canvas>
+        <div class="grade"></div><div class="grain"></div>
+
+        <div class="sbar"><span>9:41</span><span class="r"><span class="ts"><i></i>TAILNET</span><span class="bat"></span></span></div>
+        <div class="bar"><div class="back">‹</div><div><div class="t">octopus-web<span class="num">主 CHAT</span></div><div class="s">书房 PC · 运行中</div></div><div class="sp"></div><div class="act">☰ 编队</div></div>
+
+        <div class="console">
+          <span class="core">✦</span>
+          <span class="cchips">
+          <span class="cchip model">model <b>pro</b> <span class="tip">▾</span></span>
+          <span class="cchip ctx"><span class="fill"></span><span class="bar"><i></i></span>ctx <b>6.2%</b> <span class="tip">▾</span></span>
+          <span class="cchip tok">tok <b>1.2K</b> <span class="tip">▾</span></span>
+          </span>
+          <span class="sp"></span>
+          <span class="cchip turn">≡ 12轮</span>
+        </div>
+
+        <div class="body" style="padding:12px 12px 0">
+          <div class="stream">
+            <div class="m"><div class="me"><span class="p">❯</span><div class="tx">跑完给我看下截图和验收表</div></div></div>
+            <div class="m">
+              <div class="head"><span class="tag">✦ 汐音</span><span class="ok">已完成</span><span>·</span><span class="pk">15s</span><span>·</span><span class="nt">4 步</span><span>·</span><span class="tl">工具 2</span><span class="fold">▸</span></div>
+              <div class="bodyx"><span class="mk">✳</span>截了一张总览，验收表也按 phase 2 的删除更新了：</div>
+              <div class="files">
+                <div class="fchip"><span class="fi">▤</span><span class="fn">acceptance-plan-r2.json</span><span class="fe">json · 3.2KB</span><span class="cp">⧉</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="scrim"></div>
+        <div class="docwin">
+          <div class="dh">
+            <span class="g">▤</span>
+            <div class="m"><div class="n">acceptance-plan-r2.json</div><div class="s">文档 · 只读 · json · 3.2KB</div></div>
+            <span class="x">✕</span>
+          </div>
+          <div class="dp">
+            <span class="t">C:\work\octopus-web\.scratch\2026-11-28\acceptance-plan-r2.json</span>
+            <span class="cp">⧉ 复制路径</span>
+          </div>
+          <div class="db">
+<div class="code">{
+  "round": 2,
+  "cases": [
+    {
+      "id": "c1",
+      "title": "phase 2 删掉后任务仍能过验收",
+      "steps": [
+        "打开任务详情",
+        "验收清单只剩 phase 1"
+      ]
+    }
+  ],
+  "checks": [
+    { "id": "tests", "ok": true, "detail": "81 passed" },
+    { "id": "diff", "ok": true, "detail": "12 commits" }
+  ]
+}</div>
+          </div>
+          <div class="df"><span>只读预览</span><span class="sp"></span><span>修改请回桌面</span></div>
+        </div>
+        <div class="homebar"><i></i></div>
+      </div></div>
+      <figcaption><b>E14 · 文件详情窗</b><br>点文件 chip 开只读窗，<em>仍盖在 chat 上</em>：文本 / md / json 原样（json 自动缩进），图片 / 视频 / 音频换成预览，二进制明说。路径栏可复制；手机只读，要改回桌面。</figcaption>
+    </figure>
+  </div>
+</section>
+
 
 <section class="grp">
-  <h2>4 · 会话与待你定</h2>
+  <h2>5 · 会话与待你定</h2>
   <div class="gd">主 chat 里直接聊；或者从「☰ 编队」的待你定里点进来——后者只是把问题引用到输入框上方。同一个 chat，两种入口。</div>
   <div class="row">
 
@@ -1182,7 +1642,6 @@
 
         <div class="composer">
           <div class="ctrlrow"><span class="cchip identity">◉ 主 Agent</span><span class="sp"></span></div>
-          <div class="chips"><span>继续</span><span>停下</span><span>看 diff</span><span>切到验收</span></div>
           <div class="inputrow">
             <div class="box">说点什么…</div>
             <div class="send">↑</div>
@@ -1252,7 +1711,7 @@
 
 <!-- ══════ 5 · 单独会话 ══════ -->
 <section class="grp">
-  <h2>5 · 单独会话</h2>
+  <h2>6 · 单独会话</h2>
   <div class="gd">不进舱、不建任务，问完就走的场景。</div>
   <div class="row">
 
@@ -1270,9 +1729,6 @@
             <div class="t">在这儿说点什么</div>
             <div class="d">机器上的文件、舱里的状态都能问<br>说清楚要干什么，它自己找路</div>
           </div>
-          <div class="chips" style="flex-wrap:wrap;gap:7px;overflow:visible;margin-bottom:6px">
-            <span>今天哪些舱有事</span><span>看最近的 diff</span><span>开一个新任务</span>
-          </div>
         </div>
         <div class="composer">
           <div class="ctrlrow"><span class="cchip identity">◉ 主 Agent</span><span class="sp"></span></div>
@@ -1283,7 +1739,7 @@
         </div>
         <div class="homebar"><i></i></div>
       </div></div>
-      <figcaption><b>H · 新建单独会话</b><br>对应 <code>POST /api/chat/global/sessions</code>。<em>空态用 <code>09-smile</code></em>，是这几屏里最大的一次立绘。快捷词是脚手架不是功能，第一版可以先不放。</figcaption>
+      <figcaption><b>H · 新建单独会话</b><br>对应 <code>POST /api/chat/global/sessions</code>。<em>空态用 <code>09-smile</code></em>，是这几屏里最大的一次立绘。<em>空态也不放预设快捷词</em>：第一句从空白开始，不替用户想问题。</figcaption>
     </figure>
 
     <div class="panel" style="width:340px;flex:none;align-self:flex-start">
@@ -1310,7 +1766,9 @@
         <div><span class="dot d-warn"></span><span><b style="color:#fff">星核分栏</b>：技能 / 分身 / MCP / 会话 四栏；压缩 / 清空 / 自动压缩<em>单独放「会话」</em>。这样分够不够？</span></div>
         <div><span class="dot d-warn"></span><span><b style="color:#fff">设备切换入口</b>：现在放在舱列表顶栏（点机器名回列表）。要不要改成底部 tab「设备 / 我的」？</span></div>
         <div><span class="dot d-warn"></span><span><b style="color:#fff">待你定列表的信息量</b>：现在给「来源 + 一句话 + 明细」。要不要压到只剩一句话？</span></div>
-        <div><span class="dot d-warn"></span><span><b style="color:#fff">附件/图片上传</b>：本轮没画。要不要能在手机上传截图？</span></div>
+        <div><span class="dot d-ok"></span><span><b style="color:#fff">提问卡已定</b>：所有问题<em>平铺一次滚完</em>，底部一次提交；「先讨论」保留，提交后整卡收成一行。</span></div>
+        <div><span class="dot d-ok"></span><span><b style="color:#fff">产物预览已定</b>：缩略图 + 灯箱、文件 chip + 只读窗，都不离开 chat。手机端<em>发</em>截图（上传）本轮不做。</span></div>
+        <div><span class="dot d-ok"></span><span><b style="color:#fff">预设快捷词已删</b>：E / F / H 三处输入框上方的 chips 全部拿掉，只留身份贴纸 + 输入行。</span></div>
         <div><span class="dot d-warn"></span><span><b style="color:#fff">圆角尺度</b>：现在卡片 18px、按钮 16px / 药丸。要再圆一点（接近 iOS 大圆角）还是就这个手感？</span></div>
       </div>
     </div>

@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:octopus_mobile/core/models/chat.dart';
 import 'package:octopus_mobile/core/models/telemetry.dart';
+import 'package:octopus_mobile/core/ask_question.dart';
+import 'package:octopus_mobile/features/chat/ask_card.dart';
 import 'package:octopus_mobile/features/chat/console_bar.dart';
 import 'package:octopus_mobile/widgets/tui.dart';
 
@@ -108,6 +110,59 @@ void main() {
 
     expect(find.textContaining('先核对 manifest'), findsOneWidget);
     expect(find.textContaining('spec/phase-1.md'), findsOneWidget);
+  });
+
+  testWidgets('AskUserQuestion 直接长成提问卡；答过之后收成一行', (tester) async {
+    final ask = _row(
+      id: 'a1-ask',
+      role: 'assistant',
+      displayType: 'ask_user_question',
+      content: '动手前先定一件事：',
+      sourceId: 'a1',
+      extra: {
+        'questions': [
+          {
+            'header': '删除范围',
+            'question': 'phase 2 删掉后，引用怎么处理？',
+            'multiSelect': false,
+            'options': [
+              {'label': '一起清掉', 'description': '全删'},
+              {'label': '先别动', 'description': '等决定'},
+            ],
+          },
+        ],
+      },
+    );
+    final answer = _row(
+      id: 'u2',
+      role: 'user',
+      displayType: 'user',
+      content: '用户回答了以下问题：\n\n1. [删除范围] …\n   → 一起清掉',
+    );
+
+    Widget host(List<ChatMessage> messages) => MaterialApp(
+      home: Scaffold(
+        body: SingleChildScrollView(
+          padding: const EdgeInsets.all(12),
+          child: TuiTranscript(messages: messages),
+        ),
+      ),
+    );
+
+    expect(parseAskQuestions(ask.questions), hasLength(1));
+    await tester.pumpWidget(host([ask]));
+    expect(find.byType(AskQuestionCard), findsOneWidget);
+    expect(find.textContaining('动手前先定一件事'), findsOneWidget);
+    expect(find.text('phase 2 删掉后，引用怎么处理？'), findsOneWidget);
+    expect(find.text('一起清掉'), findsOneWidget);
+    expect(find.text('提交回答'), findsOneWidget);
+
+    await tester.pumpWidget(host([ask, answer]));
+    await tester.pump();
+    expect(find.text('已回答'), findsOneWidget);
+    expect(find.text('提交回答'), findsNothing);
+    // 回答正文压成一行，不铺结构化块。
+    expect(find.textContaining('已回答 · 一起清掉'), findsOneWidget);
   });
 
   testWidgets('通讯台头显示 model / ctx / tok / 轮次，芯片可点', (tester) async {

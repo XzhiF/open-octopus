@@ -91,6 +91,8 @@ lib/
 │   ├── devices/            ← A 设备列表 · B 添加设备
 │   ├── cabins/             ← D 舱列表 · E 舱内主 chat · E2 编队（待你定 / 会话 / 任务）
 │   ├── chat/               ← ChatPane（通讯台头 + 面板 + 引用条 + 输入区）· F 会话 · H 单独会话
+│   │   ├── ask_card.dart   ← 提问卡（单选 / 多选 / 其他 / 先讨论 / 已答折叠）
+│   │   ├── chat_attachments.dart ← 图片缩略图 + 灯箱、文件 chip + 只读文档窗
 │   │   └── sheets/         ← chat 内场抽屉：轮次 / 星核（技能·分身·MCP·会话）/ 模型 / ctx / tok
 │   ├── tasks/              ← 任务只读详情
 │   └── settings/           ← 设备管理 · 动效开关 · 立绘动画
@@ -188,6 +190,19 @@ lib/
 身份与切换走 `/api/agent/sessions/:id/role`，技能 / 分身 / MCP 分别走 `/api/agent/skills`、
 `/api/clones`、`/api/agent/mcp/servers`。
 
+## 2026-11-28 · 提问卡与产物（原型 §4）
+
+- **提问卡**：`AskUserQuestion` 不再折成工具行。题目从 agent 消息 metadata 的 `questions`
+  （老数据用工具入参兜底）读出来，**所有问题平铺**、一次滚完、一次提交；单选圆点 /
+  多选方框，「其他」选中后就地出输入框。「先讨论」= 不回答，让 agent 把选项解释清楚；
+  作答后整卡收成一行「✓ 已回答」，结构化回答正文在转录里压成一行摘要。
+- **产物预览**：助手正文里的绝对路径自动识别 —— 图片出缩略图（每条最多 4 张），点开
+  当前 chat 上的灯箱；其它可读文件出 `▤` chip，右侧 `⧉` 只复制文件名，点 chip 开只读
+  文档窗（文本 / json / md 原样，图片换预览，二进制明说）。数据走
+  `/api/chat-media/:sessionId/{image,doc,raw}`，白名单由服务端按会话解析；加载失败静默收起。
+- **输入区**：按原型定稿删掉所有预设快捷词（E / F / H 三屏），只留身份贴纸 + 输入行。
+- **测试**：新增提问卡模型 / 组件、媒体路径识别与附件 chip 用例；`flutter test` **105 passed**。
+
 ## 应用图标
 
 - 与 PC exe **同一张汐音立绘**（`packages/desktop/build/icon.png`），不重绘。
@@ -217,7 +232,7 @@ lib/
 
 ```bash
 flutter analyze     # 0 error / 0 warning
-flutter test        # 81 passed
+flutter test        # 105 passed
 dart run tool/smoke.dart http://127.0.0.1:3001 --attention --cabin-events=2   # 连真实 dev server
 ```
 

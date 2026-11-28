@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:octopus_mobile/core/models/cabin.dart';
 import 'package:octopus_mobile/core/models/chat.dart';
@@ -198,6 +200,101 @@ void main() {
       expect(text.content, '清完了。');
       expect(text.interrupted, isTrue);
       expect(text.sourceId, 'a1');
+    });
+  });
+
+  group('AskUserQuestion 落库行', () {
+    const questions = [
+      {
+        'header': '删除范围',
+        'question': 'phase 2 删掉后，引用怎么处理？',
+        'multiSelect': false,
+        'options': [
+          {'label': '一起清掉'},
+          {'label': '先别动'},
+        ],
+      },
+      {
+        'header': '留档',
+        'question': '要留哪些档？',
+        'multiSelect': true,
+        'options': [
+          {'label': 'diff 摘要'},
+        ],
+      },
+    ];
+
+    test('metadata.questions 生成提问卡；工具行不重复画', () {
+      final session = ChatSession.fromAgentJson({
+        'id': 's1',
+        'messages': {
+          'items': [
+            {
+              'id': 'a1',
+              'role': 'assistant',
+              'content': '动手前先定一件事：',
+              'created_at': '2026-11-28T10:00:00Z',
+              'tool_calls': [
+                {
+                  'id': 't1',
+                  'name': 'AskUserQuestion',
+                  'status': 'fail',
+                  'input': {'questions': questions},
+                },
+              ],
+              'metadata': jsonEncode({
+                'displayType': 'ask_user_question',
+                'questions': questions,
+              }),
+            },
+            {
+              'id': 'u2',
+              'role': 'user',
+              'content': '用户回答了以下问题：\n\n1. [删除范围] …\n   → 一起清掉',
+              'created_at': '2026-11-28T10:00:10Z',
+            },
+          ],
+          'total': 2,
+        },
+      });
+
+      final asks = session.messages
+          .where((m) => m.displayType == 'ask_user_question')
+          .toList();
+      expect(asks, hasLength(1));
+      expect(
+        session.messages.where((m) => m.displayType == 'tool_call'),
+        isEmpty,
+      );
+      expect(asks.single.content, '动手前先定一件事：');
+      expect((asks.single.questions as List), hasLength(2));
+    });
+
+    test('没有 metadata.questions 时用工具入参兜底', () {
+      final session = ChatSession.fromAgentJson({
+        'id': 's1',
+        'messages': {
+          'items': [
+            {
+              'id': 'a1',
+              'role': 'assistant',
+              'content': '',
+              'tool_calls': [
+                {
+                  'id': 't1',
+                  'name': 'AskUserQuestion',
+                  'status': 'result',
+                  'input': {'questions': questions},
+                },
+              ],
+            },
+          ],
+        },
+      });
+
+      final ask = session.messages.single;
+      expect(ask.displayType, 'ask_user_question');
+      expect((ask.questions as List), hasLength(2));
     });
   });
 

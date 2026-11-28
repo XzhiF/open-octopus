@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/theme.dart';
+import '../../core/ask_question.dart';
 import '../../core/composer_settings.dart';
 import '../../core/models/chat.dart';
 import '../../core/models/quote.dart';
@@ -41,7 +42,6 @@ class ChatPane extends ConsumerStatefulWidget {
     this.agent = false,
     this.crewBehind = false,
     this.fleetHint = false,
-    this.chips = const ['继续', '停下', '看 diff', '切到验收'],
     this.placeholder = '说点什么…',
     this.quotePlaceholder = '回复上面这个问题…',
     this.quoteHelper = '说清楚就行：清掉 / 先别动 / 只删 spec 不动验收清单',
@@ -70,7 +70,6 @@ class ChatPane extends ConsumerStatefulWidget {
   /// 消息流末尾补一句「待你定 / 会话 / 任务 → 右上角『☰ 编队』」。
   final bool fleetHint;
 
-  final List<String> chips;
   final String placeholder;
   final String quotePlaceholder;
   final String quoteHelper;
@@ -243,7 +242,6 @@ class ChatPaneState extends ConsumerState<ChatPane>
           helper: quote == null ? null : widget.quoteHelper,
           sending: chat?.sending ?? false,
           enabled: chat != null && !_bootError,
-          chips: widget.chips,
           controls: widget.agent
               ? ChatIdentityChip(
                   role: role,
@@ -379,6 +377,10 @@ class ChatPaneState extends ConsumerState<ChatPane>
                     turnStats: chat.turnStats,
                     userKeys: userKeys,
                     flashUserId: _flashUserId,
+                    sessionId: chat.sessionId,
+                    api: chat.api,
+                    onAskAnswer: (text) => unawaited(_sendCommand(text)),
+                    askEnabled: !chat.sending,
                   ),
                   if (chat.sending)
                     const Padding(
@@ -426,7 +428,7 @@ class ChatPaneState extends ConsumerState<ChatPane>
         TurnEntry(
           id: message.id,
           index: entries.length + 1,
-          text: message.content,
+          text: _turnText(message.content),
           createdAt: message.createdAt,
         ),
       );
@@ -567,7 +569,7 @@ class ChatPaneState extends ConsumerState<ChatPane>
     }
     for (final message in messages.skip(start)) {
       if (message.isUser && !message.isEvent) {
-        lines.add('❯ ${message.content}');
+        lines.add('❯ ${_turnText(message.content)}');
       } else if (message.displayType == 'text' &&
           message.content.trim().isNotEmpty) {
         lines.add('✦ 汐音：${message.content}');
@@ -575,6 +577,13 @@ class ChatPaneState extends ConsumerState<ChatPane>
     }
     await copyToClipboard(lines.join('\n\n'));
     _snack('已复制最近 ${users.clamp(0, 20)} 轮到剪贴板');
+  }
+
+  /// 轮次索引 / 导出里，提问卡的结构化回答压成一行。
+  static String _turnText(String content) {
+    final summary = askAnswerSummary(content);
+    if (summary == null) return content;
+    return summary == '先讨论' ? '先讨论 · 让 agent 解释' : '已回答 · $summary';
   }
 }
 

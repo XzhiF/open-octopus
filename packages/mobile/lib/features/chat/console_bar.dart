@@ -39,7 +39,7 @@ class ConsoleBar extends StatelessWidget {
     final tokLabel = usage.totalCalls > 0 ? formatTokNum(usage.tokens) : '--';
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 7, 12, 0),
+      padding: const EdgeInsets.fromLTRB(10, 7, 10, 0),
       child: Row(
         children: [
           _CoreOrb(onTap: onCoreTap),
@@ -55,7 +55,7 @@ class ConsoleBar extends StatelessWidget {
                     valueColor: Octo.green,
                     onTap: onModelTap,
                   ),
-                  const SizedBox(width: 6),
+                  const SizedBox(width: 5),
                   _ConsoleChip(
                     label: 'ctx',
                     value: ctx == null
@@ -66,7 +66,7 @@ class ConsoleBar extends StatelessWidget {
                     showBar: true,
                     onTap: onCtxTap,
                   ),
-                  const SizedBox(width: 6),
+                  const SizedBox(width: 5),
                   _ConsoleChip(
                     label: 'tok',
                     value: tokLabel,
@@ -77,7 +77,7 @@ class ConsoleBar extends StatelessWidget {
               ),
             ),
           ),
-          const SizedBox(width: 6),
+          const SizedBox(width: 5),
           _ConsoleChip(
             label: '',
             value: '≡ $turns轮',
@@ -223,7 +223,7 @@ class _ConsoleChip extends StatelessWidget {
                   ),
                 ),
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 6.5),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -238,7 +238,7 @@ class _ConsoleChip extends StatelessWidget {
                           color: Octo.dim,
                         ),
                       ),
-                      const SizedBox(width: 4),
+                      const SizedBox(width: 3),
                     ],
                     Text(
                       value,
@@ -252,7 +252,7 @@ class _ConsoleChip extends StatelessWidget {
                       ),
                     ),
                     if (label.isNotEmpty) ...[
-                      const SizedBox(width: 3),
+                      const SizedBox(width: 2),
                       const Text(
                         '▾',
                         style: TextStyle(

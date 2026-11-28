@@ -3,9 +3,13 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 
 import '../app/theme.dart';
+import '../core/api.dart';
+import '../core/ask_question.dart';
 import '../core/format.dart';
 import '../core/models/chat.dart';
 import '../core/models/telemetry.dart';
+import '../features/chat/ask_card.dart';
+import '../features/chat/chat_attachments.dart';
 
 /// 会话内容＝桌面同一套 TUI 语法（`❯` / `✦ 汐音 + meta` / `◌` / `▸ tool [✓]` / `✳`）。
 /// 换皮肤不换内容：这里只决定字号与配色，不重排信息。
@@ -20,6 +24,10 @@ class TuiTranscript extends StatelessWidget {
     this.turnStats = const {},
     this.userKeys = const {},
     this.flashUserId,
+    this.sessionId,
+    this.api,
+    this.onAskAnswer,
+    this.askEnabled = true,
   });
 
   final List<ChatMessage> messages;
@@ -34,9 +42,18 @@ class TuiTranscript extends StatelessWidget {
   /// 刚从轮次抽屉跳过来的那条用户消息：闪一下粉。
   final String? flashUserId;
 
+  /// 产物预览（图片 / 文件）需要的会话与 API；为空时只画文本。
+  final String? sessionId;
+  final OctopusApi? api;
+
+  /// 提问卡作答：把格式化正文当一条用户消息发回会话。
+  final ValueChanged<String>? onAskAnswer;
+  final bool askEnabled;
+
   @override
   Widget build(BuildContext context) {
     final segments = _segment(messages);
+    final answered = _answeredAsks(messages);
     final rows = <Widget>[];
 
     for (final segment in segments) {
@@ -58,6 +75,11 @@ class TuiTranscript extends StatelessWidget {
               key: ValueKey(part.isEmpty ? '__empty__' : part.first.sourceId),
               messages: part,
               stats: _statsOf(part),
+              answeredAsks: answered,
+              sessionId: sessionId,
+              api: api,
+              onAskAnswer: onAskAnswer,
+              askEnabled: askEnabled,
             ),
           );
       }
@@ -65,7 +87,14 @@ class TuiTranscript extends StatelessWidget {
 
     final l = live;
     if (l != null && l.hasAnything) {
-      rows.add(_LiveBlockView(key: const ValueKey('__live__'), live: l));
+      rows.add(
+        _LiveBlockView(
+          key: const ValueKey('__live__'),
+          live: l,
+          sessionId: sessionId,
+          api: api,
+        ),
+      );
     }
 
     return Column(
@@ -76,6 +105,24 @@ class TuiTranscript extends StatelessWidget {
           Padding(padding: const EdgeInsets.only(bottom: 13), child: row),
       ],
     );
+  }
+
+  /// 提问卡是否已作答：同一段里，提问之后出现用户消息就算答过。
+  /// 回答正文（`用户回答了以下问题…`）压成一行摘要供折叠态显示。
+  Map<String, String> _answeredAsks(List<ChatMessage> messages) {
+    final out = <String, String>{};
+    final pending = <ChatMessage>[];
+    for (final m in messages) {
+      if (m.isUser) {
+        for (final ask in pending) {
+          out[ask.id] = askAnswerSummary(m.content) ?? '已回答';
+        }
+        pending.clear();
+      } else if (m.displayType == 'ask_user_question') {
+        pending.add(m);
+      }
+    }
+    return out;
   }
 
   TurnStats? _statsOf(List<ChatMessage> rows) {
@@ -161,6 +208,11 @@ class _TuiUserRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 提问卡的回答正文是给 agent 的结构化块，转录里压成一行摘要；
+    // 原始正文仍完整发给了服务端，只是不铺满屏幕。
+    final answer = askAnswerSummary(text);
+    if (answer != null) return _TuiAnswerRow(summary: answer, flash: flash);
+
     return AnimatedContainer(
       duration: const Duration(milliseconds: 260),
       padding: const EdgeInsets.fromLTRB(9, 2, 9, 2),
@@ -214,16 +266,82 @@ class _TuiUserRow extends StatelessWidget {
   }
 }
 
+/// 提问卡的回答（原型 `.qdone` 的转录侧）：一行带过，不铺结构化正文。
+class _TuiAnswerRow extends StatelessWidget {
+  const _TuiAnswerRow({required this.summary, this.flash = false});
+
+  final String summary;
+  final bool flash;
+
+  @override
+  Widget build(BuildContext context) {
+    final discuss = summary == '先讨论';
+    final color = discuss ? Octo.amber : Octo.green;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(9, 3, 9, 3),
+      decoration: BoxDecoration(
+        color: flash ? Octo.pink.withValues(alpha: .13) : Colors.transparent,
+        borderRadius: BorderRadius.circular(4),
+        border: Border(
+          left: BorderSide(
+            color: flash ? Octo.pink : color.withValues(alpha: .7),
+          ),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(right: 6),
+            child: Text(
+              '✓',
+              style: TextStyle(
+                fontFamily: Octo.mono,
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+                color: color,
+              ),
+            ),
+          ),
+          Expanded(
+            child: SelectableText(
+              discuss ? '已转讨论 · 让 agent 先解释' : '已回答 · $summary',
+              style: TextStyle(
+                fontFamily: Octo.mono,
+                fontSize: 10.5,
+                height: 1.65,
+                color: discuss ? Octo.amber : Octo.metal,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// 完成态的 assistant 块：一行摘要头 + 可折叠的过程 + 正文。
 class _AssistantBlockView extends StatefulWidget {
   const _AssistantBlockView({
     super.key,
     required this.messages,
     required this.stats,
+    this.answeredAsks = const {},
+    this.sessionId,
+    this.api,
+    this.onAskAnswer,
+    this.askEnabled = true,
   });
 
   final List<ChatMessage> messages;
   final TurnStats? stats;
+
+  /// 提问卡 id → 回答摘要（有 key = 已回答）。
+  final Map<String, String> answeredAsks;
+  final String? sessionId;
+  final OctopusApi? api;
+  final ValueChanged<String>? onAskAnswer;
+  final bool askEnabled;
 
   @override
   State<_AssistantBlockView> createState() => _AssistantBlockViewState();
@@ -246,6 +364,47 @@ class _AssistantBlockViewState extends State<_AssistantBlockView> {
         .whereType<String>()
         .firstOrNull;
 
+    final content = <Widget>[];
+    void addTextRow(ChatMessage row) {
+      content.add(
+        Padding(
+          padding: const EdgeInsets.only(top: 3),
+          child: _TuiAssistantText(text: row.content),
+        ),
+      );
+      final api = widget.api;
+      final sessionId = widget.sessionId;
+      if (api != null && sessionId != null) {
+        content.add(
+          ChatAttachments(text: row.content, api: api, sessionId: sessionId),
+        );
+      }
+    }
+
+    for (final row in widget.messages) {
+      if (row.displayType == 'text' && row.content.trim().isNotEmpty) {
+        addTextRow(row);
+      } else if (row.displayType == 'ask_user_question') {
+        // 提问前的正文与题目存在同一条消息里，正文先画。
+        if (row.content.trim().isNotEmpty) addTextRow(row);
+        final questions = parseAskQuestions(row.questions);
+        if (questions.isEmpty) continue;
+        content.add(
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: AskQuestionCard(
+              key: ValueKey('ask-${row.id}'),
+              questions: questions,
+              answered: widget.answeredAsks.containsKey(row.id),
+              answeredSummary: widget.answeredAsks[row.id],
+              onAnswer: widget.onAskAnswer,
+              enabled: widget.askEnabled,
+            ),
+          ),
+        );
+      }
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
@@ -262,12 +421,7 @@ class _AssistantBlockViewState extends State<_AssistantBlockView> {
               : () => setState(() => _expanded = !_expanded),
         ),
         if (_expanded && process.isNotEmpty) _MetaBody(rows: process),
-        for (final row in texts) ...[
-          Padding(
-            padding: const EdgeInsets.only(top: 3),
-            child: _TuiAssistantText(text: row.content),
-          ),
-        ],
+        for (final row in content) row,
         if (interrupted)
           const Padding(
             padding: EdgeInsets.only(top: 4, left: 9),
@@ -290,12 +444,7 @@ class _AssistantBlockViewState extends State<_AssistantBlockView> {
   }
 
   List<ChatMessage> _processRows(List<ChatMessage> rows) => rows
-      .where(
-        (m) =>
-            m.displayType == 'thinking' ||
-            m.displayType == 'tool_call' ||
-            m.displayType == 'ask_user_question',
-      )
+      .where((m) => m.displayType == 'thinking' || m.displayType == 'tool_call')
       .toList(growable: false);
 
   List<ChatMessage> _textRows(List<ChatMessage> rows) => rows
@@ -305,9 +454,16 @@ class _AssistantBlockViewState extends State<_AssistantBlockView> {
 
 /// 正在跑的一轮：头上一行，过程默认折叠，正文随流出现。
 class _LiveBlockView extends StatefulWidget {
-  const _LiveBlockView({super.key, required this.live});
+  const _LiveBlockView({
+    super.key,
+    required this.live,
+    this.sessionId,
+    this.api,
+  });
 
   final LiveTurn live;
+  final String? sessionId;
+  final OctopusApi? api;
 
   @override
   State<_LiveBlockView> createState() => _LiveBlockViewState();
@@ -357,11 +513,18 @@ class _LiveBlockViewState extends State<_LiveBlockView> {
         ),
         if (_expanded && hasProcess)
           _MetaBody(thinking: live.thinking, tools: live.tools),
-        if (live.text.trim().isNotEmpty)
+        if (live.text.trim().isNotEmpty) ...[
           Padding(
             padding: const EdgeInsets.only(top: 3),
             child: _TuiAssistantText(text: live.text),
           ),
+          if (widget.api != null && widget.sessionId != null)
+            ChatAttachments(
+              text: live.text,
+              api: widget.api!,
+              sessionId: widget.sessionId!,
+            ),
+        ],
         if (live.errorMessage != null)
           Padding(
             padding: const EdgeInsets.only(top: 4),

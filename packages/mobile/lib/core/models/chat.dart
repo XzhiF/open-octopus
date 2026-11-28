@@ -163,11 +163,48 @@ class ChatSession {
     }
 
     final tools = m['tool_calls'];
+    // 落库的提问卡：metadata 带 displayType=ask_user_question + questions，
+    // tool_calls 里还会留一条 AskUserQuestion —— 有 metadata 时不再重复画工具行。
+    final askFromMeta = metadata['questions'];
+    final hasAskMetadata = askFromMeta is List && askFromMeta.isNotEmpty;
     if (tools is List) {
       var index = 0;
       for (final tool in tools.whereType<Map>()) {
         final tc = tool.cast<String, dynamic>();
         final status = (tc['status'] as String?) ?? 'result';
+        final name = (tc['name'] as String?) ?? 'tool';
+        if (name == 'AskUserQuestion') {
+          if (hasAskMetadata) {
+            index++;
+            continue;
+          }
+          // 老会话没有 metadata.questions 时，从工具入参兜底成提问卡。
+          final input = tc['input'];
+          rows.add(
+            ChatMessage(
+              id: '${tc['id'] ?? '$id-tool-$index'}',
+              sessionId: sessionId,
+              role: 'assistant',
+              type: 'text',
+              content: '',
+              createdAt: createdAt,
+              meta: {
+                'displayType': 'ask_user_question',
+                'toolName': name,
+                'toolInput': input,
+                'questions': input is Map ? input['questions'] : null,
+                'toolStatus': switch (status) {
+                  'fail' => 'error',
+                  'start' => 'running',
+                  _ => 'done',
+                },
+                'sourceId': id,
+              },
+            ),
+          );
+          index++;
+          continue;
+        }
         rows.add(
           ChatMessage(
             id: '${tc['id'] ?? '$id-tool-$index'}',
@@ -178,7 +215,7 @@ class ChatSession {
             createdAt: createdAt,
             meta: {
               'displayType': 'tool_call',
-              'toolName': (tc['name'] as String?) ?? 'tool',
+              'toolName': name,
               'toolInput': tc['input'],
               'toolStatus': switch (status) {
                 'fail' => 'error',
@@ -269,6 +306,26 @@ class ChatMessage {
 
   String get toolStatus => (meta?['toolStatus'] as String?) ?? 'done';
   String? get toolDuration => meta?['toolDuration'] as String?;
+
+  /// 提问卡的题目：metadata.questions 优先，其次工具入参里的 questions。
+  /// 老数据 / 流式事件两种形状都宽容读。
+  Object? get questions {
+    final map = meta;
+    if (map == null) return null;
+    final direct = map['questions'];
+    if (direct != null) return direct;
+    final input = map['toolInput'];
+    if (input is Map) return input['questions'];
+    if (input is String) {
+      try {
+        final decoded = jsonDecode(input);
+        if (decoded is Map) return decoded['questions'];
+      } catch (_) {
+        // 工具入参不是 JSON：没有题目可读。
+      }
+    }
+    return null;
+  }
 
   Map<String, dynamic>? get usage =>
       (meta?['usage'] as Map?)?.cast<String, dynamic>();

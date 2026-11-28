@@ -218,7 +218,6 @@ class _CabinScreenState extends ConsumerState<CabinScreen>
       onQuoteClosed: () => setState(() => _quote = null),
       crewBehind: true,
       fleetHint: true,
-      chips: const ['看看编队', '看 diff', '最近怎么样'],
     );
   }
 
