@@ -47,16 +47,18 @@ Octopus 的 server 嵌在桌面程序里（`Octopus.exe`）。程序没跑的时
 
 Octopus 桌面端 →「设置 → 手机配对 → 远程拉起」→**启用远程拉起**：
 
-1. 桌面端（server）以管理员身份调起本目录的 `install-remote.ps1`（弹一次 UAC）；
-2. 机器上还没有 OpenSSH Server 时，安装器会顺带启用 Windows 可选功能（可能要一两分钟）；
+1. 桌面端（server）按宿主平台调起安装器：Windows 弹一次 UAC 跑 `install-remote.ps1`；
+   macOS 跑 `install-remote.sh`，脚本内部用 `osascript` 申请一次管理员授权；
+2. Windows 上还没有 OpenSSH Server 时，安装器会顺带启用 Windows 可选功能（可能要一两分钟）；
+   macOS 上「远程登录」没开时，会用同一次授权执行 `systemsetup -setremotelogin on`；
 3. 装完设置页自己轮询到「已就绪」。
 
-每台 PC 点一次即可。安装器随桌面端打包（`resources/remote/`），不需要仓库。
-日志：`%TEMP%\octopus-remote-install.log`。
+每台机器点一次即可。安装器随桌面端打包（`resources/remote/`），不需要仓库。
+日志：Windows `%TEMP%\octopus-remote-install.log`；macOS `~/Library/Logs/Octopus/remote-install.log`。
 
 开发模式（`pnpm dev`，没有桌面端）也是同一个按钮：server 会从仓库 `scripts/remote/` 找安装器。
 
-## 手动安装（开发机 / 一键失败时）
+## 手动安装 · Windows（开发机 / 一键失败时）
 
 在**以管理员身份**打开的 PowerShell 里：
 
@@ -90,6 +92,32 @@ powershell -ExecutionPolicy Bypass -File scripts\remote\install-remote.ps1
 
 装完打开 Octopus「设置 → 手机配对」，应能看到「远程拉起 · 已就绪 · 密钥槽 N / N」。
 
+## 手动安装 · macOS
+
+```bash
+bash scripts/remote/install-remote.sh                      # 默认 8 把槽位
+bash scripts/remote/install-remote.sh --slots 12
+bash scripts/remote/install-remote.sh --app /Applications/Octopus.app
+```
+
+与 Windows 版的差异：
+
+- 控制脚本装到 `~/.octopus/remote/octopus-ctl.sh`（用户级，不需要 root）；
+- 受限公钥追加到 `~/.ssh/authorized_keys`（`restrict,command="..."`；目录 700、文件 600）；
+- 登录项是 `~/Library/LaunchAgents/com.octopus.desktop.agent.plist`
+  （`RunAtLoad` → `Octopus --tray`）；`start` 走 `launchctl kickstart`，未加载时先 `bootstrap`；
+- 「远程登录」没开时，脚本用一次 macOS 管理员授权 bootstrap launchd 的 `com.openssh.sshd`
+  （等价于 Windows 的 UAC；macOS 15 的 `systemsetup` 需要 Full Disk Access，只做兜底）；
+- **不碰** `/etc/ssh/sshd_config`、不重启 sshd，原有登录方式不受影响；
+- 设置页托盘里的「开机自启」也复用同一个 LaunchAgent（Windows 仍是 Electron 登录项）。
+
+只想验证脚本、不想动 sshd：
+
+```bash
+OCTOPUS_SKIP_SSHD=1 bash scripts/remote/install-remote.sh --app /Applications/Octopus.app
+~/.octopus/remote/octopus-ctl.sh status
+```
+
 ## 排错
 
 | 现象 | 先看 |
@@ -100,11 +128,14 @@ powershell -ExecutionPolicy Bypass -File scripts\remote\install-remote.ps1
 | `task_missing` | `schtasks /query /tn Octopus`；重跑安装器（或加 `-RecreateTask`） |
 | SSH 自测失败 | `administrators_authorized_keys` 的 ACL 是否只有 SYSTEM + Administrators；sshd 是否 Running |
 | 电脑睡眠 / 关机 | Tailscale 叫不醒睡眠机器 —— M4 只解决「进程没跑」，这是产品前提 |
-| 槽位用完 | 重跑安装器并加大 `-Slots`（老的已发密钥不受影响） |
+| 槽位用完 | 重跑安装器并加大 `-Slots` / `--slots`（老的已发密钥不受影响） |
+| macOS 点启动失败 | `~/.octopus/remote/octopus-ctl.sh status` 看 JSON；`launchctl print gui/$(id -u)/com.octopus.desktop.agent` 看 job |
+| macOS `task_missing` | `~/Library/LaunchAgents/com.octopus.desktop.agent.plist` 不存在 —— 重跑 `install-remote.sh` |
+| macOS 启用没反应 | `~/Library/Logs/Octopus/remote-install.log`；管理员授权被取消时重试 |
 
 ## 边界
 
-- 只支持 Windows（PowerShell + 计划任务）。macOS 的 `octopus-ctl` + LaunchAgent 未做；
-  `status/start` + JSON 这份接口本身是跨平台的。
+- 支持 Windows（PowerShell + 计划任务）与 macOS（shell + LaunchAgent）；
+  `status/start` + JSON 这份接口跨平台，手机端不需要知道对面是什么系统。
 - 没有 `stop`：v1 不提供「远程关掉 Octopus」。
 - 远程控制走直连 SSH，不经过 Octopus server —— 所以「程序没跑」时它也能用。

@@ -32,6 +32,7 @@ const DEVICES = [
 
 const REMOTE_READY = {
   installed: true,
+  platform: "win32",
   os: "windows",
   ssh_user: "EDY",
   ssh_port: 22,
@@ -44,6 +45,7 @@ const REMOTE_READY = {
 
 const REMOTE_MISSING = {
   installed: false,
+  platform: "win32",
   os: null,
   ssh_user: null,
   ssh_port: null,
@@ -52,6 +54,19 @@ const REMOTE_MISSING = {
   slots_total: 0,
   slots_available: 0,
   tailscale_hosts: [],
+}
+
+const REMOTE_READY_MAC = {
+  ...REMOTE_READY,
+  platform: "darwin",
+  os: "macos",
+  ssh_user: "xzf",
+  task_name: "com.octopus.desktop.agent",
+}
+
+const REMOTE_MISSING_MAC = {
+  ...REMOTE_MISSING,
+  platform: "darwin",
 }
 
 function json(body: unknown, status = 200) {
@@ -173,6 +188,27 @@ describe("手机配对面板", () => {
 
     expect(await screen.findByText("未安装")).toBeTruthy()
     expect(screen.getByTestId("remote-status").textContent).toContain("install-remote.ps1")
+  })
+
+  it("macOS 未安装：文案走管理员授权与 install-remote.sh，不再提 UAC", async () => {
+    mockFetch({ remote: REMOTE_MISSING_MAC })
+    render(<DevicePairingPanel />)
+    await screen.findByText("书房手机")
+
+    expect(await screen.findByText("未安装")).toBeTruthy()
+    const box = screen.getByTestId("remote-status").textContent ?? ""
+    expect(box).toContain("管理员授权")
+    expect(box).toContain("install-remote.sh")
+    expect(box).not.toContain("UAC")
+  })
+
+  it("macOS 已就绪：状态行显示「登录项」而不是 Windows 的计划任务", async () => {
+    mockFetch({ remote: REMOTE_READY_MAC })
+    render(<DevicePairingPanel />)
+    await screen.findByText("书房手机")
+
+    expect(await screen.findByText("已就绪")).toBeTruthy()
+    expect(screen.getByTestId("remote-status").textContent).toContain("登录项 com.octopus.desktop.agent")
   })
 
   it("未安装时点「启用远程拉起」→ 发起安装并轮询到已就绪", async () => {

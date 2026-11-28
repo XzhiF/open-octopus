@@ -14,7 +14,7 @@
 // 一部手机被偷了，不能拿它自己的令牌再生成别人的令牌。
 //
 // M4：redeem 可以带 `wants_remote: true` —— 从密钥槽里取一把 SSH 私钥随身返回
-// （槽位由 install-remote.ps1 预授权；私钥只在响应里出现一次，随即从磁盘删除）。
+// （槽位由 install-remote.ps1 / install-remote.sh 预授权；私钥只在响应里出现一次，随即从磁盘删除）。
 
 import { Hono, type Context } from "hono"
 import { isLocalRequest } from "../middleware/device-auth"

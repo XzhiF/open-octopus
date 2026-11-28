@@ -46,8 +46,11 @@ packages/desktop/
 - **图标来源**：`scripts/make-tray-icons.cjs` 把 exe 图标（`build/icon.png`，汐音立绘）
   原样缩到各档尺寸 —— 不裁切、不描边，就是桌面那个图标的缩小版。换立绘后重跑：
   `npx electron scripts/make-tray-icons.cjs`。
-- **`--tray`**：启动后窗口不显示，只在托盘里待着（登录自启走这条）。macOS 13+ 登录项
-  不传参数，改用 `app.getLoginItemSettings().wasOpenedAtLogin` 判断。
+- **`--tray`**：启动后窗口不显示，只在托盘里待着（登录自启走这条）。
+- **开机自启**：Windows 用 `app.setLoginItemSettings`（带 `--tray` 参数）；macOS 用原生
+  `~/Library/LaunchAgents/com.octopus.desktop.agent.plist`（`RunAtLoad` → `Octopus --tray`），
+  与「设置 → 手机配对 → 远程拉起」的安装器共用同一个 label —— 托盘勾选、安装器、`launchctl`
+  三处看到的是同一套登录项，不会注册两份。旧版本留下的 SMAppService 登录项在 macOS 上会被清掉。
 - **图标缺失时**退回旧行为：关窗即退出，避免留下找不回的进程。
 - **agent 守卫**：原先挂在窗口 close 上的「agent 还在跑」确认框移到托盘退出，查
   `GET /api/agent/sessions/running`（仅打包版；dev 的 server 与窗口不同源，不查）。
@@ -78,6 +81,11 @@ pnpm --filter @octopus/desktop pack:dir
 ```
 
 `prepare:resources` 会先构建 server/web，再 deploy 生产依赖、清理外部软链、重命名 vendor、复制 Node runtime 与 core-pack 数据，并用打包后的 Node 实际加载一次 better-sqlite3 做自检。
+
+> **改过 `@octopus/shared` 时先 `pnpm build:shared`**：`prepare:resources` 只重建 server/web，
+> web 会直接读 `shared/dist`；dist 旧了会在 vite 阶段报 `MISSING_EXPORT`。
+> macOS 上 electron-builder 拉 `SHASUMS256.txt` 可能 `read ETIMEDOUT`（即使 Electron zip 已缓存），
+> 用国内镜像重跑：`ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ pnpm --filter @octopus/desktop pack:dir`。
 
 ### 走代理打包（国内网络）
 

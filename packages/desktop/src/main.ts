@@ -28,6 +28,74 @@ let startHidden = false
 /** 登录自启时附加的参数；Windows 靠它决定「起来后不弹窗」。 */
 const TRAY_LAUNCH_ARGS = ['--tray']
 
+// macOS 的登录项走原生 LaunchAgent（未签名的 .app 用 SMAppService 注册并不可靠），
+// 与远程拉起安装器 scripts/remote/install-remote.sh 共用同一个 label —— 只留一套登录项。
+const MAC_AGENT_LABEL = 'com.octopus.desktop.agent'
+
+function macAgentPath(): string {
+  return path.join(os.homedir(), 'Library', 'LaunchAgents', `${MAC_AGENT_LABEL}.plist`)
+}
+
+function xmlEscape(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+function macAgentEnabled(): boolean {
+  try {
+    return fs.existsSync(macAgentPath())
+  } catch {
+    return false
+  }
+}
+
+function setMacAgent(enabled: boolean): void {
+  const plistPath = macAgentPath()
+  try {
+    if (!enabled) {
+      // 只删 plist，不 bootout：如果本次就是被这个登录项拉起来的，
+      // bootout 会立刻把当前进程杀掉。卸载留到下次登录自然生效。
+      fs.rmSync(plistPath, { force: true })
+      return
+    }
+
+    fs.mkdirSync(path.dirname(plistPath), { recursive: true })
+    const logDir = app.getPath('logs')
+    fs.mkdirSync(logDir, { recursive: true })
+    const executable = app.getPath('exe')
+    const plist = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${MAC_AGENT_LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${xmlEscape(executable)}</string>
+    <string>--tray</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Interactive</string>
+  <key>LimitLoadToSessionType</key>
+  <string>Aqua</string>
+  <key>StandardOutPath</key>
+  <string>${xmlEscape(path.join(logDir, 'launchd.log'))}</string>
+  <key>StandardErrorPath</key>
+  <string>${xmlEscape(path.join(logDir, 'launchd.log'))}</string>
+</dict>
+</plist>
+`
+    fs.writeFileSync(plistPath, plist, 'utf8')
+    // 下一次登录由 launchd 自动加载；远程 start 会按需 bootstrap，不必现在拉起第二份。
+    // 也不 bootout 已有 job —— 当前进程可能正是它拉起来的。
+  } catch (err) {
+    console.error('[login-item] failed to update LaunchAgent', err)
+  }
+}
+
 // 冷启动时后端 routesReady 之前不接请求（packages/server/src/index.ts 里
 // listen 回调那段同步初始化，本机实测 40–75s）。窗口必须在这个等待之前就出现，
 // 否则用户双击后几十秒里既无窗口也无任务栏图标，只会判定「打不开」。
@@ -141,18 +209,29 @@ function loadTrayIcon(): NativeImage {
 
 function loginItemEnabled(): boolean {
   if (!app.isPackaged) return false
-  return process.platform === 'darwin'
-    ? app.getLoginItemSettings().openAtLogin
-    : app.getLoginItemSettings({ args: TRAY_LAUNCH_ARGS }).openAtLogin
+  if (process.platform === 'darwin') {
+    // 原生 LaunchAgent（与远程拉起共用）；兼容旧版本留下的 SMAppService 登录项。
+    return macAgentEnabled() || app.getLoginItemSettings().openAtLogin
+  }
+  return app.getLoginItemSettings({ args: TRAY_LAUNCH_ARGS }).openAtLogin
 }
 
 function setLoginItem(enabled: boolean): void {
   if (!app.isPackaged) return
+  if (process.platform === 'darwin') {
+    setMacAgent(enabled)
+    // 清掉旧版本可能注册过的 SMAppService 登录项，避免两套同时生效。
+    try {
+      app.setLoginItemSettings({ openAtLogin: false })
+    } catch {
+      /* 旧登录项本来就不存在时忽略 */
+    }
+    refreshTrayMenu()
+    return
+  }
   app.setLoginItemSettings({
     openAtLogin: enabled,
     args: TRAY_LAUNCH_ARGS,
-    // 只有 macOS 13 以前认这个；新系统由「登录项」自行决定，留着无害。
-    ...(process.platform === 'darwin' ? { openAsHidden: true } : {}),
   })
   refreshTrayMenu()
 }
@@ -287,7 +366,7 @@ function startSidecar(): void {
       OCTOPUS_BRANCH: 'desktop',
       OCTOPUS_HOST_PID: String(process.pid),
       OCTOPUS_HOST_PORTS: String(DESKTOP_PORT),
-      // M4：设置页「启用远程拉起」用这个目录里的 install-remote.ps1。
+      // M4：设置页「启用远程拉起」用这个目录里的安装器（install-remote.ps1 / .sh）。
       OCTOPUS_REMOTE_DIR: path.join(resources, 'remote'),
       // 依赖树保留 node_modules 原名（ESM 的裸模块解析不认 NODE_PATH）；
       // NODE_PATH 只作为 CJS 兜底，与部署树保持一致。

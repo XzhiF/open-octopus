@@ -3,14 +3,17 @@
 // M4 · 远程拉起（2026-11-27）。
 //
 // 背景：Octopus 的 server 嵌在桌面程序里，程序没跑时没有任何监听者。
-// 手机靠系统自带的 sshd 进来执行 `octopus-ctl.ps1 status|start`（强制命令），
-// 再由脚本通过「登录时运行」的计划任务把 Octopus.exe --tray 拉起来。
+// 手机靠系统自带的 sshd 进来执行受限制的 `octopus-ctl status|start`（强制命令），
+// 再由脚本通过「登录时运行」的登录项把桌面程序以 --tray 拉起来：
+//   · Windows：octopus-ctl.ps1 + 计划任务（schtasks）
+//   · macOS：octopus-ctl.sh + LaunchAgent（launchctl）
 //
 // 这里只做 PC 侧的两件事：
-//   1. 读 install-remote.ps1 写下的 ~/.octopus/remote/remote.json；
+//   1. 读安装器写下的 ~/.octopus/remote/remote.json；
 //   2. 配对时从密钥池里取一把「槽位」的私钥交给手机，然后把它从磁盘删掉 ——
-//      私钥只该存在手机的安全存储里。公钥早已由安装器写进
-//      administrators_authorized_keys，并且加了 restrict + command=。
+//      私钥只该存在手机的安全存储里。公钥早已由安装器写进 sshd 读取的
+//      authorized_keys（Windows 是 administrators_authorized_keys，macOS 是 ~/.ssh/authorized_keys），
+//      并且加了 restrict + command=。
 //
 // 手机端不需要知道对面是 Windows 还是 macOS：只认 status / start 两个动词和一份 JSON。
 
@@ -39,6 +42,8 @@ export interface RemoteConfig {
 
 export interface RemoteStatus {
   installed: boolean
+  /** 宿主平台，设置页据此切换文案（Windows 的 UAC / macOS 的管理员授权）。 */
+  platform: "win32" | "darwin" | "linux"
   os: string | null
   ssh_user: string | null
   ssh_port: number | null
@@ -49,6 +54,17 @@ export interface RemoteStatus {
   tailscale_hosts: string[]
   /** 配置在、但槽位目录读不了之类的问题；只用于设置页提示。 */
   error?: string
+}
+
+function hostPlatform(): "win32" | "darwin" | "linux" {
+  return process.platform === "win32" ? "win32" : process.platform === "darwin" ? "darwin" : "linux"
+}
+
+/** 安装器 / 控制脚本的两种命名：Windows 是 PowerShell，macOS 是 shell。 */
+function remoteScriptNames(platform: string): { installer: string; ctl: string } {
+  return platform === "win32"
+    ? { installer: "install-remote.ps1", ctl: "octopus-ctl.ps1" }
+    : { installer: "install-remote.sh", ctl: "octopus-ctl.sh" }
 }
 
 export interface IssuedSshKey {
@@ -91,7 +107,8 @@ const SETUP_THROTTLE_MS = 3 * 60_000
  * 安装器在哪儿：打包后在 resources/remote（桌面端启动 sidecar 时设 OCTOPUS_REMOTE_DIR），
  * 开发时在仓库根 scripts/remote。
  */
-export function findRemoteScriptsDir(): string | null {
+export function findRemoteScriptsDir(platform: string = process.platform): string | null {
+  const { installer, ctl } = remoteScriptNames(platform)
   const candidates = [
     process.env.OCTOPUS_REMOTE_DIR,
     path.join(process.cwd(), "remote"),
@@ -102,10 +119,7 @@ export function findRemoteScriptsDir(): string | null {
 
   for (const dir of candidates) {
     try {
-      if (
-        fs.existsSync(path.join(dir, "install-remote.ps1")) &&
-        fs.existsSync(path.join(dir, "octopus-ctl.ps1"))
-      ) {
+      if (fs.existsSync(path.join(dir, installer)) && fs.existsSync(path.join(dir, ctl))) {
         return dir
       }
     } catch {
@@ -145,12 +159,53 @@ function probeWindowsElevation(): { elevated: boolean; uacEnabled: boolean } {
   }
 }
 
-/** 起一个提权 PowerShell 跑安装器。UAC 弹窗出现在用户桌面上；结果靠前端轮询。 */
+/** 起安装器：Windows 弹 UAC；macOS 由脚本内部用 osascript 申请一次管理员授权。 */
 export function launchRemoteInstaller(): SetupResult {
-  if (process.platform !== "win32") {
-    return { started: false, reason: "unsupported_platform", message: "一键启用目前只支持 Windows" }
+  if (process.platform === "win32") return launchWindowsInstaller()
+  if (process.platform === "darwin") return launchMacInstaller()
+  return { started: false, reason: "unsupported_platform", message: "一键启用目前只支持 Windows / macOS" }
+}
+
+/** macOS：sidecar 跑在 Octopus.app/Contents/Resources/runtime/node 里，向上两级就是 .app。 */
+function detectMacAppBundle(): string | undefined {
+  const fromEnv = process.env.OCTOPUS_APP_BUNDLE
+  if (fromEnv) return fromEnv
+  const match = process.execPath.match(/^(.*\.app)\/Contents\/Resources\//)
+  return match?.[1]
+}
+
+function launchMacInstaller(): SetupResult {
+  const dir = findRemoteScriptsDir("darwin")
+  if (!dir) {
+    return {
+      started: false,
+      reason: "installer_missing",
+      message: "这个版本的桌面端里没带安装器 —— 也可以在电脑上运行 bash scripts/remote/install-remote.sh",
+    }
   }
-  const dir = findRemoteScriptsDir()
+  const installer = path.join(dir, "install-remote.sh")
+  const appBundle = detectMacAppBundle()
+  const args = [installer]
+  if (appBundle) args.push("--app", appBundle)
+
+  try {
+    // 用 /bin/bash 显式执行：打包后的 resources 可能丢可执行位。
+    const child = spawn("/bin/bash", args, {
+      detached: false,
+      stdio: "ignore",
+      env: { ...process.env, ...(appBundle ? { OCTOPUS_APP_BUNDLE: appBundle } : {}) },
+    })
+    child.on("error", () => { })
+    child.unref()
+    return { started: true, installer }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    return { started: false, reason: "spawn_failed", message }
+  }
+}
+
+function launchWindowsInstaller(): SetupResult {
+  const dir = findRemoteScriptsDir("win32")
   if (!dir) {
     return {
       started: false,
@@ -230,7 +285,7 @@ export class RemoteControlService {
       if (typeof json.ssh_user !== "string" || !json.ssh_user) return null
       return {
         version: Number(json.version ?? 1),
-        os: String(json.os ?? "windows"),
+        os: String(json.os ?? (process.platform === "darwin" ? "macos" : "windows")),
         ssh_user: json.ssh_user,
         ssh_port: Number(json.ssh_port ?? 22) || 22,
         tailscale_hosts: Array.isArray(json.tailscale_hosts)
@@ -252,6 +307,7 @@ export class RemoteControlService {
     if (!cfg) {
       return {
         installed: false,
+        platform: hostPlatform(),
         os: null,
         ssh_user: null,
         ssh_port: null,
@@ -270,10 +326,11 @@ export class RemoteControlService {
       available = entries.filter((n) => SLOT_FILE.test(n)).length
       total = entries.filter((n) => SLOT_PUB.test(n)).length
     } catch {
-      error = "密钥槽目录读不到 —— 重新运行 install-remote.ps1"
+      error = `密钥槽目录读不到 —— 重新运行 ${remoteScriptNames(process.platform).installer}`
     }
     return {
       installed: true,
+      platform: hostPlatform(),
       os: cfg.os,
       ssh_user: cfg.ssh_user,
       ssh_port: cfg.ssh_port,

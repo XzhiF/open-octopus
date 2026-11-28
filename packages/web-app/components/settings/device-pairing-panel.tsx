@@ -47,9 +47,25 @@ function formatWhen(iso: string | null): string {
   return at.toLocaleDateString("zh-CN")
 }
 
+/** 服务端状态里带 platform；读不到时退回桌面壳 / 浏览器 UA（开发态直接开 Vite 也能选对文案）。 */
+function localPlatform(): "win32" | "darwin" | "linux" | null {
+  const injected = (
+    window as unknown as { octopusDesktop?: { platform?: string } }
+  ).octopusDesktop?.platform
+  if (injected === "win32" || injected === "darwin" || injected === "linux") return injected
+  const ua = typeof navigator === "undefined" ? "" : navigator.userAgent
+  if (/Mac/i.test(ua)) return "darwin"
+  if (/Win/i.test(ua)) return "win32"
+  if (/Linux/i.test(ua)) return "linux"
+  return null
+}
+
 export function DevicePairingPanel() {
   const [devices, setDevices] = useState<PairedDevice[] | null>(null)
   const [remote, setRemote] = useState<RemoteControlStatus | null | undefined>(undefined)
+  // 设置页同时服务 Windows / macOS 桌面端：文案跟着宿主平台走（服务端 status 里带 platform）。
+  const platform = remote?.platform ?? localPlatform()
+  const isMac = platform === "darwin"
   const [setupBusy, setSetupBusy] = useState(false)
   const [setupNote, setSetupNote] = useState<string | null>(null)
   const pollRef = useRef<number | null>(null)
@@ -106,7 +122,9 @@ export function DevicePairingPanel() {
       }
       if (Date.now() > deadline) {
         setSetupNote(
-          "没等到安装完成 —— 看看 UAC 是不是被取消了；日志在 %TEMP%\\octopus-remote-install.log",
+          isMac
+            ? "没等到安装完成 —— 看看管理员授权是不是被取消了；日志在 ~/Library/Logs/Octopus/remote-install.log"
+            : "没等到安装完成 —— 看看 UAC 是不是被取消了；日志在 %TEMP%\\octopus-remote-install.log",
         )
         stopPoll()
         return
@@ -115,7 +133,7 @@ export function DevicePairingPanel() {
         void pollRemote(deadline)
       }, 2000)
     },
-    [stopPoll],
+    [isMac, stopPoll],
   )
 
   const enable = useCallback(async () => {
@@ -133,7 +151,11 @@ export function DevicePairingPanel() {
         if (result.reason === "already_starting") await pollRemote(Date.now() + 120_000)
         return
       }
-      setSetupNote("已发起 —— 弹出 UAC 就点「是」；这台机器关了 UAC 的话会直接安装")
+      setSetupNote(
+        isMac
+          ? "已发起 —— 管理员授权弹窗里点「好」并输入密码；首次会顺带打开「远程登录」"
+          : "已发起 —— 弹出 UAC 就点「是」；这台机器关了 UAC 的话会直接安装",
+      )
       await pollRemote(Date.now() + 120_000)
     } catch (err) {
       if (err instanceof PairingApiError && err.status === 403) {
@@ -144,7 +166,7 @@ export function DevicePairingPanel() {
     } finally {
       setSetupBusy(false)
     }
-  }, [load, pollRemote])
+  }, [isMac, load, pollRemote])
 
   useEffect(() => {
     if (!code) return
@@ -313,7 +335,8 @@ export function DevicePairingPanel() {
                       </span>
                     </p>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      SSH {remote.ssh_user}@{remote.ssh_port} · 计划任务 {remote.task_name}
+                      SSH {remote.ssh_user}@{remote.ssh_port} · {isMac ? "登录项" : "计划任务"}{" "}
+                      {remote.task_name}
                       {remote.slots_available === 0 ? " · 槽位用完了，重跑一次安装器可补" : ""}
                     </p>
                     <p className="mt-2 text-xs text-muted-foreground">
@@ -328,8 +351,9 @@ export function DevicePairingPanel() {
                   <>
                     <p className="text-sm font-medium">未安装</p>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      开启后，手机在 Octopus 没启动时也能把它拉起来。点下面的按钮会弹一次 UAC；
-                      首次可能顺带启用 Windows 的 OpenSSH Server（一两分钟）。
+                      {isMac
+                        ? "开启后，手机在 Octopus 没启动时也能把它拉起来。点下面的按钮会弹一次管理员授权（安装登录项；首次可能顺带打开「远程登录」）。"
+                        : "开启后，手机在 Octopus 没启动时也能把它拉起来。点下面的按钮会弹一次 UAC；首次可能顺带启用 Windows 的 OpenSSH Server（一两分钟）。"}
                     </p>
                     <div className="mt-3 flex flex-wrap items-center gap-2">
                       <Button
@@ -343,7 +367,7 @@ export function DevicePairingPanel() {
                         ) : (
                           <Terminal className="h-4 w-4" />
                         )}
-                        {setupBusy ? "等待 UAC…" : "启用远程拉起"}
+                        {setupBusy ? (isMac ? "等待授权…" : "等待 UAC…") : "启用远程拉起"}
                       </Button>
                       <span className="text-[11px] text-muted-foreground">装完当场自测</span>
                     </div>
@@ -354,11 +378,14 @@ export function DevicePairingPanel() {
                     ) : null}
                     <p className="mt-3 text-[11px] text-muted-foreground">也可以手动运行：</p>
                     <code className="mt-1 block overflow-x-auto rounded bg-muted px-3 py-2 font-mono text-[11px]">
-                      powershell -ExecutionPolicy Bypass -File scripts\remote\install-remote.ps1
+                      {isMac
+                        ? "bash scripts/remote/install-remote.sh"
+                        : "powershell -ExecutionPolicy Bypass -File scripts\\remote\\install-remote.ps1"}
                     </code>
                     <p className="mt-2 text-xs text-muted-foreground">
-                      默认只追加一把只能用 status/start 的 SSH 密钥、注册登录计划任务 ——
-                      不改 sshd 配置、不重启 sshd，你原来的远程登录方式不受影响。
+                      {isMac
+                        ? "默认只追加一把只能用 status/start 的 SSH 密钥、注册登录项 —— 不改 sshd 配置、不重启 sshd，你原来的远程登录方式不受影响。"
+                        : "默认只追加一把只能用 status/start 的 SSH 密钥、注册登录计划任务 —— 不改 sshd 配置、不重启 sshd，你原来的远程登录方式不受影响。"}
                     </p>
                   </>
                 )}

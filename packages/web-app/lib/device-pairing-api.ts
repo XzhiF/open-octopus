@@ -19,9 +19,11 @@ export interface PairedDevice {
   ssh_key_slot: string | null
 }
 
-/** 远程拉起（M4）：install-remote.ps1 装没装、密钥槽还剩几把。 */
+/** 远程拉起（M4）：install-remote.{ps1,sh} 装没装、密钥槽还剩几把。 */
 export interface RemoteControlStatus {
   installed: boolean
+  /** 服务端宿主平台：Windows 走 UAC，macOS 走管理员授权 + LaunchAgent。 */
+  platform: "win32" | "darwin" | "linux"
   os: string | null
   ssh_user: string | null
   ssh_port: number | null

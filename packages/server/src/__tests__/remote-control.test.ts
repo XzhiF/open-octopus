@@ -147,19 +147,45 @@ describe('RemoteControlService', () => {
     expect(svc.setup()).toMatchObject({ started: false, reason: 'installer_missing' })
   })
 
-  it('OCTOPUS_REMOTE_DIR 指到哪就找哪', () => {
+  it('OCTOPUS_REMOTE_DIR 指到哪就找哪（按平台找对应的安装器）', () => {
     const scriptsDir = path.join(dir, 'scripts')
+    fs.mkdirSync(scriptsDir)
+    for (const file of ['install-remote.ps1', 'octopus-ctl.ps1', 'install-remote.sh', 'octopus-ctl.sh']) {
+      fs.writeFileSync(path.join(scriptsDir, file), '')
+    }
+    const prev = process.env.OCTOPUS_REMOTE_DIR
+    process.env.OCTOPUS_REMOTE_DIR = scriptsDir
+    try {
+      expect(findRemoteScriptsDir('win32')).toBe(scriptsDir)
+      expect(findRemoteScriptsDir('darwin')).toBe(scriptsDir)
+    } finally {
+      if (prev === undefined) delete process.env.OCTOPUS_REMOTE_DIR
+      else process.env.OCTOPUS_REMOTE_DIR = prev
+    }
+  })
+
+  it('只有 PowerShell 脚本时，macOS 会继续向下找 .sh 而不是误用 .ps1', () => {
+    const scriptsDir = path.join(dir, 'scripts-win-only')
     fs.mkdirSync(scriptsDir)
     fs.writeFileSync(path.join(scriptsDir, 'install-remote.ps1'), '')
     fs.writeFileSync(path.join(scriptsDir, 'octopus-ctl.ps1'), '')
     const prev = process.env.OCTOPUS_REMOTE_DIR
     process.env.OCTOPUS_REMOTE_DIR = scriptsDir
     try {
-      expect(findRemoteScriptsDir()).toBe(scriptsDir)
+      expect(findRemoteScriptsDir('win32')).toBe(scriptsDir)
+      const macDir = findRemoteScriptsDir('darwin')
+      expect(macDir).not.toBe(scriptsDir)
+      if (macDir) expect(fs.existsSync(path.join(macDir, 'install-remote.sh'))).toBe(true)
     } finally {
       if (prev === undefined) delete process.env.OCTOPUS_REMOTE_DIR
       else process.env.OCTOPUS_REMOTE_DIR = prev
     }
+  })
+
+  it('status 带宿主平台，未安装时也能让设置页选对文案', () => {
+    const status = remote.status()
+    expect(['win32', 'darwin', 'linux']).toContain(status.platform)
+    expect(status.installed).toBe(false)
   })
 })
 
