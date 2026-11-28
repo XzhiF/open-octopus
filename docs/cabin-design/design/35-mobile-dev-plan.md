@@ -592,15 +592,22 @@ androidx.security / tink 依赖，比 M2 的 183 MiB 涨了约 34 MiB）。首�
 - **我的消息**（`widgets/tui.dart` `_TuiUserRow`）：保留原来的「细金线 + ❯」结构，只加一层
   淡琥珀底、左侧加粗到 3px；不加标签块，长句换行只让出 `❯` 那一点宽度，长对话里先认出
   自己说的。TUI 语法不变；轮次跳转仍闪粉。
-- **运行态**（`widgets/tui.dart` `_WorkLine` / `_ThinkWindow` / `ToolLine`，文案表在
-  `core/work_phrases.dart`）：对齐全舱 TUI —— 流尾工作行 = 转字（`⠋⠙⠹…`）+ 修仙短语 +
-  真实计时，每 6 秒轮换、按回合起点洗牌（18 句 × 3 阶段，从
-  `web-app/lib/agent/work-phrases.ts` 逐字复制）；<em>跑动中</em> thinking 在最下方只露最新两行
-  （上缘渐隐、末行光标），工具逐条从「运行中…」变 `✓ 完成`；**出结果的那一刻，思考与工具
-  调用一起收进行头**（同桌面 `TuiMeta`），不再铺在正文上面。点行头才展开本回合全部过程：
-  思考全文与工具按落库顺序排在同一条 rail 里；单条工具可再展开 input / result 原文
+- **运行态**（`widgets/tui.dart` `WorkStatusLine` / `_WorkLine` / `_ThinkWindow` /
+  `ToolLine`，文案表在 `core/work_phrases.dart`）：对齐全舱 TUI —— 工作行 = 转字
+  （`⠋⠙⠹…`）+ 修仙短语 + 真实计时，每 6 秒轮换、按回合起点洗牌（18 句 × 3 阶段，从
+  `web-app/lib/agent/work-phrases.ts` 逐字复制）；**工作行钉在面板底部、输入框上沿**
+  （`WorkStatusLine` 在 `ChatPane` 里与滚动区并列，不进消息流），往上翻历史也一直看得见。
+  <em>跑动中</em> thinking 在最下方只露最新两行（上缘渐隐、末行光标），工具逐条从
+  「运行中…」变 `✓ 完成`；**出结果的那一刻，思考与工具调用一起收进行头**（同桌面
+  `TuiMeta`），不再铺在正文上面。点行头才展开本回合全部过程：思考全文与工具按落库顺序
+  排在同一条 rail 里；单条工具可再展开 input / result 原文
   （`tool_calls[].result` 落库读取，流式期从 `tool_call` result 事件的 `content` 收）。
   被停止 / 断流的回合行头写「已截断」，不冒充「已完成」。
+- **滚动锚点**（`ChatPaneState._follow` + `TuiScrollAnchor`）：停在最新（离底 < 80px）时
+  新消息自动贴底；用户往上翻、或自己摊开思考 / 工具小票就脱手 —— 锚点留在当前，agent
+  再吐多少字也不把人拽回底部；把滚动条拉回最新才恢复贴底。摊开只往下长：摊开前后量这一块
+  头的位置，按高度差补滚动位置，行头不带着整页乱跳。程序贴底 / 补偿都挂 guard，
+  不被误判成「用户翻走了」。
 - **过程顺序**（纯客户端改动，服务端一行未动）：历史轮按服务端 `metadata.timeline`
   的到达顺序复现 think 段 / 工具的交替（桌面 `TuiMeta` 同一口径）；老行没有 timeline 时
   退回「thinking 一段 + 工具若干」。运行中同样按 SSE 到达顺序排（`LiveTurn.process`），
@@ -619,8 +626,9 @@ androidx.security / tink 依赖，比 M2 的 183 MiB 涨了约 34 MiB）。首�
   `CrewBackdrop` 一并移除），收成顶栏身份胶囊里的小像；大立绘只留在设备列表 / 空态。
 - **顺带修**：原型 `.srow .btn.ghost` 被通用 `.ghost{width:100%}` 顶宽，
   「切回 / 改名 / 导出 / 去看看」四个按钮占满整行 —— 已限定为内容宽。
-- **验证**：`flutter test` **110 passed**（新增短语表 / 洗牌 / 计时、运行态转录、身份胶囊）；
-  `flutter analyze` 0 error / 0 warning。
+- **验证**：`flutter test` **116 passed**（新增短语表 / 洗牌 / 计时、运行态转录、身份胶囊、
+  工作行钉底与滚动锚点）；`flutter analyze` 0 error / 0 warning；真机回归：工作行随手滚始终
+  在输入框上沿、往上翻不被打断、摊开行头不跳、拉回最新恢复贴底。
 
 ---
 
@@ -637,3 +645,4 @@ androidx.security / tink 依赖，比 M2 的 183 MiB 涨了约 34 MiB）。首�
 | 2026-11-28 | chat 内场落地（原型 E3–E9）：通讯台头 + 过程折叠 + 轮次索引；星核 / 模型 / ctx / tok 五抽屉；技能挂载、委派、身份切换、压缩 / 清空 / 改名 / 导出全接真实端点；测试 81 passed |
 | 2026-11-28 | 提问卡与产物预览（原型 §5）：AskUserQuestion 平铺提问卡（单选 / 多选 / 其他 / 先讨论 / 已答折叠）；图片缩略图 + 灯箱、文件 chip + 只读文档窗；输入区删掉预设快捷词；测试 105 passed |
 | 2026-11-28 | 我的消息 / 运行态 / 身份落地（原型 §4 E10–E14）：琥珀底我的消息 · TUI 工作行 + 思考两行 + 工具打勾 + 展开 · 发送键改停止键 · 发出即收键盘并贴底 · 身份上移顶栏、站立立绘收走；测试 110 passed |
+| 2026-11-28 | 运行态收口：工作行钉到输入框上沿（不跟消息流滚）；滚动锚点 —— 贴底 / 翻看即脱手 / 拉回最新才恢复，摊开行头不再跳；测试 116 passed |

@@ -1418,9 +1418,6 @@
             <div class="m"><div class="me"><span class="p">❯</span><div class="tx">刚才那个 diff 里，验收清单是不是也被改到了？</div></div></div>
             <div class="m">
               <div class="head run"><span class="tag">✦ 汐音</span><span class="live-dot"></span><span class="run">进行中</span><span>·</span><span class="pk" data-live-clock>0:12</span><span class="fold">▸</span></div>
-              <div class="work" data-live-work data-phase="exec" data-start="12">
-                <span class="sp">⠹</span><span class="ph">御剑去改文件…</span><span class="tm">0:12</span>
-              </div>
               <div class="thinkwin">
                 <div class="tw-h">◌ thinking<span class="r">最新 2 行 · 点开全文</span></div>
                 <div class="tw-l old">先确认 acceptance-plan-r2.json 里那两行是不是跟着 phase 2…</div>
@@ -1432,6 +1429,10 @@
                 <div class="tool"><span class="ar">▸</span><span class="nm">Edit</span><span>acceptance-plan-r2.json</span><span class="st wait">运行中…</span></div>
               </div>
             </div>
+            <!-- 工作行钉在面板底部、输入框上面：不跟着消息流滚，跑多久都看得见 -->
+            <div class="work" data-live-work data-phase="exec" data-start="12">
+              <span class="sp">⠹</span><span class="ph">御剑去改文件…</span><span class="tm">0:12</span>
+            </div>
           </div>
         </div>
 
@@ -1440,7 +1441,7 @@
         </div>
         <div class="homebar"><i></i></div>
       </div></div>
-      <figcaption><b>E11 · 运行中（工作行 · 思考两行 · 工具打勾）</b><br>跟全舱 TUI 同一条<em>工作行</em>：转字（⠋⠙⠹…）+ 修仙短语 + 真实计时，每 6 秒换一句、按回合起点洗牌；短语永远短，右侧计时不跳。thinking 默认<em>只露最新两行</em>（上缘渐隐），工具每完成一条就把「运行中…」换成 <code>✓ 完成</code>。发送键同时变成停止键。</figcaption>
+      <figcaption><b>E11 · 运行中（工作行 · 思考两行 · 工具打勾）</b><br>跟全舱 TUI 同一条<em>工作行</em>：转字（⠋⠙⠹…）+ 修仙短语 + 真实计时，每 6 秒换一句、按回合起点洗牌；短语永远短，右侧计时不跳。<b>工作行钉在面板底部、输入框上沿</b>，不跟着消息流滚 —— 往上翻历史也一直看得见它此刻在干什么。thinking 默认<em>只露最新两行</em>（上缘渐隐），工具每完成一条就把「运行中…」换成 <code>✓ 完成</code>。发送键同时变成停止键。</figcaption>
     </figure>
 
     <figure>
@@ -1577,7 +1578,13 @@ docs/phase-1-spec.md:88</div>
       </div>
       <div class="dots" style="margin-top:10px">
         <div><span class="dot d-ok"></span><span>跑动时<em>不再把转圈塞进亮青圆钮</em> —— 暗底 + 琥珀方键，语义从「加载中」变成「停止」。</span></div>
-        <div><span class="dot d-ok"></span><span>转字只在聊天里的<em>工作行</em>出现一次（⠋⠙⠹…），按钮上不重复第二处动效。</span></div>
+        <div><span class="dot d-ok"></span><span>转字只在聊天里的<em>工作行</em>出现一次（⠋⠙⠹…），按钮上不重复第二处动效；工作行钉在输入框上沿，往上翻历史也一直在。</span></div>
+      </div>
+      <h3 style="margin-top:16px">滚动 · 锚点</h3>
+      <div class="dots">
+        <div><span class="dot d-ok"></span><span><b style="color:#fff">贴底</b>：停在最新（离底 &lt; 80px）时，新消息来了就跟着走 —— 聊天的默认。</span></div>
+        <div><span class="dot d-ok"></span><span><b style="color:#fff">脱手</b>：往上翻，或自己摊开思考 / 工具小票，锚点就留在当前 —— agent 再吐多少字也不把你拽回底部。</span></div>
+        <div><span class="dot d-ok"></span><span><b style="color:#fff">回去</b>：把滚动条拉回最新，自动贴底立刻恢复；摊开只往下长，行头不带着整页乱跳。</span></div>
       </div>
       <h3 style="margin-top:16px">工作行文案 · 与全舱同源</h3>
       <div class="dots">

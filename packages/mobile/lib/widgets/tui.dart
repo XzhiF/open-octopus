@@ -34,10 +34,15 @@ class TuiTranscript extends StatelessWidget {
     this.api,
     this.onAskAnswer,
     this.askEnabled = true,
+    this.anchor,
   });
 
   final List<ChatMessage> messages;
   final LiveTurn? live;
+
+  /// 用户自己摊开 / 收起过程行时的滚动锚点：外层用它脱离「自动贴底」，
+  /// 这一层用它把摊开的那一块钉在原地。为空就只是普通展开。
+  final TuiScrollAnchor? anchor;
 
   /// sourceMessageId → 本轮统计（来自会话账本；没有账本行就没有 key）。
   final Map<String, TurnStats> turnStats;
@@ -86,6 +91,7 @@ class TuiTranscript extends StatelessWidget {
               api: api,
               onAskAnswer: onAskAnswer,
               askEnabled: askEnabled,
+              anchor: anchor,
             ),
           );
       }
@@ -99,6 +105,7 @@ class TuiTranscript extends StatelessWidget {
           live: l,
           sessionId: sessionId,
           api: api,
+          anchor: anchor,
         ),
       );
     }
@@ -156,6 +163,55 @@ class TuiTranscript extends StatelessWidget {
       }
     }
     return out;
+  }
+}
+
+/// 用户自己摊开 / 收起过程行（行头、thinking 窗口、工具小票）时的滚动锚点。
+///
+/// 两件事：
+///   · [onDetach]：人已经在翻旧账了 —— 外层从此别再跟着新消息贴底，
+///     直到他主动把滚动条拉回最新；
+///   · 摊开的那一块，头在屏幕上的位置不动：摊开前量一次，下一帧按高度差
+///     把滚动位置补回去（插入点在视口上方时，页面不会自己往上窜）。
+class TuiScrollAnchor {
+  const TuiScrollAnchor({this.onDetach, this.onProgrammaticScroll});
+
+  /// 用户主动翻看：外层把「自动贴底」关掉。
+  final VoidCallback? onDetach;
+
+  /// 下面这次 jump 是锚点补偿（不是用户滚的），外层别拿它判「用户翻走了」。
+  final ValueChanged<bool>? onProgrammaticScroll;
+
+  void toggle(BuildContext context, VoidCallback apply) {
+    final before = _globalTop(context);
+    final position = Scrollable.maybeOf(context)?.position;
+    onDetach?.call();
+    apply();
+    if (before == null || position == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!context.mounted || !position.hasContentDimensions) return;
+      final after = _globalTop(context);
+      if (after == null) return;
+      final delta = after - before;
+      if (delta.abs() < .5) return;
+      final target = (position.pixels + delta).clamp(
+        position.minScrollExtent,
+        position.maxScrollExtent,
+      );
+      if ((target - position.pixels).abs() < .5) return;
+      onProgrammaticScroll?.call(true);
+      try {
+        position.jumpTo(target);
+      } finally {
+        onProgrammaticScroll?.call(false);
+      }
+    });
+  }
+
+  static double? _globalTop(BuildContext context) {
+    final box = context.findRenderObject();
+    if (box is! RenderBox || !box.hasSize) return null;
+    return box.localToGlobal(Offset.zero).dy;
   }
 }
 
@@ -361,6 +417,7 @@ class _AssistantBlockView extends StatefulWidget {
     this.api,
     this.onAskAnswer,
     this.askEnabled = true,
+    this.anchor,
   });
 
   final List<ChatMessage> messages;
@@ -372,6 +429,7 @@ class _AssistantBlockView extends StatefulWidget {
   final OctopusApi? api;
   final ValueChanged<String>? onAskAnswer;
   final bool askEnabled;
+  final TuiScrollAnchor? anchor;
 
   @override
   State<_AssistantBlockView> createState() => _AssistantBlockViewState();
@@ -379,6 +437,17 @@ class _AssistantBlockView extends StatefulWidget {
 
 class _AssistantBlockViewState extends State<_AssistantBlockView> {
   bool _expanded = false;
+
+  /// 用户点行头：摊开 / 收起。锚点留在这一块上，并且从此不跟着新消息贴底。
+  void _toggle() {
+    void apply() => setState(() => _expanded = !_expanded);
+    final anchor = widget.anchor;
+    if (anchor == null) {
+      apply();
+      return;
+    }
+    anchor.toggle(context, apply);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -460,13 +529,12 @@ class _AssistantBlockViewState extends State<_AssistantBlockView> {
           stats: widget.stats,
           expandable: hasProcess,
           expanded: _expanded,
-          onTap: hasProcess
-              ? () => setState(() => _expanded = !_expanded)
-              : null,
+          onTap: hasProcess ? _toggle : null,
         ),
         // 跑完不再把过程摊在正文上面：think / tool 一起收进行头，
         // 点行头才按时间序列全（同全仓 TUI 的 TuiMeta）。
-        if (_expanded && processRows.isNotEmpty) _MetaBody(rows: processRows),
+        if (_expanded && processRows.isNotEmpty)
+          _MetaBody(rows: processRows, anchor: widget.anchor),
         for (final row in content) row,
         if (interrupted)
           const Padding(
@@ -493,9 +561,10 @@ class _AssistantBlockViewState extends State<_AssistantBlockView> {
 /// 展开态的过程明细（原型 `.metabody` / 桌面 `TuiMeta` 展开体）：
 /// 左侧一条细线，think 与 tool 按落库顺序各一行；工具行可再点开 input / result。
 class _MetaBody extends StatelessWidget {
-  const _MetaBody({required this.rows});
+  const _MetaBody({required this.rows, this.anchor});
 
   final List<ChatMessage> rows;
+  final TuiScrollAnchor? anchor;
 
   @override
   Widget build(BuildContext context) {
@@ -522,6 +591,7 @@ class _MetaBody extends StatelessWidget {
                       input: row.toolInputText,
                       result: row.toolResultText,
                       status: row.toolStatus,
+                      anchor: anchor,
                     ),
             ),
         ],
@@ -568,11 +638,13 @@ class _LiveBlockView extends StatefulWidget {
     required this.live,
     this.sessionId,
     this.api,
+    this.anchor,
   });
 
   final LiveTurn live;
   final String? sessionId;
   final OctopusApi? api;
+  final TuiScrollAnchor? anchor;
 
   @override
   State<_LiveBlockView> createState() => _LiveBlockViewState();
@@ -643,8 +715,6 @@ class _LiveBlockViewState extends State<_LiveBlockView> {
             models: const [],
           )
         : null;
-    final phase = _phaseOf(live);
-    final seconds = _elapsed.inSeconds;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -658,20 +728,10 @@ class _LiveBlockViewState extends State<_LiveBlockView> {
           elapsed: _elapsed,
           expandable: hasProcess,
           expanded: _expanded,
-          onTap: hasProcess
-              ? () => setState(() => _expanded = !_expanded)
-              : null,
+          onTap: hasProcess ? _toggle : null,
         ),
-        if (!live.done)
-          Padding(
-            padding: const EdgeInsets.only(top: 6),
-            child: _WorkLine(
-              phase: phase,
-              elapsed: seconds,
-              spin: workSpinGlyph(_elapsed.inMilliseconds / 1000),
-              seed: live.startedAt?.millisecondsSinceEpoch ?? 0,
-            ),
-          ),
+        // 工作行（转字 / 短语 / 计时）已经不在这里：它钉在输入框上沿，
+        // 不跟着消息流一起滚（见 WorkStatusLine）。这里只留过程本身。
         // 跑动中在最下方露两行；出结果的那一刻跟工具调用一起收进行头，
         // 只有展开态才继续摊开（同全仓 TUI）。
         if (!live.done || _expanded)
@@ -708,6 +768,18 @@ class _LiveBlockViewState extends State<_LiveBlockView> {
     );
   }
 
+  /// 用户点行头 / 点思考窗口：摊开或收起。锚点留在这一块上，
+  /// 并且从此不跟着新消息贴底（他只管看，页面别自己翻）。
+  void _toggle() {
+    void apply() => setState(() => _expanded = !_expanded);
+    final anchor = widget.anchor;
+    if (anchor == null) {
+      apply();
+      return;
+    }
+    anchor.toggle(context, apply);
+  }
+
   /// 一条运行中的过程：thinking 段 = 活窗口；工具 = 打勾行。
   Widget _liveProcessRow(LiveProcessItem item, {required bool active}) {
     if (item.kind == 'thinking') {
@@ -715,7 +787,7 @@ class _LiveBlockViewState extends State<_LiveBlockView> {
         text: item.text,
         expanded: _expanded,
         live: active,
-        onToggle: () => setState(() => _expanded = !_expanded),
+        onToggle: _toggle,
       );
     }
     final tool = widget.live.tools
@@ -728,18 +800,19 @@ class _LiveBlockViewState extends State<_LiveBlockView> {
       result: tool.resultText,
       status: tool.status,
       duration: tool.duration,
+      anchor: widget.anchor,
     );
   }
+}
 
-  /// 阶段只看「现在在干什么」：有工具在跑 = 执行；还在想 = 思考；已经在出字 = 落笔。
-  static WorkPhase _phaseOf(LiveTurn live) {
-    if (live.tools.any((t) => t.status == 'running')) return WorkPhase.exec;
-    if (!live.thinkingDone && live.thinking.trim().isNotEmpty) {
-      return WorkPhase.thinking;
-    }
-    if (live.text.trim().isNotEmpty) return WorkPhase.writing;
+/// 阶段只看「现在在干什么」：有工具在跑 = 执行；还在想 = 思考；已经在出字 = 落笔。
+WorkPhase _livePhase(LiveTurn live) {
+  if (live.tools.any((t) => t.status == 'running')) return WorkPhase.exec;
+  if (!live.thinkingDone && live.thinking.trim().isNotEmpty) {
     return WorkPhase.thinking;
   }
+  if (live.text.trim().isNotEmpty) return WorkPhase.writing;
+  return WorkPhase.thinking;
 }
 
 /// 摘要头（原型 `.head`）：
@@ -1101,6 +1174,66 @@ class _WorkLine extends StatelessWidget {
   }
 }
 
+/// 运行态工作行（钉在输入框上沿，不随消息流滚）：
+/// 盲文转字 + 修仙短语 + 真实计时 —— 与全舱 TUI 同一条。
+///
+/// 之前它跟着回合块一起滚，消息一多就被顶出去了；现在人一抬眼就能在
+/// 输入框上面看到「它此刻在干什么」。
+class WorkStatusLine extends StatefulWidget {
+  const WorkStatusLine({super.key, required this.live});
+
+  final LiveTurn live;
+
+  @override
+  State<WorkStatusLine> createState() => _WorkStatusLineState();
+}
+
+class _WorkStatusLineState extends State<WorkStatusLine> {
+  Timer? _tick;
+  Duration _elapsed = Duration.zero;
+
+  @override
+  void initState() {
+    super.initState();
+    _elapsed = _elapsedOf();
+    _tick = Timer.periodic(const Duration(milliseconds: 120), (_) => _sync());
+  }
+
+  @override
+  void dispose() {
+    _tick?.cancel();
+    super.dispose();
+  }
+
+  Duration _elapsedOf() {
+    final started = widget.live.startedAt;
+    return started == null ? Duration.zero : DateTime.now().difference(started);
+  }
+
+  void _sync() {
+    if (!mounted) return;
+    // 回合收口后外层会把它摘掉；这里只负责别让 timer 空转。
+    if (widget.live.done) {
+      _tick?.cancel();
+      _tick = null;
+    }
+    setState(() => _elapsed = _elapsedOf());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+      child: _WorkLine(
+        phase: _livePhase(widget.live),
+        elapsed: _elapsed.inSeconds,
+        spin: workSpinGlyph(_elapsed.inMilliseconds / 1000),
+        seed: widget.live.startedAt?.millisecondsSinceEpoch ?? 0,
+      ),
+    );
+  }
+}
+
 /// 工具行（原型 `.tool`）：`▸ Edit spec/phase-1.md        ✓ 完成`。
 /// 有 input / result 时整行可点，展开成原文小票。
 class ToolLine extends StatefulWidget {
@@ -1111,6 +1244,7 @@ class ToolLine extends StatefulWidget {
     required this.status,
     this.result,
     this.duration,
+    this.anchor,
   });
 
   final String name;
@@ -1119,12 +1253,25 @@ class ToolLine extends StatefulWidget {
   final String status;
   final String? duration;
 
+  /// 用户点开小票时：锚点留在这一行，别再自动贴底。
+  final TuiScrollAnchor? anchor;
+
   @override
   State<ToolLine> createState() => _ToolLineState();
 }
 
 class _ToolLineState extends State<ToolLine> {
   bool _open = false;
+
+  void _toggle() {
+    void apply() => setState(() => _open = !_open);
+    final anchor = widget.anchor;
+    if (anchor == null) {
+      apply();
+      return;
+    }
+    anchor.toggle(context, apply);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1204,7 +1351,7 @@ class _ToolLineState extends State<ToolLine> {
       mainAxisSize: MainAxisSize.min,
       children: [
         InkWell(
-          onTap: detail == null ? null : () => setState(() => _open = !_open),
+          onTap: detail == null ? null : _toggle,
           borderRadius: BorderRadius.circular(6),
           child: row,
         ),

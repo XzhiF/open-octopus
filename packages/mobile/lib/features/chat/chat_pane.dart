@@ -82,7 +82,15 @@ class ChatPaneState extends ConsumerState<ChatPane>
     with WidgetsBindingObserver {
   ChatController? _chat;
   final ScrollController _scroll = ScrollController();
-  bool _atBottom = true;
+
+  /// 跟不跟着新消息贴底。距离底部 [_followThreshold] 以内算「在最新」；
+  /// 用户向上翻、或自己摊开过程行之后就脱离，直到他把滚动条拉回最新。
+  bool _follow = true;
+  static const double _followThreshold = 80;
+
+  /// 程序自己滚的时候（贴底 / 锚点补偿）不算「用户翻走了」。
+  bool _programmaticScroll = false;
+
   bool _bootError = false;
 
   /// 星核里挂到下一条消息的技能 / 一次性委派。
@@ -144,43 +152,64 @@ class ChatPaneState extends ConsumerState<ChatPane>
   /// 键盘弹起 / 收起会改视口高度：本来贴着底就继续贴着底。
   @override
   void didChangeMetrics() {
-    if (!_atBottom) return;
+    if (!_follow) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_scroll.hasClients) return;
-      _scroll.jumpTo(_scroll.position.maxScrollExtent);
+      if (!mounted) return;
+      _pinToBottom();
     });
   }
 
+  /// 用户自己滚了（拖 / 甩 / 拉滚动条）才重判是否跟着最新走。
+  /// 程序贴底与锚点补偿都挂着 [_programmaticScroll]，不会被当成翻走。
   void _onScroll() {
-    if (!_scroll.hasClients) return;
+    if (_programmaticScroll || !_scroll.hasClients) return;
     final position = _scroll.position;
-    _atBottom = (position.maxScrollExtent - position.pixels) < 80;
+    _follow = (position.maxScrollExtent - position.pixels) < _followThreshold;
   }
+
+  /// 滚到底；这次位移是程序做的。
+  void _pinToBottom() {
+    if (!_scroll.hasClients) return;
+    _programmaticScroll = true;
+    try {
+      _scroll.jumpTo(_scroll.position.maxScrollExtent);
+    } finally {
+      _programmaticScroll = false;
+    }
+  }
+
+  /// 用户摊开 / 收起过程行（行头、思考窗口、工具小票）：
+  /// 从这一刻起锚点留在当前，新消息不再把页面翻到底。
+  late final TuiScrollAnchor _anchor = TuiScrollAnchor(
+    onDetach: () => _follow = false,
+    onProgrammaticScroll: (active) => _programmaticScroll = active,
+  );
 
   void _onChanged() {
     if (!mounted) return;
     setState(() {});
     widget.onSessionLoaded?.call(_chat?.session);
     widget.onRoleChanged?.call(_chat?.role);
-    if (_atBottom) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted || !_scroll.hasClients) return;
-        _scroll.jumpTo(_scroll.position.maxScrollExtent);
-      });
-    }
+    if (!_follow) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _pinToBottom();
+    });
   }
 
   /// 发出消息后把镜头钉回底部：先立刻钉一次（乐观显示的那条），
   /// 键盘收起的动画（~280ms）结束后再钉一次，免得面板停在半路。
+  /// 期间用户要是自己翻上去了，就不再拽他回来。
   void _stickToBottom() {
-    _atBottom = true;
-    void jump() {
-      if (!mounted || !_scroll.hasClients) return;
-      _scroll.jumpTo(_scroll.position.maxScrollExtent);
-    }
-
-    WidgetsBinding.instance.addPostFrameCallback((_) => jump());
-    Future<void>.delayed(const Duration(milliseconds: 300), jump);
+    _follow = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_follow) return;
+      _pinToBottom();
+    });
+    Future<void>.delayed(const Duration(milliseconds: 300), () {
+      if (!mounted || !_follow) return;
+      _pinToBottom();
+    });
   }
 
   void _snack(String message, {bool error = false}) {
@@ -330,13 +359,24 @@ class ChatPaneState extends ConsumerState<ChatPane>
     final live = chat.live;
     final showEmpty = messages.isEmpty && !live.hasAnything;
 
+    // 运行态工作行（转字 / 短语 / 计时）钉在面板底部、输入框上面 ——
+    // 不跟着消息流滚，跑多久都能一眼看到它此刻在干什么。
+    final running = live.started && !live.done;
+    Widget panel = showEmpty
+        ? _emptyPanel(videoEnabled)
+        : _transcriptPanel(chat, messages, live);
+    if (running) {
+      panel = Column(
+        children: [
+          Expanded(child: panel),
+          WorkStatusLine(live: live),
+        ],
+      );
+    }
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
-      child: _ChatPanel(
-        child: showEmpty
-            ? _emptyPanel(videoEnabled)
-            : _transcriptPanel(chat, messages, live),
-      ),
+      child: _ChatPanel(child: panel),
     );
   }
 
@@ -405,8 +445,9 @@ class ChatPaneState extends ConsumerState<ChatPane>
                     api: chat.api,
                     onAskAnswer: (text) => unawaited(_sendCommand(text)),
                     askEnabled: !chat.sending,
+                    anchor: _anchor,
                   ),
-                  // 跑动中的提示已经在回合内的 TUI 工作行里，不再额外挂「流式输出中」。
+                  // 跑动中的提示已经由面板底部的工作行给出，不再额外挂「流式输出中」。
                   if (widget.fleetHint)
                     const Padding(
                       padding: EdgeInsets.only(top: 2),

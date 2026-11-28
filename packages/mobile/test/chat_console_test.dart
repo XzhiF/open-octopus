@@ -150,8 +150,16 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
-          body: SingleChildScrollView(
-            child: TuiTranscript(messages: const [], live: live),
+          body: Column(
+            children: [
+              Expanded(
+                child: SingleChildScrollView(
+                  child: TuiTranscript(messages: const [], live: live),
+                ),
+              ),
+              // 工作行钉在输入框上沿（不在消息流里）。
+              WorkStatusLine(live: live),
+            ],
           ),
         ),
       ),
