@@ -144,89 +144,115 @@ class ChatSession {
 
     final rows = <ChatMessage>[];
     final thinking = (m['thinking'] as String?)?.trimRight() ?? '';
-    if (thinking.trim().isNotEmpty) {
-      rows.add(
-        ChatMessage(
-          id: '$id-thinking',
-          sessionId: sessionId,
-          role: 'assistant',
-          type: 'thinking',
-          content: '',
-          createdAt: createdAt,
-          meta: {
-            'displayType': 'thinking',
-            'thinkingContent': thinking,
-            'sourceId': id,
-          },
-        ),
-      );
-    }
-
     final tools = m['tool_calls'];
     // 落库的提问卡：metadata 带 displayType=ask_user_question + questions，
     // tool_calls 里还会留一条 AskUserQuestion —— 有 metadata 时不再重复画工具行。
     final askFromMeta = metadata['questions'];
     final hasAskMetadata = askFromMeta is List && askFromMeta.isNotEmpty;
-    if (tools is List) {
-      var index = 0;
-      for (final tool in tools.whereType<Map>()) {
-        final tc = tool.cast<String, dynamic>();
-        final status = (tc['status'] as String?) ?? 'result';
-        final name = (tc['name'] as String?) ?? 'tool';
-        if (name == 'AskUserQuestion') {
-          if (hasAskMetadata) {
-            index++;
-            continue;
-          }
-          // 老会话没有 metadata.questions 时，从工具入参兜底成提问卡。
-          final input = tc['input'];
+
+    /// 一条 tool_calls → 一行过程（提问工具长成提问卡）。跳过时返回 null。
+    ChatMessage? processRow(Map<String, dynamic> tc, int index) {
+      final status = (tc['status'] as String?) ?? 'result';
+      final name = (tc['name'] as String?) ?? 'tool';
+      if (name == 'AskUserQuestion' && hasAskMetadata) return null;
+      final isAsk = name == 'AskUserQuestion';
+      final input = tc['input'];
+      return ChatMessage(
+        id: '${tc['id'] ?? '$id-tool-$index'}',
+        sessionId: sessionId,
+        role: 'assistant',
+        type: isAsk ? 'text' : 'tool_call',
+        content: '',
+        createdAt: createdAt,
+        meta: {
+          'displayType': isAsk ? 'ask_user_question' : 'tool_call',
+          'toolName': name,
+          'toolInput': input,
+          'toolResult': tc['result'],
+          if (isAsk) 'questions': input is Map ? input['questions'] : null,
+          'toolStatus': switch (status) {
+            'fail' => 'error',
+            'start' => 'running',
+            _ => 'done',
+          },
+          'sourceId': id,
+        },
+      );
+    }
+
+    // 服务端在 metadata.timeline 里按到达顺序记着 think 段 / 工具 / 正文段。
+    // 有它就先按它排：thinking 不能被一律提到工具前面（桌面 TuiMeta 同一口径）。
+    final timeline = metadata['timeline'];
+    final timed =
+        timeline is List &&
+        timeline.whereType<Map>().any(
+          (e) => e['kind'] == 'thinking' || e['kind'] == 'tool',
+        );
+
+    if (timed) {
+      final byId = <String, Map<String, dynamic>>{};
+      if (tools is List) {
+        for (final tool in tools.whereType<Map>()) {
+          final tc = tool.cast<String, dynamic>();
+          final tid = (tc['id'] as String?) ?? '';
+          if (tid.isNotEmpty) byId[tid] = tc;
+        }
+      }
+      var toolIndex = 0;
+      var thinkIndex = 0;
+      for (final entry in timeline.whereType<Map>()) {
+        final kind = entry['kind'];
+        if (kind == 'thinking') {
+          final text = ((entry['text'] as String?) ?? '').trimRight();
+          if (text.trim().isEmpty) continue;
           rows.add(
             ChatMessage(
-              id: '${tc['id'] ?? '$id-tool-$index'}',
+              id: '$id-th-${thinkIndex++}',
               sessionId: sessionId,
               role: 'assistant',
-              type: 'text',
+              type: 'thinking',
               content: '',
               createdAt: createdAt,
               meta: {
-                'displayType': 'ask_user_question',
-                'toolName': name,
-                'toolInput': input,
-                'questions': input is Map ? input['questions'] : null,
-                'toolStatus': switch (status) {
-                  'fail' => 'error',
-                  'start' => 'running',
-                  _ => 'done',
-                },
+                'displayType': 'thinking',
+                'thinkingContent': text,
                 'sourceId': id,
               },
             ),
           );
-          index++;
-          continue;
+        } else if (kind == 'tool') {
+          final tc = byId[(entry['id'] as String?) ?? ''];
+          if (tc == null) continue;
+          final row = processRow(tc, toolIndex++);
+          if (row != null) rows.add(row);
         }
+        // kind == 'text'：正文由消息 content 整段画，过程里不重复。
+      }
+    } else {
+      // 老行没有时间线：退回「thinking 一段 + 工具若干」。
+      if (thinking.trim().isNotEmpty) {
         rows.add(
           ChatMessage(
-            id: '${tc['id'] ?? '$id-tool-$index'}',
+            id: '$id-thinking',
             sessionId: sessionId,
             role: 'assistant',
-            type: 'tool_call',
+            type: 'thinking',
             content: '',
             createdAt: createdAt,
             meta: {
-              'displayType': 'tool_call',
-              'toolName': name,
-              'toolInput': tc['input'],
-              'toolStatus': switch (status) {
-                'fail' => 'error',
-                'start' => 'running',
-                _ => 'done',
-              },
+              'displayType': 'thinking',
+              'thinkingContent': thinking,
               'sourceId': id,
             },
           ),
         );
-        index++;
+      }
+      if (tools is List) {
+        var index = 0;
+        for (final tool in tools.whereType<Map>()) {
+          final row = processRow(tool.cast<String, dynamic>(), index++);
+          if (row != null) rows.add(row);
+        }
       }
     }
 
@@ -304,6 +330,18 @@ class ChatMessage {
     }
   }
 
+  /// 工具返回原文（服务端 `tool_calls[].result`）。没有就只画 input。
+  String? get toolResultText {
+    final result = meta?['toolResult'];
+    if (result == null) return null;
+    if (result is String) return result;
+    try {
+      return jsonEncode(result);
+    } catch (_) {
+      return result.toString();
+    }
+  }
+
   String get toolStatus => (meta?['toolStatus'] as String?) ?? 'done';
   String? get toolDuration => meta?['toolDuration'] as String?;
 
@@ -365,6 +403,10 @@ class LiveTurn {
   String? thinkingDuration;
   final List<LiveTool> tools = [];
 
+  /// 过程按到达顺序（think 段 / 工具交替）—— 服务端 SSE 就是按这个顺序发的，
+  /// 渲染时照原样排，不能把 thinking 一律提到工具前面。
+  final List<LiveProcessItem> process = [];
+
   int? numTurns;
   int inputTokens = 0;
   int outputTokens = 0;
@@ -377,12 +419,42 @@ class LiveTurn {
   String? errorMessage;
   String? errorCode;
 
+  /// 本轮起点：工作行的计时与洗牌种子都从这里来（空 = 还没开始）。
+  DateTime? startedAt;
+
   bool get hasAnything =>
       started ||
       text.isNotEmpty ||
       thinking.isNotEmpty ||
       tools.isNotEmpty ||
       errorMessage != null;
+
+  /// 渲染用的过程列表：正常来自 [process]；直接构造出来的 LiveTurn（测试 /
+  /// 老状态）退回「thinking 一段 + 工具若干」。
+  List<LiveProcessItem> get processItems {
+    if (process.isNotEmpty) return process;
+    return [
+      if (thinking.trim().isNotEmpty) LiveProcessItem.thinking(thinking),
+      for (final tool in tools) LiveProcessItem.tool(tool.id),
+    ];
+  }
+
+  /// 追加一段 thinking：紧挨着的合并成一段，中间夹过工具就另起一段。
+  void appendThinking(String delta) {
+    thinking += delta;
+    if (process.isNotEmpty && process.last.kind == 'thinking') {
+      process.last.text += delta;
+    } else {
+      process.add(LiveProcessItem.thinking(delta));
+    }
+  }
+
+  /// 工具第一次出现时记进过程时间线（幂等）。
+  void markTool(String id) {
+    if (id.isEmpty) return;
+    if (process.any((item) => item.kind == 'tool' && item.toolId == id)) return;
+    process.add(LiveProcessItem.tool(id));
+  }
 
   int get totalTokens =>
       inputTokens + outputTokens + cacheReadTokens + cacheCreationTokens;
@@ -406,6 +478,7 @@ class LiveTool {
     required this.id,
     required this.name,
     this.inputText,
+    this.resultText,
     this.status = 'running',
     this.duration,
   });
@@ -413,6 +486,18 @@ class LiveTool {
   final String id;
   final String name;
   String? inputText;
+  String? resultText;
   String status;
   String? duration;
+}
+
+/// 运行中的一条过程：一段 thinking 或一次工具调用，按到达顺序排。
+class LiveProcessItem {
+  LiveProcessItem.thinking(this.text) : kind = 'thinking', toolId = null;
+  LiveProcessItem.tool(this.toolId) : kind = 'tool', text = '';
+
+  /// `thinking` / `tool`。
+  final String kind;
+  String text;
+  final String? toolId;
 }

@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
 import '../app/theme.dart';
 import '../core/api.dart';
+import '../core/work_phrases.dart';
 import '../core/ask_question.dart';
 import '../core/format.dart';
 import '../core/models/chat.dart';
@@ -14,8 +16,12 @@ import '../features/chat/chat_attachments.dart';
 /// 会话内容＝桌面同一套 TUI 语法（`❯` / `✦ 汐音 + meta` / `◌` / `▸ tool [✓]` / `✳`）。
 /// 换皮肤不换内容：这里只决定字号与配色，不重排信息。
 ///
-/// 2026-11-27 起与原型 chat 内场对齐：assistant 的 think / 工具默认折成一行
-/// 摘要（步数 · 工具 · tok · 费用），点开才看步骤；正文仍直接露出。
+/// 2026-11-28 起与原型 §4（E10–E14）对齐：
+///   · 我的消息：原来的细金线 + `❯` 不动，垫一层淡琥珀底、左侧加粗到 3px；
+///   · 运行态：与全舱 TUI 同一条工作行（转字 + 修仙短语 + 计时），
+///     thinking 默认只露最新两行（上缘渐隐），工具逐条打勾；
+///   · 回合结束：同样默认留两行 thinking + 工具行，点行头 ▸ 才摊开全文；
+///     单条工具还能再点开 input / result 原文。
 class TuiTranscript extends StatelessWidget {
   const TuiTranscript({
     super.key,
@@ -108,7 +114,7 @@ class TuiTranscript extends StatelessWidget {
   }
 
   /// 提问卡是否已作答：同一段里，提问之后出现用户消息就算答过。
-  /// 回答正文（`用户回答了以下问题…`）压成一行摘要供折叠态显示。
+  /// 回答正文（`用户回答了以下问题了…`）压成一行摘要供折叠态显示。
   Map<String, String> _answeredAsks(List<ChatMessage> messages) {
     final out = <String, String>{};
     final pending = <ChatMessage>[];
@@ -200,6 +206,8 @@ class _TuiSystemRow extends StatelessWidget {
   }
 }
 
+/// 我说的那句：原来的 `❯` + 细金线，只在下面垫一层淡琥珀底、左边加粗到 3px。
+/// 不加标签块 —— 长句换行只让出 `❯` 那一点宽度，左边不会空一大截。
 class _TuiUserRow extends StatelessWidget {
   const _TuiUserRow({super.key, required this.text, this.flash = false});
 
@@ -213,51 +221,72 @@ class _TuiUserRow extends StatelessWidget {
     final answer = askAnswerSummary(text);
     if (answer != null) return _TuiAnswerRow(summary: answer, flash: flash);
 
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 260),
-      padding: const EdgeInsets.fromLTRB(9, 2, 9, 2),
-      decoration: BoxDecoration(
-        color: flash ? Octo.pink.withValues(alpha: .13) : Colors.transparent,
-        borderRadius: BorderRadius.circular(4),
-        border: Border(
-          left: BorderSide(
-            color: flash ? Octo.pink : const Color(0x80F5C542),
-            width: 2,
-          ),
-        ),
-        boxShadow: flash
-            ? [
-                BoxShadow(
-                  color: Octo.pink.withValues(alpha: .18),
-                  blurRadius: 14,
-                ),
-              ]
-            : null,
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(10),
+      child: Stack(
         children: [
-          const Padding(
-            padding: EdgeInsets.only(right: 6),
-            child: Text(
-              '❯',
-              style: TextStyle(
-                fontFamily: Octo.mono,
-                fontSize: 11.5,
-                fontWeight: FontWeight.w800,
-                color: Octo.pink,
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: flash
+                    ? LinearGradient(
+                        colors: [
+                          Octo.pink.withValues(alpha: .13),
+                          Octo.pink.withValues(alpha: .13),
+                        ],
+                      )
+                    : const LinearGradient(
+                        begin: Alignment.centerLeft,
+                        end: Alignment.centerRight,
+                        stops: [0, .64, 1],
+                        colors: [
+                          Color(0x1CFFB020),
+                          Color(0x09FFB020),
+                          Color(0x1F100D28),
+                        ],
+                      ),
               ),
             ),
           ),
-          Expanded(
-            child: SelectableText(
-              text,
-              style: const TextStyle(
-                fontFamily: Octo.mono,
-                fontSize: 11.5,
-                height: 1.65,
-                color: Colors.white,
-              ),
+          Positioned(
+            left: 0,
+            top: 0,
+            bottom: 0,
+            width: 3,
+            child: ColoredBox(
+              color: flash ? Octo.pink : Octo.amber.withValues(alpha: .7),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(9, 6, 10, 6),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Padding(
+                  padding: EdgeInsets.only(right: 6),
+                  child: Text(
+                    '❯',
+                    style: TextStyle(
+                      fontFamily: Octo.mono,
+                      fontSize: 11.5,
+                      height: 1.65,
+                      fontWeight: FontWeight.w800,
+                      color: Octo.amber,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: SelectableText(
+                    text,
+                    style: const TextStyle(
+                      fontFamily: Octo.mono,
+                      fontSize: 11.5,
+                      height: 1.65,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -320,7 +349,8 @@ class _TuiAnswerRow extends StatelessWidget {
   }
 }
 
-/// 完成态的 assistant 块：一行摘要头 + 可折叠的过程 + 正文。
+/// 完成态的 assistant 块：行头 + 思考两行窗 + 工具行 + 正文。
+/// 默认留最后两行 thinking 给「刚才想了什么」做上下文；点行头才摊开全文。
 class _AssistantBlockView extends StatefulWidget {
   const _AssistantBlockView({
     super.key,
@@ -352,17 +382,30 @@ class _AssistantBlockViewState extends State<_AssistantBlockView> {
 
   @override
   Widget build(BuildContext context) {
-    final process = _processRows(widget.messages);
-    final texts = _textRows(widget.messages);
-    final steps = process.length + texts.length;
-    final tools = widget.messages
+    // 过程行（think / tool）按落库顺序排：展开时原样复原那一刻的先后。
+    final processRows = widget.messages
+        .where(
+          (m) => m.displayType == 'thinking' || m.displayType == 'tool_call',
+        )
+        .toList(growable: false);
+    final thinkingRows = processRows
+        .where((m) => m.displayType == 'thinking')
+        .map((m) => (m.thinkingContent ?? m.content).trim())
+        .where((t) => t.isNotEmpty)
+        .toList(growable: false);
+    final toolRows = widget.messages
         .where((m) => m.displayType == 'tool_call')
+        .toList(growable: false);
+    final texts = widget.messages
+        .where((m) => m.displayType == 'text' && m.content.trim().isNotEmpty)
         .length;
+    final steps = thinkingRows.length + toolRows.length + texts;
     final interrupted = widget.messages.any((m) => m.interrupted);
     final error = widget.messages
         .map((m) => m.errorMessage)
         .whereType<String>()
         .firstOrNull;
+    final hasProcess = processRows.isNotEmpty;
 
     final content = <Widget>[];
     void addTextRow(ChatMessage row) {
@@ -411,16 +454,19 @@ class _AssistantBlockViewState extends State<_AssistantBlockView> {
       children: [
         _MetaLine(
           done: true,
+          interrupted: interrupted,
           steps: steps,
-          tools: tools,
+          tools: toolRows.length,
           stats: widget.stats,
-          expandable: process.isNotEmpty,
+          expandable: hasProcess,
           expanded: _expanded,
-          onTap: process.isEmpty
-              ? null
-              : () => setState(() => _expanded = !_expanded),
+          onTap: hasProcess
+              ? () => setState(() => _expanded = !_expanded)
+              : null,
         ),
-        if (_expanded && process.isNotEmpty) _MetaBody(rows: process),
+        // 跑完不再把过程摊在正文上面：think / tool 一起收进行头，
+        // 点行头才按时间序列全（同全仓 TUI 的 TuiMeta）。
+        if (_expanded && processRows.isNotEmpty) _MetaBody(rows: processRows),
         for (final row in content) row,
         if (interrupted)
           const Padding(
@@ -442,17 +488,80 @@ class _AssistantBlockViewState extends State<_AssistantBlockView> {
       ],
     );
   }
-
-  List<ChatMessage> _processRows(List<ChatMessage> rows) => rows
-      .where((m) => m.displayType == 'thinking' || m.displayType == 'tool_call')
-      .toList(growable: false);
-
-  List<ChatMessage> _textRows(List<ChatMessage> rows) => rows
-      .where((m) => m.displayType == 'text' && m.content.trim().isNotEmpty)
-      .toList(growable: false);
 }
 
-/// 正在跑的一轮：头上一行，过程默认折叠，正文随流出现。
+/// 展开态的过程明细（原型 `.metabody` / 桌面 `TuiMeta` 展开体）：
+/// 左侧一条细线，think 与 tool 按落库顺序各一行；工具行可再点开 input / result。
+class _MetaBody extends StatelessWidget {
+  const _MetaBody({required this.rows});
+
+  final List<ChatMessage> rows;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(top: 3, left: 3),
+      padding: const EdgeInsets.only(left: 9),
+      decoration: const BoxDecoration(
+        border: Border(left: BorderSide(color: Color(0x478D86B8))),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (final row in rows)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 2),
+              child: row.displayType == 'thinking'
+                  ? _ThinkRow(
+                      text: row.thinkingContent ?? row.content,
+                      duration: row.thinkingDuration,
+                    )
+                  : ToolLine(
+                      name: row.toolName ?? 'tool',
+                      input: row.toolInputText,
+                      result: row.toolResultText,
+                      status: row.toolStatus,
+                    ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 过程明细里的一行思考：`◌ 全文…`（不截行，跟随整页滚）。
+class _ThinkRow extends StatelessWidget {
+  const _ThinkRow({required this.text, this.duration});
+
+  final String text;
+  final String? duration;
+
+  @override
+  Widget build(BuildContext context) {
+    final body = text.trimRight();
+    final suffix = duration == null || duration!.isEmpty ? '' : '  ($duration)';
+    return Text.rich(
+      TextSpan(
+        style: const TextStyle(
+          fontFamily: Octo.mono,
+          fontSize: 10.5,
+          height: 1.65,
+          color: Octo.dim,
+        ),
+        children: [
+          const TextSpan(
+            text: '◌ ',
+            style: TextStyle(color: Color(0xCCC9BFFF)),
+          ),
+          TextSpan(text: '$body$suffix'),
+        ],
+      ),
+    );
+  }
+}
+
+/// 正在跑的一轮：行头 + 工作行 + 思考两行窗 + 工具行，正文随流出现。
 class _LiveBlockView extends StatefulWidget {
   const _LiveBlockView({
     super.key,
@@ -471,15 +580,54 @@ class _LiveBlockView extends StatefulWidget {
 
 class _LiveBlockViewState extends State<_LiveBlockView> {
   bool _expanded = false;
+  Timer? _tick;
+  Duration _elapsed = Duration.zero;
+
+  @override
+  void initState() {
+    super.initState();
+    final started = widget.live.startedAt;
+    _elapsed = started == null
+        ? Duration.zero
+        : DateTime.now().difference(started);
+    _tick = Timer.periodic(
+      const Duration(milliseconds: 120),
+      (_) => _syncClock(),
+    );
+  }
+
+  @override
+  void dispose() {
+    _tick?.cancel();
+    super.dispose();
+  }
+
+  void _syncClock() {
+    if (!mounted) return;
+    final live = widget.live;
+    if (live.done) {
+      _tick?.cancel();
+      _tick = null;
+    }
+    final started = live.startedAt;
+    // 每帧都重画：转字本来就 100ms 一帧，顺手把「done 了要收起来」也算进去
+    // （不能只在整秒变化时才 setState，否则收到 result 时不会重画）。
+    setState(() {
+      _elapsed = started == null
+          ? Duration.zero
+          : DateTime.now().difference(started);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     final live = widget.live;
-    final steps =
-        live.tools.length +
-        (live.thinking.isEmpty ? 0 : 1) +
-        (live.text.isEmpty ? 0 : 1);
-    final hasProcess = live.thinking.isNotEmpty || live.tools.isNotEmpty;
+    final tools = live.tools;
+    // 过程按到达顺序：think 段与工具交替，不把 thinking 一律提到工具前面。
+    final process = live.processItems;
+    final thinks = process.where((item) => item.kind == 'thinking').length;
+    final steps = tools.length + thinks + (live.text.isEmpty ? 0 : 1);
+    final hasProcess = process.isNotEmpty;
     final stats = live.totalTokens > 0 || live.costUsd != null
         ? TurnStats(
             durationMs: 0,
@@ -495,6 +643,8 @@ class _LiveBlockViewState extends State<_LiveBlockView> {
             models: const [],
           )
         : null;
+    final phase = _phaseOf(live);
+    final seconds = _elapsed.inSeconds;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -503,19 +653,40 @@ class _LiveBlockViewState extends State<_LiveBlockView> {
         _MetaLine(
           done: live.done,
           steps: steps,
-          tools: live.tools.length,
+          tools: tools.length,
           stats: stats,
+          elapsed: _elapsed,
           expandable: hasProcess,
           expanded: _expanded,
           onTap: hasProcess
               ? () => setState(() => _expanded = !_expanded)
               : null,
         ),
-        if (_expanded && hasProcess)
-          _MetaBody(thinking: live.thinking, tools: live.tools),
+        if (!live.done)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: _WorkLine(
+              phase: phase,
+              elapsed: seconds,
+              spin: workSpinGlyph(_elapsed.inMilliseconds / 1000),
+              seed: live.startedAt?.millisecondsSinceEpoch ?? 0,
+            ),
+          ),
+        // 跑动中在最下方露两行；出结果的那一刻跟工具调用一起收进行头，
+        // 只有展开态才继续摊开（同全仓 TUI）。
+        if (!live.done || _expanded)
+          for (var i = 0; i < process.length; i++)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: _liveProcessRow(
+                process[i],
+                active:
+                    !live.done && !live.thinkingDone && i == process.length - 1,
+              ),
+            ),
         if (live.text.trim().isNotEmpty) ...[
           Padding(
-            padding: const EdgeInsets.only(top: 3),
+            padding: const EdgeInsets.only(top: 6),
             child: _TuiAssistantText(text: live.text),
           ),
           if (widget.api != null && widget.sessionId != null)
@@ -536,24 +707,65 @@ class _LiveBlockViewState extends State<_LiveBlockView> {
       ],
     );
   }
+
+  /// 一条运行中的过程：thinking 段 = 活窗口；工具 = 打勾行。
+  Widget _liveProcessRow(LiveProcessItem item, {required bool active}) {
+    if (item.kind == 'thinking') {
+      return _ThinkWindow(
+        text: item.text,
+        expanded: _expanded,
+        live: active,
+        onToggle: () => setState(() => _expanded = !_expanded),
+      );
+    }
+    final tool = widget.live.tools
+        .where((t) => t.id == item.toolId)
+        .firstOrNull;
+    if (tool == null) return const SizedBox.shrink();
+    return ToolLine(
+      name: tool.name,
+      input: tool.inputText,
+      result: tool.resultText,
+      status: tool.status,
+      duration: tool.duration,
+    );
+  }
+
+  /// 阶段只看「现在在干什么」：有工具在跑 = 执行；还在想 = 思考；已经在出字 = 落笔。
+  static WorkPhase _phaseOf(LiveTurn live) {
+    if (live.tools.any((t) => t.status == 'running')) return WorkPhase.exec;
+    if (!live.thinkingDone && live.thinking.trim().isNotEmpty) {
+      return WorkPhase.thinking;
+    }
+    if (live.text.trim().isNotEmpty) return WorkPhase.writing;
+    return WorkPhase.thinking;
+  }
 }
 
-/// 摘要头（原型 `.head`）：`✦ 汐音 · 已完成 · 9s · 3 步 · 工具 1 · 1.2K tok · ¥0.06 ▸`。
+/// 摘要头（原型 `.head`）：
+/// `✦ 汐音 已完成 · 9s · 3 步 · 工具 1 · 1.2K tok · ¥0.06 ▸`
+/// 跑动中则是 `✦ 汐音 ● 进行中 · 0:12 ▸`。
 class _MetaLine extends StatelessWidget {
   const _MetaLine({
     required this.done,
+    this.interrupted = false,
     required this.steps,
     required this.tools,
     required this.stats,
+    this.elapsed,
     required this.expandable,
     required this.expanded,
     this.onTap,
   });
 
   final bool done;
+
+  /// 本轮被用户停止 / 断流截断：行头写「已截断」，不冒充「已完成」。
+  final bool interrupted;
   final int steps;
   final int tools;
   final TurnStats? stats;
+  final Duration? elapsed;
   final bool expandable;
   final bool expanded;
   final VoidCallback? onTap;
@@ -566,9 +778,13 @@ class _MetaLine extends StatelessWidget {
       height: 1.7,
       color: Octo.dim,
     );
-    final duration = stats?.durationLabel ?? '';
+    final statsDuration = stats?.durationLabel ?? '';
+    final duration = done && statsDuration.isNotEmpty
+        ? statsDuration
+        : (elapsed == null ? '' : formatWorkElapsed(elapsed!.inSeconds));
     final showTokens = stats != null && stats!.calls > 0;
-    final cost = stats == null || stats!.calls == 0
+    // 未定价的「—」不占位置：手机上这行本来就窄，多一个破折号只会换行。
+    final cost = stats == null || stats!.calls == 0 || stats!.costUsd == null
         ? null
         : formatCny(stats!.costUsd, complete: stats!.costComplete);
 
@@ -587,12 +803,23 @@ class _MetaLine extends StatelessWidget {
                 shadows: [Shadow(color: Color(0x80C9BFFF), blurRadius: 10)],
               ),
             ),
-            const TextSpan(text: '  '),
+            if (!done)
+              const WidgetSpan(
+                alignment: PlaceholderAlignment.middle,
+                child: Padding(
+                  padding: EdgeInsets.only(left: 6, right: 5),
+                  child: _LiveDot(),
+                ),
+              )
+            else
+              const TextSpan(text: '  '),
             TextSpan(
-              text: done ? '已完成' : '运行中',
+              text: !done ? '进行中' : (interrupted ? '已截断' : '已完成'),
               style: TextStyle(
                 fontWeight: FontWeight.w700,
-                color: done ? Octo.green : Octo.amber,
+                color: !done
+                    ? Octo.teal
+                    : (interrupted ? Octo.amber : Octo.green),
               ),
             ),
             if (duration.isNotEmpty) ...[
@@ -604,7 +831,7 @@ class _MetaLine extends StatelessWidget {
             ],
             const TextSpan(text: ' · '),
             TextSpan(
-              text: '$steps 步',
+              text: '$steps\u00A0步',
               style: const TextStyle(
                 color: Octo.ink,
                 fontWeight: FontWeight.w600,
@@ -613,14 +840,14 @@ class _MetaLine extends StatelessWidget {
             if (tools > 0) ...[
               const TextSpan(text: ' · '),
               TextSpan(
-                text: '工具 $tools',
+                text: '工具\u00A0$tools',
                 style: const TextStyle(color: Octo.teal),
               ),
             ],
             if (showTokens) ...[
               const TextSpan(text: ' · '),
               TextSpan(
-                text: '${formatTokNum(stats!.tokens)} tok',
+                text: '${formatTokNum(stats!.tokens)}\u00A0tok',
                 style: const TextStyle(color: Octo.green),
               ),
               if (cost != null) ...[
@@ -645,91 +872,391 @@ class _MetaLine extends StatelessWidget {
   }
 }
 
-/// 过程明细（原型 `.metabody`）：左侧细线，think 与工具各一行。
-class _MetaBody extends StatelessWidget {
-  const _MetaBody({this.rows, this.thinking, this.tools});
+/// 思考活窗口（原型 `.thinkwin`）：默认只露最新两行，上缘渐隐；
+/// 点窗口或行头展开 = 本段全文，换行不截断。
+class _ThinkWindow extends StatelessWidget {
+  const _ThinkWindow({
+    required this.text,
+    required this.expanded,
+    this.live = false,
+    this.onToggle,
+  });
 
-  final List<ChatMessage>? rows;
-  final String? thinking;
-  final List<LiveTool>? tools;
+  final String text;
+  final bool expanded;
+  final bool live;
+  final VoidCallback? onToggle;
 
   @override
   Widget build(BuildContext context) {
-    final children = <Widget>[];
-    if (rows != null) {
-      for (final row in rows!) {
-        if (row.displayType == 'thinking') {
-          final text = row.thinkingContent ?? row.content;
-          if (text.trim().isNotEmpty) {
-            children.add(
-              _ThinkLine(text: text, duration: row.thinkingDuration),
-            );
-          }
-        } else if (row.displayType == 'tool_call' ||
-            row.displayType == 'ask_user_question') {
-          children.add(
-            ToolLine(
-              name: row.toolName ?? 'tool',
-              input: row.toolInputText,
-              status: row.toolStatus,
-              duration: row.toolDuration,
-            ),
-          );
-        }
-      }
-    }
-    if (thinking != null && thinking!.trim().isNotEmpty) {
-      children.add(_ThinkLine(text: thinking!));
-    }
-    if (tools != null) {
-      for (final tool in tools!) {
-        children.add(
-          ToolLine(
-            name: tool.name,
-            input: tool.inputText,
-            status: tool.status,
-            duration: tool.duration,
-          ),
-        );
-      }
-    }
+    final lines = text
+        .split('\n')
+        .map((l) => l.trimRight())
+        .where((l) => l.trim().isNotEmpty)
+        .toList(growable: false);
+    if (lines.isEmpty) return const SizedBox.shrink();
 
-    return Container(
-      margin: const EdgeInsets.only(top: 3, left: 3),
-      padding: const EdgeInsets.only(left: 9),
-      decoration: const BoxDecoration(
-        border: Border(left: BorderSide(color: Color(0x478D86B8))),
+    final window = expanded || lines.length <= 2
+        ? lines
+        : lines.sublist(lines.length - 2);
+    final hint = expanded
+        ? '全文 · 点行头收起'
+        : (live ? '最新 2 行 · 点开全文' : '收尾 2 行 · 点开全部');
+
+    return GestureDetector(
+      onTap: onToggle,
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(9, 6, 9, 7),
+        decoration: BoxDecoration(
+          color: const Color(0x750A0818),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Octo.hairlineSoft),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                const Text(
+                  '◌ thinking',
+                  style: TextStyle(
+                    fontFamily: Octo.mono,
+                    fontSize: 8,
+                    height: 1.2,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 1.1,
+                    color: Color(0xE6C9BFFF),
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  hint,
+                  style: const TextStyle(
+                    fontFamily: Octo.mono,
+                    fontSize: 8,
+                    height: 1.2,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: .3,
+                    color: Octo.dim,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 3),
+            if (expanded)
+              // 全文仍然是全文，但最多占半屏（桌面同款 50vh），免得一段几千字
+              // 的 thinking 把下面的工具行 / 正文顶出屏幕；窗口内自己可滚。
+              ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.sizeOf(context).height * .5,
+                ),
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      for (final line in window)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 1),
+                          child: Text(
+                            line,
+                            style: const TextStyle(
+                              fontFamily: Octo.mono,
+                              fontSize: 10,
+                              height: 1.7,
+                              color: Color(0xEBEDEBFA),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              )
+            else
+              for (var i = 0; i < window.length; i++)
+                _windowLine(
+                  window[i],
+                  // 上一行渐隐做「前面还有」的暗示；最后一行带光标。
+                  old: i < window.length - 1,
+                  caret: live && i == window.length - 1,
+                ),
+          ],
+        ),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
+    );
+  }
+
+  Widget _windowLine(String text, {required bool old, required bool caret}) {
+    const style = TextStyle(
+      fontFamily: Octo.mono,
+      fontSize: 10,
+      height: 1.65,
+      color: Color(0xC68D86B8),
+    );
+    final base = Text(
+      text,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: old ? style : style.copyWith(color: const Color(0xEBEDEBFA)),
+    );
+    final line = caret
+        ? Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Flexible(child: base),
+              const Padding(padding: EdgeInsets.only(left: 2), child: _Caret()),
+            ],
+          )
+        : base;
+    if (!old) return line;
+    return Opacity(
+      opacity: .55,
+      child: ShaderMask(
+        blendMode: BlendMode.dstIn,
+        shaderCallback: (rect) => const LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          stops: [0, .75],
+          colors: [Colors.transparent, Colors.black],
+        ).createShader(rect),
+        child: line,
+      ),
+    );
+  }
+}
+
+/// 工作行（原型 `.work`）：转字 + 修仙短语 + 真实计时 —— 与全舱 TUI 同一条。
+class _WorkLine extends StatelessWidget {
+  const _WorkLine({
+    required this.phase,
+    required this.elapsed,
+    required this.spin,
+    required this.seed,
+  });
+
+  final WorkPhase phase;
+  final int elapsed;
+  final String spin;
+  final int seed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Octo.teal.withValues(alpha: .2)),
+        gradient: LinearGradient(
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
+          colors: [Octo.teal.withValues(alpha: .1), const Color(0x7A100D28)],
+        ),
+      ),
+      child: Row(
         children: [
-          for (final child in children)
-            Padding(padding: const EdgeInsets.only(bottom: 2), child: child),
+          SizedBox(
+            width: 12,
+            child: Text(
+              spin,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontFamily: Octo.mono,
+                fontSize: 12,
+                height: 1,
+                color: Octo.teal,
+              ),
+            ),
+          ),
+          const SizedBox(width: 7),
+          Expanded(
+            child: Text(
+              workPhrase(phase, elapsed, seed: seed),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontFamily: Octo.mono,
+                fontSize: 10.5,
+                height: 1,
+                color: Color(0xE6EDEBFA),
+              ),
+            ),
+          ),
+          const SizedBox(width: 7),
+          Text(
+            formatWorkElapsed(elapsed),
+            style: const TextStyle(
+              fontFamily: Octo.mono,
+              fontSize: 10.5,
+              height: 1,
+              letterSpacing: .4,
+              fontFeatures: [FontFeature.tabularFigures()],
+              color: Octo.teal,
+            ),
+          ),
         ],
       ),
     );
   }
 }
 
-class _ThinkLine extends StatelessWidget {
-  const _ThinkLine({required this.text, this.duration});
+/// 工具行（原型 `.tool`）：`▸ Edit spec/phase-1.md        ✓ 完成`。
+/// 有 input / result 时整行可点，展开成原文小票。
+class ToolLine extends StatefulWidget {
+  const ToolLine({
+    super.key,
+    required this.name,
+    required this.input,
+    required this.status,
+    this.result,
+    this.duration,
+  });
 
-  final String text;
+  final String name;
+  final String? input;
+  final String? result;
+  final String status;
   final String? duration;
 
   @override
+  State<ToolLine> createState() => _ToolLineState();
+}
+
+class _ToolLineState extends State<ToolLine> {
+  bool _open = false;
+
+  @override
   Widget build(BuildContext context) {
-    return Text(
-      duration == null ? '◌ $text' : '◌ $text  ($duration)',
-      style: const TextStyle(
-        fontFamily: Octo.mono,
-        fontSize: 10.5,
-        height: 1.65,
-        color: Octo.dim,
-      ),
+    final running = widget.status == 'running';
+    final error = widget.status == 'error';
+    final (label, color) = running
+        ? ('运行中…', Octo.amber)
+        : error
+        ? ('✗ 失败', Octo.red)
+        : ('✓ 完成', Octo.green);
+    final arg = shortToolArg(widget.name, widget.input);
+    final detail = _toolDetail(widget.input, widget.result);
+
+    final row = Row(
+      children: [
+        const Padding(
+          padding: EdgeInsets.only(right: 6),
+          child: Text(
+            '▸',
+            style: TextStyle(
+              fontFamily: Octo.mono,
+              fontSize: 10.5,
+              height: 1.6,
+              color: Octo.teal,
+            ),
+          ),
+        ),
+        Expanded(
+          child: Text.rich(
+            TextSpan(
+              style: const TextStyle(
+                fontFamily: Octo.mono,
+                fontSize: 10.5,
+                height: 1.6,
+                color: Octo.dim,
+              ),
+              children: [
+                TextSpan(
+                  text: widget.name,
+                  style: const TextStyle(
+                    color: Color(0xFF7FB7FF),
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                if (arg != null)
+                  TextSpan(
+                    text: ' $arg',
+                    style: const TextStyle(color: Octo.dim),
+                  ),
+                if (widget.duration != null && !running)
+                  TextSpan(
+                    text: ' ${widget.duration}',
+                    style: const TextStyle(color: Octo.faint),
+                  ),
+              ],
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Text(
+          label,
+          style: TextStyle(
+            fontFamily: Octo.mono,
+            fontSize: 9.5,
+            height: 1.4,
+            fontWeight: FontWeight.w700,
+            color: color,
+          ),
+        ),
+      ],
+    );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        InkWell(
+          onTap: detail == null ? null : () => setState(() => _open = !_open),
+          borderRadius: BorderRadius.circular(6),
+          child: row,
+        ),
+        if (_open && detail != null)
+          Container(
+            margin: const EdgeInsets.fromLTRB(16, 3, 0, 6),
+            padding: const EdgeInsets.fromLTRB(9, 7, 9, 7),
+            decoration: BoxDecoration(
+              color: const Color(0x990A0818),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Octo.hairlineSoft),
+            ),
+            child: Text(
+              detail,
+              maxLines: 16,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontFamily: Octo.mono,
+                fontSize: 9,
+                height: 1.7,
+                color: Octo.metal,
+              ),
+            ),
+          ),
+      ],
     );
   }
+
+  /// input / result 原文小票。两边都没有就没什么可展开的。
+  static String? _toolDetail(String? input, String? result) {
+    final parts = <String>[];
+    if (input != null && input.trim().isNotEmpty) {
+      parts.add('▸ input\n${_prettyJson(input)}');
+    }
+    if (result != null && result.trim().isNotEmpty) {
+      parts.add('▸ result\n${result.trim()}');
+    }
+    if (parts.isEmpty) return null;
+    return _clip(parts.join('\n\n'), 900);
+  }
+
+  static String _prettyJson(String raw) {
+    try {
+      final decoded = jsonDecode(raw);
+      return const JsonEncoder.withIndent('  ').convert(decoded);
+    } catch (_) {
+      return raw;
+    }
+  }
+
+  static String _clip(String s, int max) =>
+      s.length <= max ? s : '${s.substring(0, max)}…';
 }
 
 class _TuiAssistantText extends StatelessWidget {
@@ -770,68 +1297,6 @@ class _TuiAssistantText extends StatelessWidget {
   }
 }
 
-/// 工具行（原型 `.tool`）：`▸ Edit spec/phase-1.md [✓]`。
-class ToolLine extends StatelessWidget {
-  const ToolLine({
-    super.key,
-    required this.name,
-    required this.input,
-    required this.status,
-    required this.duration,
-  });
-
-  final String name;
-  final String? input;
-  final String status;
-  final String? duration;
-
-  @override
-  Widget build(BuildContext context) {
-    final (mark, color) = switch (status) {
-      'error' => ('[✗]', Octo.red),
-      'running' => ('[…]', Octo.amber),
-      _ => ('[✓]', Octo.green),
-    };
-    final arg = shortToolArg(name, input);
-    return Text.rich(
-      TextSpan(
-        style: const TextStyle(
-          fontFamily: Octo.mono,
-          fontSize: 10.5,
-          height: 1.65,
-        ),
-        children: [
-          const TextSpan(
-            text: '▸ ',
-            style: TextStyle(color: Octo.teal),
-          ),
-          TextSpan(
-            text: name,
-            style: const TextStyle(
-              color: Color(0xFF7FB7FF),
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          if (arg != null)
-            TextSpan(
-              text: ' $arg',
-              style: const TextStyle(color: Octo.dim),
-            ),
-          if (duration != null && status != 'running')
-            TextSpan(
-              text: ' $duration',
-              style: const TextStyle(color: Octo.faint),
-            ),
-          TextSpan(
-            text: ' $mark',
-            style: TextStyle(color: color, fontWeight: FontWeight.w700),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _TuiErrorRow extends StatelessWidget {
   const _TuiErrorRow({this.code, required this.message});
 
@@ -855,6 +1320,79 @@ class _TuiErrorRow extends StatelessWidget {
           height: 1.6,
           color: Octo.red,
         ),
+      ),
+    );
+  }
+}
+
+/// 行头那颗「在跑」的小灯：呼吸，不是转圈。
+class _LiveDot extends StatefulWidget {
+  const _LiveDot();
+
+  @override
+  State<_LiveDot> createState() => _LiveDotState();
+}
+
+class _LiveDotState extends State<_LiveDot>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1400),
+  )..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: Tween<double>(
+        begin: .35,
+        end: 1,
+      ).animate(CurvedAnimation(parent: _c, curve: Curves.easeInOut)),
+      child: Container(
+        width: 5,
+        height: 5,
+        decoration: const BoxDecoration(
+          shape: BoxShape.circle,
+          color: Octo.teal,
+          boxShadow: [BoxShadow(color: Octo.teal, blurRadius: 8)],
+        ),
+      ),
+    );
+  }
+}
+
+/// 思考活窗口末尾的光标：1s 闪烁（对齐原型 `caret`）。
+class _Caret extends StatefulWidget {
+  const _Caret();
+
+  @override
+  State<_Caret> createState() => _CaretState();
+}
+
+class _CaretState extends State<_Caret> with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1000),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _c,
+      builder: (context, _) => Opacity(
+        opacity: _c.value < .5 ? 1 : 0,
+        child: Container(width: 5, height: 10, color: const Color(0xCC2EE6D6)),
       ),
     );
   }

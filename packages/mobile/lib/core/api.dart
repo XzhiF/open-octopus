@@ -182,6 +182,16 @@ class OctopusApi {
     );
   }
 
+  /// 停掉正在跑的这一轮（桌面「停止」按钮同一条路由）。
+  /// 手机端同时会取消本地的流式请求，这条是让服务端立刻收口、把行落成「截断」。
+  Future<void> stopAgentSession(String sessionId) async {
+    try {
+      await _postJson('/api/agent/sessions/$sessionId/stop');
+    } on ApiException {
+      // 老服务没有这条路由 / 本轮已经结束：本地断流已经足够，不当失败。
+    }
+  }
+
   // ── 通讯台遥测（原型 E3–E9）─────────────────────────────────────
 
   /// 当前会话身份（星核 · 分身）。

@@ -566,9 +566,9 @@ androidx.security / tink 依赖，比 M2 的 183 MiB 涨了约 34 MiB）。首�
 - **真机回归**：vivo V2304A / Android 16 上验证通讯台头、折叠展开、轮次跳转、模型切换持久化、
   星核四栏、ctx/tok 明细；`flutter test` **81 passed**，`flutter analyze` 0 error / 0 warning。
 
-### 2026-11-28 · 提问卡与产物预览（原型 §4）
+### 2026-11-28 · 提问卡与产物预览（原型 §5）
 
-原型 `mobile-v1.html` §4（E10–E14）落地，同时按定稿删掉输入区上方的预设快捷词：
+原型 `mobile-v1.html` §5（E15–E19）落地，同时按定稿删掉输入区上方的预设快捷词：
 
 - **提问卡**：从 agent 消息 metadata 的 `questions` 解析（老数据用工具入参兜底），
   不再折成工具行；所有问题平铺、一次滚完、一次提交。单选圆点 / 多选方框，「其他」
@@ -585,6 +585,43 @@ androidx.security / tink 依赖，比 M2 的 183 MiB 涨了约 34 MiB）。首�
   先讨论提交、已答折叠、图片缩略图 + 灯箱、文件 chip + 只读文档窗，以及媒体路径不把
   URL 误判为文件。
 
+### 2026-11-28 · 运行态与身份（原型 §4，已落 Flutter）
+
+原型 `mobile-v1.html` §4（E10–E14）已实现：
+
+- **我的消息**（`widgets/tui.dart` `_TuiUserRow`）：保留原来的「细金线 + ❯」结构，只加一层
+  淡琥珀底、左侧加粗到 3px；不加标签块，长句换行只让出 `❯` 那一点宽度，长对话里先认出
+  自己说的。TUI 语法不变；轮次跳转仍闪粉。
+- **运行态**（`widgets/tui.dart` `_WorkLine` / `_ThinkWindow` / `ToolLine`，文案表在
+  `core/work_phrases.dart`）：对齐全舱 TUI —— 流尾工作行 = 转字（`⠋⠙⠹…`）+ 修仙短语 +
+  真实计时，每 6 秒轮换、按回合起点洗牌（18 句 × 3 阶段，从
+  `web-app/lib/agent/work-phrases.ts` 逐字复制）；<em>跑动中</em> thinking 在最下方只露最新两行
+  （上缘渐隐、末行光标），工具逐条从「运行中…」变 `✓ 完成`；**出结果的那一刻，思考与工具
+  调用一起收进行头**（同桌面 `TuiMeta`），不再铺在正文上面。点行头才展开本回合全部过程：
+  思考全文与工具按落库顺序排在同一条 rail 里；单条工具可再展开 input / result 原文
+  （`tool_calls[].result` 落库读取，流式期从 `tool_call` result 事件的 `content` 收）。
+  被停止 / 断流的回合行头写「已截断」，不冒充「已完成」。
+- **过程顺序**（纯客户端改动，服务端一行未动）：历史轮按服务端 `metadata.timeline`
+  的到达顺序复现 think 段 / 工具的交替（桌面 `TuiMeta` 同一口径）；老行没有 timeline 时
+  退回「thinking 一段 + 工具若干」。运行中同样按 SSE 到达顺序排（`LiveTurn.process`），
+  不再把 thinking 一律提到工具前面。流式折叠的实时态不落库，仍以 `thinking` +
+  `tool_calls` 列为兼容兜底。
+- **发送键**（`widgets/composer.dart`）：跑动时不再在亮青圆钮里塞转圈 —— 换成暗底 +
+  琥珀停止键，点一下走 `POST /api/agent/sessions/:id/stop` 并掐本地流；取消不画成错误行。
+  转字只在工作行出现一次；空输入为暗色不可按。
+- **发出即收键盘**（`Composer._submit` + `ChatPane._stickToBottom`）：发送后 `unfocus`，
+  聊天面板立刻钉回底部（首帧 + 键盘收起动画后各钉一次）；`didChangeMetrics` 在键盘
+  开合时把「本来贴底」的位置继续贴底。
+- **身份上移**（`features/chat/identity_chip.dart` `RoleBarChip` + `widgets/octo_bar.dart`
+  `subtitleWidget`）：`◉ 舱调度者` 从输入区上方挪到顶栏副标题（带 17px 汐音小像，
+  点开星核 · 分身），输入区只剩输入行；挂了技能 / 委派时才临时冒一行。
+- **角色入顶栏**：汐音不再站在聊天面板后面（`crewBehind` 那支 300px 立绘已删，
+  `CrewBackdrop` 一并移除），收成顶栏身份胶囊里的小像；大立绘只留在设备列表 / 空态。
+- **顺带修**：原型 `.srow .btn.ghost` 被通用 `.ghost{width:100%}` 顶宽，
+  「切回 / 改名 / 导出 / 去看看」四个按钮占满整行 —— 已限定为内容宽。
+- **验证**：`flutter test` **110 passed**（新增短语表 / 洗牌 / 计时、运行态转录、身份胶囊）；
+  `flutter analyze` 0 error / 0 warning。
+
 ---
 
 ## 12. 变更记录
@@ -598,4 +635,5 @@ androidx.security / tink 依赖，比 M2 的 183 MiB 涨了约 34 MiB）。首�
 | 2026-11-27 | M5 打磨：图标换汐音（与 PC exe 同源）+ 自适应图标；启动页（系统层 + Flutter 光环字标）；场景图转 WebP（5.6 MB → 307 KB）；触感反馈；release 签名与 `--split-per-abi`（36.4 MB / arm64） |
 | 2026-11-27 | 舱首页改主 chat（原型方案 A）：点进舱直接到 `cabins.main_session_id`，汐音 WebP 立在聊天面板后、底缘淡出；右上角「☰ 编队」= 待你定 / 会话 / 任务；删掉「汐音 · 待命 IDLE」动作标签；舱会话切 `/api/agent`（旧 `chat/sessions` 域在舱里没有行），TUI 增系统行；测试 73 passed |
 | 2026-11-28 | chat 内场落地（原型 E3–E9）：通讯台头 + 过程折叠 + 轮次索引；星核 / 模型 / ctx / tok 五抽屉；技能挂载、委派、身份切换、压缩 / 清空 / 改名 / 导出全接真实端点；测试 81 passed |
-| 2026-11-28 | 提问卡与产物预览（原型 §4）：AskUserQuestion 平铺提问卡（单选 / 多选 / 其他 / 先讨论 / 已答折叠）；图片缩略图 + 灯箱、文件 chip + 只读文档窗；输入区删掉预设快捷词；测试 105 passed |
+| 2026-11-28 | 提问卡与产物预览（原型 §5）：AskUserQuestion 平铺提问卡（单选 / 多选 / 其他 / 先讨论 / 已答折叠）；图片缩略图 + 灯箱、文件 chip + 只读文档窗；输入区删掉预设快捷词；测试 105 passed |
+| 2026-11-28 | 我的消息 / 运行态 / 身份落地（原型 §4 E10–E14）：琥珀底我的消息 · TUI 工作行 + 思考两行 + 工具打勾 + 展开 · 发送键改停止键 · 发出即收键盘并贴底 · 身份上移顶栏、站立立绘收走；测试 110 passed |

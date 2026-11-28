@@ -163,7 +163,9 @@ class ChatController extends ChangeNotifier {
 
     sending = true;
     pendingUserText = trimmed;
-    live = LiveTurn()..started = true;
+    live = LiveTurn()
+      ..started = true
+      ..startedAt = DateTime.now();
     _notify();
 
     final cancel = CancelToken();
@@ -194,7 +196,9 @@ class ChatController extends ChangeNotifier {
         _notify();
       }
     } catch (e) {
-      if (!_disposed) {
+      // 用户按了停止：取消流是预期结果，不画成错误行。
+      final cancelled = e is ApiException && e.kind == 'cancel';
+      if (!_disposed && !cancelled) {
         live.errorMessage = describeError(e);
         live.errorCode = e is ApiException ? e.kind : 'error';
         _notify();
@@ -213,6 +217,16 @@ class ChatController extends ChangeNotifier {
 
   void cancelStream() {
     _cancel?.cancel('用户取消');
+  }
+
+  /// 停止本轮（发送键变成停止键时点它）。
+  ///
+  /// 两件事一起做：先让服务端收口（行落成「本轮被截断」），再掐掉本地这条流。
+  /// 只掐本地流的话，服务端那轮会继续跑到自然结束，回头刷新还能看见它又在写。
+  Future<void> stop() async {
+    if (!sending) return;
+    if (agent) unawaited(api.stopAgentSession(sessionId));
+    cancelStream();
   }
 
   Future<void> _refreshSnapshot() async {
@@ -257,8 +271,9 @@ class ChatController extends ChangeNotifier {
         if (separator != null && separator.isNotEmpty) l.text += separator;
         break;
       case 'thinking':
-        l.thinking +=
-            (data?['delta'] as String?) ?? (data?['content'] as String?) ?? '';
+        l.appendThinking(
+          (data?['delta'] as String?) ?? (data?['content'] as String?) ?? '',
+        );
         break;
       case 'thinking_done':
         l.thinkingDone = true;
@@ -271,6 +286,7 @@ class ChatController extends ChangeNotifier {
             LiveTool(id: askId, name: 'AskUserQuestion', status: 'done'),
           );
         }
+        l.markTool(askId);
         break;
       case 'tool_call':
         _applyToolCall(data);
@@ -336,6 +352,10 @@ class ChatController extends ChangeNotifier {
     if (type == 'result') {
       if (index >= 0) {
         l.tools[index].status = data?['is_error'] == true ? 'error' : 'done';
+        final content = data?['content'];
+        if (content is String && content.isNotEmpty) {
+          l.tools[index].resultText = content;
+        }
       }
       return;
     }
@@ -351,6 +371,8 @@ class ChatController extends ChangeNotifier {
         LiveTool(id: id, name: name, inputText: inputText, status: 'running'),
       );
     }
+    // 过程时间线：工具跟当前 thinking 段交替排，而不是全部堆到最后。
+    l.markTool(id);
     l.started = true;
   }
 

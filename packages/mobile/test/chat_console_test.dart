@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:octopus_mobile/core/models/chat.dart';
 import 'package:octopus_mobile/core/models/telemetry.dart';
 import 'package:octopus_mobile/core/ask_question.dart';
+import 'package:octopus_mobile/core/work_phrases.dart';
 import 'package:octopus_mobile/features/chat/ask_card.dart';
 import 'package:octopus_mobile/features/chat/console_bar.dart';
 import 'package:octopus_mobile/widgets/tui.dart';
@@ -29,16 +30,20 @@ ChatMessage _row({
 );
 
 void main() {
-  testWidgets('assistant 的 think / 工具默认折成一行摘要，点开才看步骤', (tester) async {
+  testWidgets('回合结束把 think / 工具收进行头；点行头按顺序摊开', (tester) async {
+    const thinking =
+        '第一行：先核对 manifest 里的引用\n'
+        '第二行：再看验收清单\n'
+        '第三行：最后跑一遍 rg';
     final messages = [
       _row(id: 'u1', role: 'user', displayType: 'user', content: '一起清掉'),
       _row(
         id: 'a1-think',
         role: 'assistant',
         displayType: 'thinking',
-        content: '先核对 manifest 里的引用',
+        content: thinking,
         sourceId: 'a1',
-        extra: {'thinkingContent': '先核对 manifest 里的引用'},
+        extra: {'thinkingContent': thinking},
       ),
       _row(
         id: 'a1-tool',
@@ -49,6 +54,7 @@ void main() {
         extra: {
           'toolName': 'Edit',
           'toolInput': '{"file_path":"spec/phase-1.md"}',
+          'toolResult': 'done',
           'toolStatus': 'done',
         },
       ),
@@ -76,9 +82,11 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
-          body: TuiTranscript(
-            messages: messages,
-            turnStats: const {'a1': stats},
+          body: SingleChildScrollView(
+            child: TuiTranscript(
+              messages: messages,
+              turnStats: const {'a1': stats},
+            ),
           ),
         ),
       ),
@@ -88,28 +96,94 @@ void main() {
     expect(find.textContaining('汐音', findRichText: true), findsOneWidget);
     expect(find.textContaining('已完成', findRichText: true), findsOneWidget);
     expect(find.textContaining('9s', findRichText: true), findsOneWidget);
-    expect(find.textContaining('3\u00A0步', findRichText: true), findsOneWidget);
-    expect(
-      find.textContaining('工具\u00A01', findRichText: true),
-      findsOneWidget,
-    );
-    expect(
-      find.textContaining('1.2K\u00A0tok', findRichText: true),
-      findsOneWidget,
-    );
+    expect(find.textContaining('3 步', findRichText: true), findsOneWidget);
+    expect(find.textContaining('工具 1', findRichText: true), findsOneWidget);
+    expect(find.textContaining('1.2K tok', findRichText: true), findsOneWidget);
     expect(find.textContaining('¥0.06', findRichText: true), findsOneWidget);
 
-    // 正文直接露出；过程默认折叠。
+    // 正文直接露出；think / 工具一起收进行头，不铺在正文上面。
     expect(find.textContaining('清完了'), findsOneWidget);
-    expect(find.textContaining('先核对 manifest'), findsNothing);
-    expect(find.textContaining('spec/phase-1.md'), findsNothing);
+    expect(find.textContaining('第一行：先核对'), findsNothing);
+    expect(find.textContaining('最后跑一遍 rg'), findsNothing);
+    expect(find.textContaining('Edit'), findsNothing);
 
-    // 点摘要头展开过程。
+    // 点行头展开 = 按落库顺序列出思考全文 + 工具行。
     await tester.tap(find.textContaining('汐音', findRichText: true));
     await tester.pump();
 
-    expect(find.textContaining('先核对 manifest'), findsOneWidget);
-    expect(find.textContaining('spec/phase-1.md'), findsOneWidget);
+    expect(find.textContaining('第一行：先核对'), findsOneWidget);
+    expect(find.textContaining('最后跑一遍 rg'), findsOneWidget);
+    expect(find.textContaining('Edit'), findsOneWidget);
+    expect(find.textContaining('✓ 完成'), findsOneWidget);
+
+    // 单条工具再点开 = input / result 原文小票。
+    expect(find.textContaining('▸ input'), findsNothing);
+    await tester.tap(find.textContaining('Edit'));
+    await tester.pump();
+    expect(find.textContaining('▸ input'), findsOneWidget);
+    expect(find.textContaining('spec/phase-1.md'), findsWidgets);
+  });
+
+  testWidgets('运行中：工作行转字 + 计时，思考两行，工具逐条打勾', (tester) async {
+    final live = LiveTurn()
+      ..started = true
+      ..startedAt = DateTime.now()
+      ..thinking = '先看 manifest\n再核对引用\n最后跑测试'
+      ..text = '正在改…';
+    live.tools.add(
+      LiveTool(
+        id: 't1',
+        name: 'Read',
+        inputText: '{"file_path":"acceptance-plan-r2.json"}',
+        status: 'done',
+      ),
+    );
+    live.tools.add(
+      LiveTool(
+        id: 't2',
+        name: 'Edit',
+        inputText: '{"file_path":"phase-1-spec.md"}',
+        status: 'running',
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: TuiTranscript(messages: const [], live: live),
+          ),
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 200));
+
+    // 行头：进行中（不是「已完成」）。
+    expect(find.textContaining('进行中', findRichText: true), findsOneWidget);
+    // 工作行：盲文转字 + 计时（0:00）。
+    expect(
+      find.textContaining(RegExp('[${kWorkSpin.join()}]')),
+      findsOneWidget,
+    );
+    expect(find.text('0:00'), findsOneWidget);
+    // 思考只露最后两行。
+    expect(find.textContaining('◌ thinking'), findsOneWidget);
+    expect(find.textContaining('最后跑测试'), findsOneWidget);
+    expect(find.textContaining('先看 manifest'), findsNothing);
+    // 工具：完成的打勾，在跑的写「运行中…」。
+    expect(find.textContaining('✓ 完成'), findsOneWidget);
+    expect(find.textContaining('运行中…'), findsOneWidget);
+
+    // 出结果的那一刻：think / 工具一起收进行头，不再铺在下面。
+    live.done = true;
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(find.textContaining('已完成', findRichText: true), findsOneWidget);
+    expect(find.textContaining('最后跑测试'), findsNothing);
+    expect(find.textContaining('✓ 完成'), findsNothing);
+    expect(find.textContaining('运行中…'), findsNothing);
+
+    // 手动收掉，免得 ticker / timer 留在测试里。
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 
   testWidgets('AskUserQuestion 直接长成提问卡；答过之后收成一行', (tester) async {

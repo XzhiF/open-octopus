@@ -27,7 +27,7 @@ import 'sheets/turns_sheet.dart';
 
 /// 一段会话的主体：引用条 + 通讯台头 + 聊天面板 + 输入区。
 ///
-/// 舱内主 chat（E 屏，立绘站在面板后面）与普通会话（F / G 屏）共用这一份；
+/// 舱内主 chat（E 屏）与普通会话（F / G 屏）共用这一份；
 /// 顶栏由各自的屏幕画，[ChatPane] 只管从引用条往下。
 class ChatPane extends ConsumerStatefulWidget {
   const ChatPane({
@@ -39,8 +39,8 @@ class ChatPane extends ConsumerStatefulWidget {
     this.quote,
     this.onQuoteClosed,
     this.onSessionLoaded,
+    this.onRoleChanged,
     this.agent = false,
-    this.crewBehind = false,
     this.fleetHint = false,
     this.placeholder = '说点什么…',
     this.quotePlaceholder = '回复上面这个问题…',
@@ -61,11 +61,11 @@ class ChatPane extends ConsumerStatefulWidget {
   /// 快照换了就通知一次（顶栏标题跟着会话走）。
   final ValueChanged<ChatSession?>? onSessionLoaded;
 
+  /// 身份（星核 · 分身）变了就通知一次 —— 顶栏的身份胶囊跟着换。
+  final ValueChanged<SessionRole?>? onRoleChanged;
+
   /// 舱会话走 `/api/agent`（sessions 表）；单独会话仍走旧的 chat/sessions。
   final bool agent;
-
-  /// 立绘站在聊天面板后面右侧（原型方案 A）。关掉「立绘动画」时整块不画。
-  final bool crewBehind;
 
   /// 消息流末尾补一句「待你定 / 会话 / 任务 → 右上角『☰ 编队』」。
   final bool fleetHint;
@@ -96,6 +96,12 @@ class ChatPaneState extends ConsumerState<ChatPane>
 
   /// 顶栏「刷新」按这里。
   void reload() => _chat?.load();
+
+  /// 顶栏身份胶囊点这里：打开星核 · 分身（第 2 栏）。
+  void openRoleSheet() {
+    final chat = _chat;
+    if (chat != null) _openCore(chat, 1);
+  }
 
   @override
   void initState() {
@@ -135,6 +141,16 @@ class ChatPaneState extends ConsumerState<ChatPane>
     chat.load();
   }
 
+  /// 键盘弹起 / 收起会改视口高度：本来贴着底就继续贴着底。
+  @override
+  void didChangeMetrics() {
+    if (!_atBottom) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scroll.hasClients) return;
+      _scroll.jumpTo(_scroll.position.maxScrollExtent);
+    });
+  }
+
   void _onScroll() {
     if (!_scroll.hasClients) return;
     final position = _scroll.position;
@@ -145,12 +161,26 @@ class ChatPaneState extends ConsumerState<ChatPane>
     if (!mounted) return;
     setState(() {});
     widget.onSessionLoaded?.call(_chat?.session);
+    widget.onRoleChanged?.call(_chat?.role);
     if (_atBottom) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || !_scroll.hasClients) return;
         _scroll.jumpTo(_scroll.position.maxScrollExtent);
       });
     }
+  }
+
+  /// 发出消息后把镜头钉回底部：先立刻钉一次（乐观显示的那条），
+  /// 键盘收起的动画（~280ms）结束后再钉一次，免得面板停在半路。
+  void _stickToBottom() {
+    _atBottom = true;
+    void jump() {
+      if (!mounted || !_scroll.hasClients) return;
+      _scroll.jumpTo(_scroll.position.maxScrollExtent);
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) => jump());
+    Future<void>.delayed(const Duration(milliseconds: 300), jump);
   }
 
   void _snack(String message, {bool error = false}) {
@@ -177,6 +207,8 @@ class ChatPaneState extends ConsumerState<ChatPane>
     final chat = _chat;
     if (chat == null) return;
     final settings = ref.read(composerSettingsProvider);
+    // 键盘马上收，面板立刻贴底 —— 最新一条和运行态都在眼前。
+    _stickToBottom();
     await chat.send(text, options: _sendOptions(settings));
     if (!mounted) return;
     // 挂载与委派都是一次性的：随这条消息消费掉。
@@ -212,7 +244,6 @@ class ChatPaneState extends ConsumerState<ChatPane>
     final evidenceCount = quote == null
         ? null
         : countEvidence(chat?.session?.messages ?? const [], quote.messageId);
-    final role = chat?.role ?? const SessionRole();
 
     return Column(
       children: [
@@ -242,19 +273,20 @@ class ChatPaneState extends ConsumerState<ChatPane>
           helper: quote == null ? null : widget.quoteHelper,
           sending: chat?.sending ?? false,
           enabled: chat != null && !_bootError,
-          controls: widget.agent
-              ? ChatIdentityChip(
-                  role: role,
+          // 身份已经在顶栏了：这里只在挂了技能 / 一次性委派时临时冒一行贴纸。
+          controls:
+              widget.agent &&
+                  (_attachedSkill != null || _attachedSubagent != null)
+              ? ChatAttachmentChips(
                   skill: _attachedSkill,
                   subagent: _attachedSubagent,
-                  onTap: chat == null ? null : () => _openCore(chat, 1),
-                  onClear: () => _clearRole(chat!),
                   onSkillClear: () => setState(() => _attachedSkill = null),
                   onSubagentClear: () =>
                       setState(() => _attachedSubagent = null),
                 )
               : null,
           onSend: _send,
+          onStop: () async => chat?.stop(),
         ),
       ],
     );
@@ -300,25 +332,17 @@ class ChatPaneState extends ConsumerState<ChatPane>
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          // 方案 A：她站在聊天面板后面右侧，消息列满宽压在她身上。
-          if (widget.crewBehind) CrewBackdrop(animated: videoEnabled),
-          _ChatPanel(
-            soft: widget.crewBehind,
-            child: showEmpty
-                ? _emptyPanel(videoEnabled)
-                : _transcriptPanel(chat, messages, live),
-          ),
-        ],
+      child: _ChatPanel(
+        child: showEmpty
+            ? _emptyPanel(videoEnabled)
+            : _transcriptPanel(chat, messages, live),
       ),
     );
   }
 
   Widget _emptyPanel(bool videoEnabled) {
-    // 主 chat 里立绘已经在面板后面了，空态不再来一张；单独会话用 09-smile（原型 H）。
-    final artwork = widget.crewBehind || !videoEnabled
+    // 大立绘只留在空态（原型 E14：她不再站在消息后面）。
+    final artwork = !videoEnabled
         ? null
         : const CrewFigure(height: 230, initialIndex: 2, cycleOnTap: false);
     return Center(
@@ -382,19 +406,7 @@ class ChatPaneState extends ConsumerState<ChatPane>
                     onAskAnswer: (text) => unawaited(_sendCommand(text)),
                     askEnabled: !chat.sending,
                   ),
-                  if (chat.sending)
-                    const Padding(
-                      padding: EdgeInsets.only(top: 2, bottom: 6),
-                      child: Text(
-                        '… 流式输出中',
-                        style: TextStyle(
-                          fontFamily: Octo.mono,
-                          fontSize: 10,
-                          letterSpacing: .6,
-                          color: Octo.faint,
-                        ),
-                      ),
-                    ),
+                  // 跑动中的提示已经在回合内的 TUI 工作行里，不再额外挂「流式输出中」。
                   if (widget.fleetHint)
                     const Padding(
                       padding: EdgeInsets.only(top: 2),
@@ -534,15 +546,6 @@ class ChatPaneState extends ConsumerState<ChatPane>
     });
   }
 
-  Future<void> _clearRole(ChatController chat) async {
-    try {
-      await chat.setRole(null);
-      _snack('已回到主 Agent');
-    } catch (e) {
-      _snack(describeError(e), error: true);
-    }
-  }
-
   Future<void> _rename(String title) async {
     final chat = _chat;
     if (chat == null) return;
@@ -588,12 +591,10 @@ class ChatPaneState extends ConsumerState<ChatPane>
 }
 
 /// 聊天面板：圆角玻璃 + 青边 + 顶缘渐隐（原型 `.stream`）。
-/// [soft] 是舱内主 chat 的淡色版 —— 后面站着立绘，面板只压暗不遮死。
 class _ChatPanel extends StatelessWidget {
-  const _ChatPanel({required this.child, this.soft = false});
+  const _ChatPanel({required this.child});
 
   final Widget child;
-  final bool soft;
 
   @override
   Widget build(BuildContext context) {
@@ -610,12 +611,10 @@ class _ChatPanel extends StatelessWidget {
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(Octo.rL),
           border: Border.all(color: const Color(0x242EE6D6)),
-          gradient: LinearGradient(
+          gradient: const LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: soft
-                ? const [Color(0x330A0818), Color(0x5C0A0818)]
-                : const [Color(0x6B0A0818), Color(0xA30A0818)],
+            colors: [Color(0x6B0A0818), Color(0xA30A0818)],
           ),
         ),
         child: child,

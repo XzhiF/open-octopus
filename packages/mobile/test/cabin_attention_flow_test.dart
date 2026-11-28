@@ -14,6 +14,7 @@ import 'package:octopus_mobile/core/storage.dart';
 import 'package:octopus_mobile/features/cabins/cabin_screen.dart';
 import 'package:octopus_mobile/features/cabins/fleet_screen.dart';
 import 'package:octopus_mobile/features/chat/session_screen.dart';
+import 'package:octopus_mobile/features/chat/identity_chip.dart';
 import 'package:octopus_mobile/widgets/crew_animation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -37,7 +38,13 @@ const _askAttentionJson = {
   },
 };
 
-const _healthJson = {'running': 0, 'queued': 0, 'dormant': 0, 'workers': 0, 'max': 3};
+const _healthJson = {
+  'running': 0,
+  'queued': 0,
+  'dormant': 0,
+  'workers': 0,
+  'max': 3,
+};
 
 /// 舱主会话走 /api/agent：messages.items 里一条 assistant 行带 thinking / tool_calls。
 const _sessionJson = {
@@ -49,7 +56,12 @@ const _sessionJson = {
   'updated_at': '2026-11-26T10:05:00Z',
   'messages': {
     'items': [
-      {'id': 'u0', 'role': 'user', 'content': '看看 phase 2', 'created_at': '2026-11-26T10:01:00Z'},
+      {
+        'id': 'u0',
+        'role': 'user',
+        'content': '看看 phase 2',
+        'created_at': '2026-11-26T10:01:00Z',
+      },
       {
         'id': 'm-tools',
         'role': 'assistant',
@@ -57,11 +69,26 @@ const _sessionJson = {
         'thinking': '先核对 manifest 里的引用',
         'created_at': '2026-11-26T10:02:00Z',
         'tool_calls': [
-          {'id': 'tc-1', 'name': 'Read', 'status': 'result', 'input': {'file_path': '.task/manifest.json'}},
-          {'id': 'tc-2', 'name': 'Grep', 'status': 'result', 'input': {'pattern': 'phase-2'}},
+          {
+            'id': 'tc-1',
+            'name': 'Read',
+            'status': 'result',
+            'input': {'file_path': '.task/manifest.json'},
+          },
+          {
+            'id': 'tc-2',
+            'name': 'Grep',
+            'status': 'result',
+            'input': {'pattern': 'phase-2'},
+          },
         ],
       },
-      {'id': 'm-mirror', 'role': 'user', 'content': 'phase 2 引用一起清掉吗？', 'created_at': '2026-11-26T10:03:00Z'},
+      {
+        'id': 'm-mirror',
+        'role': 'user',
+        'content': 'phase 2 引用一起清掉吗？',
+        'created_at': '2026-11-26T10:03:00Z',
+      },
     ],
     'total': 3,
     'has_more': false,
@@ -83,8 +110,8 @@ class _FakeServer {
     List<Map<String, Object?>>? attention,
     List<Map<String, Object?>>? sessions,
     this.mainSessionId = 's-main',
-  })  : attention = attention ?? [_askAttentionJson],
-        sessions = sessions ?? [_sessionRow];
+  }) : attention = attention ?? [_askAttentionJson],
+       sessions = sessions ?? [_sessionRow];
 
   List<Map<String, Object?>> attention;
   List<Map<String, Object?>> sessions;
@@ -100,91 +127,93 @@ class _FakeServer {
   );
 
   HttpClientAdapter adapter() => FakeHttpAdapter((options) {
-        final path = options.path;
-        if (path == '/api/cabins/c1/events') {
-          return ResponseBody(
-            _events.stream,
-            200,
-            headers: {
-              Headers.contentTypeHeader: ['text/event-stream'],
-            },
-          );
-        }
-        if (path == '/api/cabins/c1') {
-          detailCalls++;
-          return jsonBody({
-            'cabin': {
-              'id': 'c1',
-              'name': '测试舱',
-              'path': r'C:\xzf\cabin-c1',
-              'workspace_id': 'ws1',
-              'main_session_id': mainSessionId,
-              'status': 'active',
-            },
-            'view': {
-              'attention': attention,
-              'health': _healthJson,
-              'open_findings': 0,
-            },
-          });
-        }
-        if (path == '/api/cabins/c1/delegations') {
-          return jsonBody({'delegations': delegations});
-        }
-        if (path == '/api/cabins/c1/delegations/register') {
-          final body = options.data is Map ? options.data as Map : const {};
-          final sessionId = body['session_id'] as String? ?? '';
-          delegations = [
-            ...delegations,
-            {
-              'id': 'd-$sessionId',
-              'session_id': sessionId,
-              'title': '新对话',
-              'state': 'queued',
-              'origin': 'user',
-              'created_at': '2026-11-26T11:00:00Z',
-              'updated_at': '2026-11-26T11:00:00Z',
-            },
-          ];
-          return jsonBody({'delegation': delegations.last}, status: 201);
-        }
-        if (path == '/api/agent/sessions') {
-          if (options.method == 'POST') {
-            createCalls++;
-            final created = {
-              'id': 's-new',
-              'title': '新对话',
-              'workspace_id': 'ws1',
-              'is_active': true,
-              'created_at': '2026-11-26T11:00:00Z',
-              'updated_at': '2026-11-26T11:00:00Z',
-            };
-            sessions = [created, ...sessions];
-            return jsonBody(created);
-          }
-          return jsonBody({
-            'items': sessions,
-            'total': sessions.length,
-            'has_more': false,
-          });
-        }
-        if (path == '/api/agent/sessions/s-main') return jsonBody(_sessionJson);
-        if (path == '/api/agent/sessions/s-new') {
-          return jsonBody({
-            ..._sessionJson,
-            'id': 's-new',
-            'title': '新对话',
-            'messages': {'items': <Object>[], 'total': 0, 'has_more': false},
-          });
-        }
-        if (path == '/api/tasks') return jsonBody({'items': <Object>[]});
-        return jsonBody({});
+    final path = options.path;
+    if (path == '/api/cabins/c1/events') {
+      return ResponseBody(
+        _events.stream,
+        200,
+        headers: {
+          Headers.contentTypeHeader: ['text/event-stream'],
+        },
+      );
+    }
+    if (path == '/api/cabins/c1') {
+      detailCalls++;
+      return jsonBody({
+        'cabin': {
+          'id': 'c1',
+          'name': '测试舱',
+          'path': r'C:\xzf\cabin-c1',
+          'workspace_id': 'ws1',
+          'main_session_id': mainSessionId,
+          'status': 'active',
+        },
+        'view': {
+          'attention': attention,
+          'health': _healthJson,
+          'open_findings': 0,
+        },
       });
+    }
+    if (path == '/api/cabins/c1/delegations') {
+      return jsonBody({'delegations': delegations});
+    }
+    if (path == '/api/cabins/c1/delegations/register') {
+      final body = options.data is Map ? options.data as Map : const {};
+      final sessionId = body['session_id'] as String? ?? '';
+      delegations = [
+        ...delegations,
+        {
+          'id': 'd-$sessionId',
+          'session_id': sessionId,
+          'title': '新对话',
+          'state': 'queued',
+          'origin': 'user',
+          'created_at': '2026-11-26T11:00:00Z',
+          'updated_at': '2026-11-26T11:00:00Z',
+        },
+      ];
+      return jsonBody({'delegation': delegations.last}, status: 201);
+    }
+    if (path == '/api/agent/sessions') {
+      if (options.method == 'POST') {
+        createCalls++;
+        final created = {
+          'id': 's-new',
+          'title': '新对话',
+          'workspace_id': 'ws1',
+          'is_active': true,
+          'created_at': '2026-11-26T11:00:00Z',
+          'updated_at': '2026-11-26T11:00:00Z',
+        };
+        sessions = [created, ...sessions];
+        return jsonBody(created);
+      }
+      return jsonBody({
+        'items': sessions,
+        'total': sessions.length,
+        'has_more': false,
+      });
+    }
+    if (path == '/api/agent/sessions/s-main') return jsonBody(_sessionJson);
+    if (path == '/api/agent/sessions/s-new') {
+      return jsonBody({
+        ..._sessionJson,
+        'id': 's-new',
+        'title': '新对话',
+        'messages': {'items': <Object>[], 'total': 0, 'has_more': false},
+      });
+    }
+    if (path == '/api/tasks') return jsonBody({'items': <Object>[]});
+    return jsonBody({});
+  });
 
   void pushCabinView() {
-    _events.add(Uint8List.fromList(
-      utf8.encode('event: cabin_view\ndata: {"cabin_id":"c1"}\n\n'),
-    ));
+    _events.add(
+      Uint8List.fromList(
+        utf8.encode('event: cabin_view\ndata: {"cabin_id":"c1"}\n\n'),
+      ),
+    );
   }
 }
 
@@ -210,19 +239,23 @@ Future<GoRouter> _pumpCabin(WidgetTester tester, _FakeServer server) async {
         builder: (context, state) => SessionScreen(
           workspaceId: state.pathParameters['workspaceId'],
           sessionId: state.pathParameters['sessionId'] ?? '',
-          quote: state.extra is SessionQuote ? state.extra! as SessionQuote : null,
+          quote: state.extra is SessionQuote
+              ? state.extra! as SessionQuote
+              : null,
         ),
       ),
     ],
   );
 
-  await tester.pumpWidget(ProviderScope(
-    overrides: [
-      storeProvider.overrideWithValue(Store(prefs)),
-      apiProvider.overrideWithValue(apiFor(server.adapter())),
-    ],
-    child: MaterialApp.router(theme: buildOctoTheme(), routerConfig: router),
-  ));
+  await tester.pumpWidget(
+    ProviderScope(
+      overrides: [
+        storeProvider.overrideWithValue(Store(prefs)),
+        apiProvider.overrideWithValue(apiFor(server.adapter())),
+      ],
+      child: MaterialApp.router(theme: buildOctoTheme(), routerConfig: router),
+    ),
+  );
 
   for (var i = 0; i < 10; i++) {
     await tester.pump(const Duration(milliseconds: 16));
@@ -246,17 +279,22 @@ Future<void> _openFleet(WidgetTester tester) async {
 }
 
 void main() {
-  testWidgets('点进舱先落到主 chat：立绘在面板后、没有动作文字标签', (tester) async {
+  testWidgets('点进舱先落到主 chat：身份在顶栏，画后面不站人', (tester) async {
     final server = _FakeServer();
     final router = await _pumpCabin(tester, server);
+    await tester.pump(const Duration(milliseconds: 80));
 
     expect(find.text('主 CHAT'), findsOneWidget);
     expect(find.text('测试舱'), findsOneWidget);
     expect(find.text('☰ 编队'), findsOneWidget);
     // 主会话的消息直接铺在聊天面板里（不是先看三块列表）。
-    expect(find.textContaining('看看 phase 2', findRichText: true), findsOneWidget);
-    // 立绘在面板后面动着；动作文字标签已经不要了。
-    expect(find.byType(CrewBackdrop), findsOneWidget);
+    expect(
+      find.textContaining('看看 phase 2', findRichText: true),
+      findsOneWidget,
+    );
+    // 身份上移到顶栏胶囊；聊天面板后面不再站一支大立绘。
+    expect(find.byType(RoleBarChip), findsOneWidget);
+    expect(find.byType(CrewFigure), findsNothing);
     expect(find.textContaining('待命'), findsNothing);
     expect(find.textContaining('IDLE'), findsNothing);
 
@@ -271,7 +309,10 @@ void main() {
 
     expect(find.text('编队'), findsOneWidget);
     expect(find.text('phase-2 清理'), findsOneWidget);
-    expect(find.textContaining('任务 · #1 · xzf · P2 · 第 2 轮', findRichText: true), findsOneWidget);
+    expect(
+      find.textContaining('任务 · #1 · xzf · P2 · 第 2 轮', findRichText: true),
+      findsOneWidget,
+    );
 
     // 点开 → 回主 chat（路由 pop 带引用）。
     await tester.tap(find.text('去会话里说 ›'));

@@ -12,7 +12,9 @@ void main() {
     // 真解码要真实的事件循环，widget test 的假时钟里会挂住。
     await tester.runAsync(() async {
       final data = await rootBundle.load(kCrewClips.first.file);
-      final buffer = await ui.ImmutableBuffer.fromUint8List(data.buffer.asUint8List());
+      final buffer = await ui.ImmutableBuffer.fromUint8List(
+        data.buffer.asUint8List(),
+      );
       final descriptor = await ui.ImageDescriptor.encoded(buffer);
       final codec = await descriptor.instantiateCodec();
 
@@ -60,37 +62,5 @@ void main() {
     expect(find.textContaining('汐音'), findsNothing);
     expect(find.textContaining('待命'), findsNothing);
     expect(find.textContaining('IDLE'), findsNothing);
-  });
-
-  testWidgets('主 chat 立绘：开时在面板后，关掉整块不画', (tester) async {
-    await tester.pumpWidget(
-      const MaterialApp(
-        home: Scaffold(
-          body: SizedBox(
-            width: 390,
-            height: 600,
-            child: Stack(fit: StackFit.expand, children: [CrewBackdrop()]),
-          ),
-        ),
-      ),
-    );
-    expect(find.byType(CrewFigure), findsOneWidget);
-
-    await tester.pumpWidget(
-      const MaterialApp(
-        home: Scaffold(
-          body: SizedBox(
-            width: 390,
-            height: 600,
-            child: Stack(
-              fit: StackFit.expand,
-              children: [CrewBackdrop(animated: false)],
-            ),
-          ),
-        ),
-      ),
-    );
-    expect(find.byType(CrewFigure), findsNothing);
-    expect(find.byType(Image), findsNothing);
   });
 }

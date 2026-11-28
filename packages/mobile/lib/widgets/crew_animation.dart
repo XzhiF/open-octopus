@@ -89,11 +89,7 @@ class _CrewFigureState extends State<CrewFigure> {
 /// 右下角站立位 + 地面光晕（原型 `.stage`）。
 /// 动画关掉时整块不画（不给静态图兜底）。不写动作文字标签。
 class CrewStage extends StatelessWidget {
-  const CrewStage({
-    super.key,
-    required this.height,
-    this.animated = true,
-  });
+  const CrewStage({super.key, required this.height, this.animated = true});
 
   final double height;
   final bool animated;
@@ -115,7 +111,10 @@ class CrewStage extends StatelessWidget {
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(999),
                 gradient: RadialGradient(
-                  colors: [Octo.teal.withValues(alpha: .22), Colors.transparent],
+                  colors: [
+                    Octo.teal.withValues(alpha: .22),
+                    Colors.transparent,
+                  ],
                   stops: const [0, .72],
                 ),
               ),
@@ -125,61 +124,6 @@ class CrewStage extends StatelessWidget {
             right: -10,
             bottom: 0,
             child: CrewFigure(height: height, animated: animated),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// 主 chat 的立绘（原型方案 A）：她站在聊天面板后面、右侧，底缘淡出。
-/// 面板压暗但不模糊，消息列满宽压在她身上；不接点击（pointer-events:none）。
-class CrewBackdrop extends StatelessWidget {
-  const CrewBackdrop({super.key, this.height = 300, this.animated = true});
-
-  final double height;
-  final bool animated;
-
-  @override
-  Widget build(BuildContext context) {
-    if (!animated) return const SizedBox.shrink();
-    return IgnorePointer(
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          Positioned(
-            right: 4,
-            bottom: 6,
-            child: Container(
-              width: 190,
-              height: 32,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(999),
-                gradient: RadialGradient(
-                  colors: [Octo.teal.withValues(alpha: .2), Colors.transparent],
-                  stops: const [0, .72],
-                ),
-              ),
-            ),
-          ),
-          Positioned(
-            right: -14,
-            bottom: -2,
-            child: ShaderMask(
-              blendMode: BlendMode.dstIn,
-              shaderCallback: (rect) => const LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                stops: [.72, .94, 1],
-                colors: [Colors.black, Color(0x4D000000), Colors.transparent],
-              ).createShader(rect),
-              child: CrewFigure(
-                height: height,
-                animated: animated,
-                cycleOnTap: false,
-                alignment: Alignment.bottomRight,
-              ),
-            ),
           ),
         ],
       ),
@@ -206,14 +150,17 @@ class CrewAvatar extends StatelessWidget {
           end: Alignment.bottomRight,
           colors: [Color(0x292EE6D6), Color(0x2E7B4DFF)],
         ),
-        boxShadow: [BoxShadow(color: Octo.teal.withValues(alpha: .06), spreadRadius: 3)],
+        boxShadow: [
+          BoxShadow(color: Octo.teal.withValues(alpha: .06), spreadRadius: 3),
+        ],
       ),
       clipBehavior: Clip.antiAlias,
       child: Image.asset(
         'assets/crew/xiyin-idle.png',
         fit: BoxFit.cover,
         alignment: const Alignment(0, -.88),
-        errorBuilder: (_, _, _) => const Icon(Icons.person_outline, size: 18, color: Octo.teal),
+        errorBuilder: (_, _, _) =>
+            const Icon(Icons.person_outline, size: 18, color: Octo.teal),
       ),
     );
   }

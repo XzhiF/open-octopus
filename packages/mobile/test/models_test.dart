@@ -203,6 +203,103 @@ void main() {
     });
   });
 
+  group('过程顺序（metadata.timeline）', () {
+    test('think 段与工具按到达顺序交替，不把 thinking 一律提前', () {
+      final session = ChatSession.fromAgentJson({
+        'id': 's1',
+        'messages': {
+          'items': [
+            {
+              'id': 'a1',
+              'role': 'assistant',
+              'content': '改完了。',
+              'thinking': '甲段乙段',
+              'tool_calls': [
+                {'id': 't1', 'name': 'Read', 'status': 'result'},
+                {'id': 't2', 'name': 'Edit', 'status': 'result'},
+              ],
+              'metadata':
+                  '{"timeline":['
+                  '{"kind":"thinking","text":"甲段"},'
+                  '{"kind":"tool","id":"t1"},'
+                  '{"kind":"thinking","text":"乙段"},'
+                  '{"kind":"tool","id":"t2"},'
+                  '{"kind":"text","text":"改完了。"}'
+                  ']}',
+              'created_at': '2026-11-27T10:00:00Z',
+            },
+          ],
+        },
+      });
+
+      final rows = session.messages;
+      expect(rows.map((r) => r.displayType).toList(), [
+        'thinking',
+        'tool_call',
+        'thinking',
+        'tool_call',
+        'text',
+      ]);
+      expect(rows[0].thinkingContent, '甲段');
+      expect(rows[1].toolName, 'Read');
+      expect(rows[2].thinkingContent, '乙段');
+      expect(rows[3].toolName, 'Edit');
+      expect(rows[4].content, '改完了。');
+    });
+
+    test('老行没有 timeline 时退回「thinking 一段 + 工具若干」', () {
+      final session = ChatSession.fromAgentJson({
+        'id': 's1',
+        'messages': {
+          'items': [
+            {
+              'id': 'a1',
+              'role': 'assistant',
+              'content': '好',
+              'thinking': '先看看',
+              'tool_calls': [
+                {'id': 't1', 'name': 'Read', 'status': 'result'},
+              ],
+              'metadata': '{"timeline":[{"kind":"text","text":"好"}]}',
+            },
+          ],
+        },
+      });
+      expect(session.messages.map((r) => r.displayType).toList(), [
+        'thinking',
+        'tool_call',
+        'text',
+      ]);
+    });
+  });
+
+  group('LiveTurn 过程顺序', () {
+    test('thinking 紧挨着合并成一段，工具插进来就另起一段', () {
+      final live = LiveTurn()
+        ..appendThinking('甲')
+        ..appendThinking('甲二')
+        ..markTool('t1')
+        ..appendThinking('乙');
+
+      expect(live.thinking, '甲甲二乙');
+      expect(live.process.map((p) => p.kind), ['thinking', 'tool', 'thinking']);
+      expect(live.process[0].text, '甲甲二');
+      expect(live.process[1].toolId, 't1');
+      expect(live.process[2].text, '乙');
+
+      // 幂等：同一个工具重复上报不重复插入。
+      live.markTool('t1');
+      expect(live.process.where((p) => p.kind == 'tool'), hasLength(1));
+    });
+
+    test('直接构造的 LiveTurn 退回 thinking + 工具两段', () {
+      final live = LiveTurn()
+        ..thinking = '想一下'
+        ..tools.add(LiveTool(id: 't1', name: 'Read'));
+      expect(live.processItems.map((p) => p.kind), ['thinking', 'tool']);
+    });
+  });
+
   group('AskUserQuestion 落库行', () {
     const questions = [
       {

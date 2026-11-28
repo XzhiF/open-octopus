@@ -10,6 +10,7 @@ class OctoBar extends StatelessWidget {
     required this.title,
     this.num,
     this.subtitle,
+    this.subtitleWidget,
     this.onBack,
     this.leading,
     this.actions = const [],
@@ -19,6 +20,10 @@ class OctoBar extends StatelessWidget {
   final String title;
   final String? num;
   final String? subtitle;
+
+  /// 副标题位置的自定义内容（原型 §4：身份胶囊 + 设备状态同一行）。
+  /// 有它就顶掉 [subtitle] 文本。
+  final Widget? subtitleWidget;
   final VoidCallback? onBack;
   final Widget? leading;
   final List<Widget> actions;
@@ -35,7 +40,11 @@ class OctoBar extends StatelessWidget {
           else if (onBack != null) ...[
             BarIconButton(
               onTap: onBack,
-              child: const Icon(Icons.chevron_left, size: 20, color: Octo.metal2),
+              child: const Icon(
+                Icons.chevron_left,
+                size: 20,
+                color: Octo.metal2,
+              ),
             ),
             const SizedBox(width: 11),
           ],
@@ -71,7 +80,10 @@ class OctoBar extends StatelessWidget {
                     ],
                   ],
                 ),
-                if (subtitle != null && subtitle!.isNotEmpty) ...[
+                if (subtitleWidget != null) ...[
+                  const SizedBox(height: 3),
+                  subtitleWidget!,
+                ] else if (subtitle != null && subtitle!.isNotEmpty) ...[
                   const SizedBox(height: 3),
                   Text(
                     subtitle!,
@@ -97,7 +109,13 @@ class OctoBar extends StatelessWidget {
 
 /// 极细等宽 rail（原型 `.rail`）：`⬡ 书房 PC · LINK 12ms · DECK 4`。
 class RailLine extends StatelessWidget {
-  const RailLine({super.key, this.left, this.middle, this.right, this.accentMiddle = true});
+  const RailLine({
+    super.key,
+    this.left,
+    this.middle,
+    this.right,
+    this.accentMiddle = true,
+  });
 
   final String? left;
   final String? middle;
