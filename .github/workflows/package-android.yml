@@ -1,0 +1,76 @@
+name: Package Android APK
+
+# 安卓出包：arm64-v8a / armeabi-v7a / x86_64 三个 split APK。
+# 手动跑：Actions → Package Android APK → Run workflow；打 v* tag 也会自动出包。
+#
+# 签名：
+# - 默认用 debug keystore 签（和本机没有 android/key.properties 时的行为一致），产物可直接安装。
+# - 想用正式 release 签名，在仓库 Secrets 里配这四个，workflow 会自动写 key.properties：
+#     ANDROID_KEYSTORE_BASE64    octopus-release.jks 的 base64（base64 -i octopus-release.jks）
+#     ANDROID_KEYSTORE_PASSWORD
+#     ANDROID_KEY_ALIAS
+#     ANDROID_KEY_PASSWORD
+#
+# 素材：packages/mobile/assets 不入库（docs/cabin-design 是真源），构建前用 sync-assets 现拷。
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+concurrency:
+  group: package-android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.50.1'
+          channel: stable
+          cache: true
+
+      - name: Sync mobile assets
+        run: node packages/mobile/scripts/sync-assets.mjs
+
+      - name: Configure release signing (optional)
+        if: env.ANDROID_KEYSTORE_BASE64 != ''
+        working-directory: packages/mobile/android
+        run: |
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > release.jks
+          cat > key.properties <<EOF
+          storeFile=$PWD/release.jks
+          storePassword=$ANDROID_KEYSTORE_PASSWORD
+          keyAlias=$ANDROID_KEY_ALIAS
+          keyPassword=$ANDROID_KEY_PASSWORD
+          EOF
+
+      - name: Flutter pub get
+        working-directory: packages/mobile
+        run: flutter pub get
+
+      - name: Build split APKs
+        working-directory: packages/mobile
+        run: flutter build apk --release --split-per-abi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: octopus-android-apk
+          path: packages/mobile/build/app/outputs/flutter-apk/*.apk
+          if-no-files-found: error
+          retention-days: 14

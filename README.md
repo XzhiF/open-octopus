@@ -10,8 +10,6 @@ Octopus 是一个本地优先的 AI 开发平台。你只需要把需求说出�
 它关心的不是「怎么编排工作流」，而是「怎么把一件事可靠地做完，并留下痕迹」。
 工作流在舱底安静地转，不是你要面对的界面。
 
-<img src="docs/imgs/cabin.webp" alt="作战舱：编队、主对话、要我处理" />
-
 ## 三件事
 
 | | |
@@ -164,6 +162,10 @@ pnpm dev --isolated # worktree 隔离模式（独立端口 + 独立数据库）
 pnpm dev --port 3101,3100   # 指定 web / server 端口
 pnpm port           # 查看当前端口分配
 ```
+
+不想本地配工具链也可以在 GitHub 上出包：Actions → **Package Desktop** / **Package Android APK**
+→ Run workflow（打 `v*` tag 也会自动跑）。产物在同一次运行的 Artifacts 里：桌面端 macOS arm64
+（未签名）与 Windows x64，安卓三个 ABI 的 split APK（默认 debug 签名，配好签名 secrets 即走 release）。
 
 ## 项目结构
 
